@@ -34,7 +34,7 @@ LittleAIBox は以下の方に最適です：
 
 <div align="center">
 
-🚀 **今すぐ試す:**  
+**今すぐ試す:**  
 
 [![アプリにアクセス](https://img.shields.io/badge/LittleAIBox%20を開く-クリック- brightgreen?style=for-the-badge)](https://ai.littletea.xyz)
 

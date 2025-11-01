@@ -34,7 +34,7 @@ LittleAIBox 非常适合：
 
 <div align="center">
 
-🚀 **立即访问:**  
+**立即访问:**  
 
 [![访问应用](https://img.shields.io/badge/打开%20LittleAIBox-点击这里-brightgreen?style=for-the-badge)](https://ai.littletea.xyz)
 

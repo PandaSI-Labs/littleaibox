@@ -34,7 +34,7 @@ LittleAIBox is perfect for:
 
 <div align="center">
 
-🚀 **Try it now:**  
+**Try it now:**  
 
 [![Visit App](https://img.shields.io/badge/Open%20LittleAIBox-Click%20Here-brightgreen?style=for-the-badge)](https://ai.littletea.xyz)
 
