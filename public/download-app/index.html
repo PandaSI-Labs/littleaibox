@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>下载 LittleAIBox</title>
+    <link rel="icon" href="/images/favicon.ico">
+    <link rel="stylesheet" href="./download.css">
+
+    <script>
+        if (history.scrollRestoration) {
+            history.scrollRestoration = 'manual';
+        }
+        window.onbeforeunload = function () {
+            window.scrollTo(0, 0);
+        };
+    </script>
+
+</head>
+
+<body class="bg-zinc-50 dark:bg-zinc-900 font-sans antialiased overflow-x-hidden">
+
+    <!-- 自定义语言选择器 - Google风格 -->
+    <div class="lang-selector">
+        <div class="lang-dropdown" id="langDropdown">
+            <button class="lang-button" id="langButton" aria-label="选择语言" aria-haspopup="true" aria-expanded="false">
+                <svg class="lang-icon" viewBox="0 0 24 24" fill="currentColor">
+                    <path
+                        d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z" />
+                </svg>
+                <span id="currentLang">简体中文</span>
+                <svg class="lang-arrow" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M7 10l5 5 5-5z" />
+                </svg>
+            </button>
+            <div class="lang-menu" id="langMenu" role="menu">
+                <div class="lang-option" role="menuitem" data-lang="zh-CN">
+                    <span class="lang-option-flag">🇨🇳</span>
+                    <span class="lang-option-text">简体中文</span>
+                    <svg class="lang-option-check" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                    </svg>
+                </div>
+                <div class="lang-option" role="menuitem" data-lang="zh-TW">
+                    <span class="lang-option-flag">🇹🇼</span>
+                    <span class="lang-option-text">繁體中文</span>
+                    <svg class="lang-option-check" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                    </svg>
+                </div>
+                <div class="lang-option" role="menuitem" data-lang="en">
+                    <span class="lang-option-flag">🇺🇸</span>
+                    <span class="lang-option-text">English</span>
+                    <svg class="lang-option-check" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                    </svg>
+                </div>
+                <div class="lang-option" role="menuitem" data-lang="ja">
+                    <span class="lang-option-flag">🇯🇵</span>
+                    <span class="lang-option-text">日本語</span>
+                    <svg class="lang-option-check" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                    </svg>
+                </div>
+                <div class="lang-option" role="menuitem" data-lang="ko">
+                    <span class="lang-option-flag">🇰🇷</span>
+                    <span class="lang-option-text">한국어</span>
+                    <svg class="lang-option-check" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="relative isolate">
+        <div aria-hidden="true" class="absolute inset-0 -z-10 overflow-hidden">
+            <div
+                class="absolute top-0 left-0 w-[50rem] h-[50rem] bg-blue-200/30 dark:bg-blue-900/30 rounded-full filter blur-3xl opacity-40 animated-blob-1">
+            </div>
+            <div
+                class="absolute top-[20rem] -left-[10rem] w-[60rem] h-[60rem] bg-purple-200/30 dark:bg-purple-900/30 rounded-full filter blur-3xl opacity-30 animated-blob-2">
+            </div>
+            <div
+                class="absolute bottom-0 right-0 w-[40rem] h-[40rem] bg-sky-200/30 dark:bg-sky-900/30 rounded-full filter blur-3xl opacity-50 animated-blob-3">
+            </div>
+        </div>
+        <div class="container mx-auto max-w-4xl px-4 py-12 md:py-20">
+            <header class="text-center mb-12 md:mb-20 content-entry" style="animation-delay: 0.1s;">
+                <div class="flex justify-center items-center gap-4 mb-5">
+                    <img src="/images/favicon.ico" alt="LittleAIBox Logo" class="h-12 w-12 md:h-14 md:w-14">
+                    <h1 class="text-4xl md:text-5xl font-bold text-zinc-800 dark:text-white">LittleAIBox</h1>
+                </div>
+                <p class="text-lg md:text-xl text-zinc-600 dark:text-zinc-400" data-i18n="subtitle"></p>
+            </header>
+            <main class="space-y-12 md:space-y-16">
+                <section id="pwa" class="content-entry" style="animation-delay: 0.3s;">
+                    <div class="text-center mb-8">
+                        <span
+                            class="inline-block bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-300 rounded-full px-4 py-1 text-sm font-semibold"
+                            data-i18n="recommended"></span>
+                        <h2 class="text-2xl font-bold text-zinc-900 dark:text-white mt-3" data-i18n="pwaTitle"></h2>
+                        <p class="mt-2 text-zinc-600 dark:text-zinc-400" data-i18n="pwaDesc"></p>
+                    </div>
+                    <div id="pwa-accordion" class="space-y-4 max-w-2xl mx-auto">
+                        <div
+                            class="accordion-item bg-white/60 dark:bg-zinc-800/60 backdrop-blur-md border border-zinc-200 dark:border-zinc-700 rounded-xl overflow-hidden transition-shadow hover:shadow-lg">
+                            <button
+                                class="accordion-trigger flex justify-between items-center w-full p-5 text-left font-semibold text-zinc-800 dark:text-white">
+                                <span class="flex items-center gap-3"><svg class="h-6 w-6 text-blue-500" fill="none"
+                                        viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z">
+                                        </path>
+                                    </svg><span data-i18n="desktopGuide"></span></span>
+                                <svg class="chevron h-5 w-5 transition-transform duration-300" viewBox="0 0 20 20"
+                                    fill="currentColor">
+                                    <path fill-rule="evenodd"
+                                        d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                                        clip-rule="evenodd"></path>
+                                </svg>
+                            </button>
+                            <div class="accordion-content">
+                                <div class="p-5 pt-0">
+                                    <ol
+                                        class="list-decimal list-inside space-y-3 text-zinc-600 dark:text-zinc-300 text-sm md:text-base">
+                                        <li data-i18n-html="desktopStep1"></li>
+                                        <li data-i18n-html="desktopStep2"></li>
+                                        <li data-i18n="desktopStep3"></li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+                        <div
+                            class="accordion-item bg-white/60 dark:bg-zinc-800/60 backdrop-blur-md border border-zinc-200 dark:border-zinc-700 rounded-xl overflow-hidden transition-shadow hover:shadow-lg">
+                            <button
+                                class="accordion-trigger flex justify-between items-center w-full p-5 text-left font-semibold text-zinc-800 dark:text-white">
+                                <span class="flex items-center gap-3"><svg class="h-6 w-6 text-blue-500" fill="none"
+                                        viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z">
+                                        </path>
+                                    </svg><span data-i18n="mobileGuide"></span></span>
+                                <svg class="chevron h-5 w-5 transition-transform duration-300" viewBox="0 0 20 20"
+                                    fill="currentColor">
+                                    <path fill-rule="evenodd"
+                                        d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                                        clip-rule="evenodd"></path>
+                                </svg>
+                            </button>
+                            <div class="accordion-content">
+                                <div class="p-5 pt-0">
+                                    <ul
+                                        class="list-disc list-inside space-y-3 text-zinc-600 dark:text-zinc-300 text-sm md:text-base">
+                                        <li data-i18n-html="mobileIOS"></li>
+                                        <li data-i18n-html="mobileAndroid"></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                <section id="native-apps" class="content-entry" style="animation-delay: 0.5s;">
+                    <h2 class="text-center text-2xl font-semibold text-zinc-800 dark:text-white mb-8"
+                        data-i18n="nativeTitle"></h2>
+                    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 text-center">
+                        <div
+                            class="bg-white/60 dark:bg-zinc-800/60 backdrop-blur-md p-6 rounded-xl shadow-sm hover:shadow-lg border border-zinc-200 dark:border-zinc-700 flex flex-col items-center transform transition-transform duration-300 hover:scale-105">
+                            <svg class="h-12 w-12 text-green-500 mb-4" viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M18.7,14.3c-0.4-0.4-1-0.4-1.4,0l-0.8,0.8c-0.8-0.4-1.8-1.1-2.8-2.1c-1-1-1.7-2-2.1-2.8l0.8-0.8c0.4-0.4,0.4-1,0-1.4 l-2.2-2.2c-0.4-0.4-1-0.4-1.4,0L7.3,6.5c-0.4,0.4-0.5,1-0.2,1.6c0.5,1.1,1.2,2.4,2.1,3.5c1.2,1.5,2.8,2.8,4.5,3.5 c0.5,0.2,1.2,0.1,1.6-0.2L18.7,14.3z M15,3h-1.5V1.5C13.5,0.7,12.8,0,12,0s-1.5,0.7-1.5,1.5V3H9C8.2,3,7.5,3.7,7.5,4.5v0 C7.5,5.3,8.2,6,9,6h1.5v1.5C10.5,8.3,11.2,9,12,9s1.5-0.7,1.5-1.5V6H15c0.8,0,1.5-0.7,1.5-1.5v0C16.5,3.7,15.8,3,15,3z" />
+                            </svg>
+                            <h3 class="text-lg font-semibold text-zinc-900 dark:text-white mb-2">Android</h3>
+                            <a href="/downloads/LittleAIBox_v2.3.2.apk"
+                                class="mt-auto w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors"
+                                download data-i18n="downloadApk"></a>
+                        </div>
+                        <div
+                            class="bg-white/60 dark:bg-zinc-800/60 backdrop-blur-md p-6 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-700 flex flex-col items-center opacity-60 transform transition-transform duration-300 hover:scale-105">
+                            <svg class="h-12 w-12 text-sky-500 mb-4" viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M2,12.2l8.1-1.2V2L2,4.2V12.2z M2,12.8v7l8.1,2v-8L2,12.8z M10.9,2v9l11.1-1.6V2L10.9,2z M10.9,22v-8l11.1,1.6V22L10.9,22z" />
+                            </svg>
+                            <h3 class="text-lg font-semibold text-zinc-900 dark:text-white mb-2">Windows</h3>
+                            <button
+                                class="mt-auto w-full bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400 font-semibold py-2 px-4 rounded-lg cursor-not-allowed"
+                                disabled data-i18n="comingSoon"></button>
+                        </div>
+                        <div
+                            class="bg-white/60 dark:bg-zinc-800/60 backdrop-blur-md p-6 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-700 flex flex-col items-center opacity-60 transform transition-transform duration-300 hover:scale-105">
+                            <svg class="h-12 w-12 text-zinc-500 dark:text-zinc-400 mb-4" viewBox="0 0 24 24"
+                                fill="currentColor">
+                                <path
+                                    d="M17.6,16.2c-0.8,0-1.8-0.3-2.9-0.3c-1.1,0-2.2,0.3-3.2,0.3c-1.8,0-3.3-0.8-4.4-2.3c-1.5-2-1.7-5.1-0.4-7.2 c0.9-1.4,2.4-2.3,4.1-2.3c1.1,0,2.1,0.4,2.9,0.4c0.7,0,1.9-0.4,3.2-0.4c1.6,0,3,0.8,3.9,2.2c-1.4,0.9-2.3,2.4-2.3,4.1 C18.5,12.5,19.9,13.8,22,14.4C21.8,16.5,19.9,16.2,17.6,16.2z M15.1,5.6c0.2-1.2-0.6-2.3-1.8-2.6c-0.1,0-0.2,0-0.3,0 c-1,0.2-1.6,1.1-1.6,2c0,0.2,0,0.3,0,0.5C12.3,5.3,13.9,5.7,15.1,5.6z" />
+                            </svg>
+                            <h3 class="text-lg font-semibold text-zinc-900 dark:text-white mb-2">iOS</h3>
+                            <button
+                                class="mt-auto w-full bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400 font-semibold py-2 px-4 rounded-lg cursor-not-allowed"
+                                disabled data-i18n="comingSoon"></button>
+                        </div>
+                        <div
+                            class="bg-white/60 dark:bg-zinc-800/60 backdrop-blur-md p-6 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-700 flex flex-col items-center opacity-60 transform transition-transform duration-300 hover:scale-105">
+                            <svg class="h-12 w-12 text-zinc-500 dark:text-zinc-400 mb-4" viewBox="0 0 24 24"
+                                fill="currentColor">
+                                <path
+                                    d="M17.6,16.2c-0.8,0-1.8-0.3-2.9-0.3c-1.1,0-2.2,0.3-3.2,0.3c-1.8,0-3.3-0.8-4.4-2.3c-1.5-2-1.7-5.1-0.4-7.2 c0.9-1.4,2.4-2.3,4.1-2.3c1.1,0,2.1,0.4,2.9,0.4c0.7,0,1.9-0.4,3.2-0.4c1.6,0,3,0.8,3.9,2.2c-1.4,0.9-2.3,2.4-2.3,4.1 C18.5,12.5,19.9,13.8,22,14.4C21.8,16.5,19.9,16.2,17.6,16.2z M15.1,5.6c0.2-1.2-0.6-2.3-1.8-2.6c-0.1,0-0.2,0-0.3,0 c-1,0.2-1.6,1.1-1.6,2c0,0.2,0,0.3,0,0.5C12.3,5.3,13.9,5.7,15.1,5.6z" />
+                            </svg>
+                            <h3 class="text-lg font-semibold text-zinc-900 dark:text-white mb-2">macOS</h3>
+                            <button
+                                class="mt-auto w-full bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400 font-semibold py-2 px-4 rounded-lg cursor-not-allowed"
+                                disabled data-i18n="comingSoon"></button>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <div id="thank-you-modal"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4 opacity-0 pointer-events-none transition-opacity duration-300 hidden">
+        <div id="modal-content"
+            class="bg-white dark:bg-zinc-800 rounded-2xl shadow-xl p-8 w-full max-w-sm text-center transform scale-95 transition-all duration-300">
+            <div
+                class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/50 mb-5">
+                <svg class="h-10 w-10 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                    stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+            </div>
+            <h3 class="text-2xl font-bold text-zinc-900 dark:text-white" data-i18n="thankYouTitle"></h3>
+            <p class="mt-3 text-zinc-600 dark:text-zinc-400" data-i18n="thankYouDesc"></p>
+        </div>
+    </div>
+
+    <script>
+        // 翻译文本
+        const translations = {
+            'zh-CN': {
+                subtitle: '即刻安装，在所有设备上无缝沟通与创作。',
+                recommended: '推荐',
+                pwaTitle: 'PWA 应用',
+                pwaDesc: '无需下载，即刻获得原生体验，并始终保持最新版本。',
+                desktopGuide: '桌面端安装指南',
+                desktopStep1: '在 Chrome 或 Edge 浏览器中打开 <a href="https://ai.littletea.xyz" class="text-blue-500 hover:underline font-medium">ai.littletea.xyz</a>。',
+                desktopStep2: '点击浏览器地址栏右侧出现的 <strong class="text-zinc-900 dark:text-white">"安装"</strong> 或 <strong class="text-zinc-900 dark:text-white">"获取应用"</strong> 图标。',
+                desktopStep3: '在弹出的提示中确认安装即可。应用图标将出现在您的桌面或程序坞中。',
+                mobileGuide: '移动端安装指南',
+                mobileIOS: '<strong class="text-zinc-900 dark:text-white">iOS (Safari 浏览器):</strong><br>点击底部的 <strong class="text-zinc-900 dark:text-white">"分享"</strong> 按钮，向上滑动菜单，找到并点击 <strong class="text-zinc-900 dark:text-white">"添加到主屏幕"</strong>。',
+                mobileAndroid: '<strong class="text-zinc-900 dark:text-white">Android (Chrome 浏览器):</strong><br>浏览器通常会自动弹出安装提示。若没有，请点击右上角的 <strong class="text-zinc-900 dark:text-white">"菜单"</strong> (三个点)，然后选择 <strong class="text-zinc-900 dark:text-white">"添加到主屏幕"</strong> 或 <strong class="text-zinc-900 dark:text-white">"安装应用"</strong>。',
+                nativeTitle: '或下载原生安装包',
+                downloadApk: '下载 APK',
+                comingSoon: '即将推出',
+                thankYouTitle: '感谢您的下载！',
+                thankYouDesc: '您的下载已开始，请检查浏览器的下载列表。'
+            },
+            'zh-TW': {
+                subtitle: '立即安裝，在所有裝置上無縫溝通與創作。',
+                recommended: '推薦',
+                pwaTitle: 'PWA 應用',
+                pwaDesc: '無需下載，立即獲得原生體驗，並始終保持最新版本。',
+                desktopGuide: '桌面端安裝指南',
+                desktopStep1: '在 Chrome 或 Edge 瀏覽器中開啟 <a href="https://ai.littletea.xyz" class="text-blue-500 hover:underline font-medium">ai.littletea.xyz</a>。',
+                desktopStep2: '點擊瀏覽器位址列右側出現的 <strong class="text-zinc-900 dark:text-white">"安裝"</strong> 或 <strong class="text-zinc-900 dark:text-white">"取得應用程式"</strong> 圖示。',
+                desktopStep3: '在彈出的提示中確認安裝即可。應用程式圖示將出現在您的桌面或程式塢中。',
+                mobileGuide: '行動端安裝指南',
+                mobileIOS: '<strong class="text-zinc-900 dark:text-white">iOS (Safari 瀏覽器):</strong><br>點擊底部的 <strong class="text-zinc-900 dark:text-white">"分享"</strong> 按鈕，向上滑動選單，找到並點擊 <strong class="text-zinc-900 dark:text-white">"加入主畫面"</strong>。',
+                mobileAndroid: '<strong class="text-zinc-900 dark:text-white">Android (Chrome 瀏覽器):</strong><br>瀏覽器通常會自動彈出安裝提示。若沒有，請點擊右上角的 <strong class="text-zinc-900 dark:text-white">"選單"</strong> (三個點)，然後選擇 <strong class="text-zinc-900 dark:text-white">"加入主畫面"</strong> 或 <strong class="text-zinc-900 dark:text-white">"安裝應用程式"</strong>。',
+                nativeTitle: '或下載原生安裝包',
+                downloadApk: '下載 APK',
+                comingSoon: '即將推出',
+                thankYouTitle: '感謝您的下載！',
+                thankYouDesc: '您的下載已開始，請檢查瀏覽器的下載清單。'
+            },
+            'en': {
+                subtitle: 'Install now for seamless communication and creation across all devices.',
+                recommended: 'Recommended',
+                pwaTitle: 'PWA App',
+                pwaDesc: 'No download required. Get a native experience instantly and stay always up-to-date.',
+                desktopGuide: 'Desktop Installation Guide',
+                desktopStep1: 'Open <a href="https://ai.littletea.xyz" class="text-blue-500 hover:underline font-medium">ai.littletea.xyz</a> in Chrome or Edge browser.',
+                desktopStep2: 'Click the <strong class="text-zinc-900 dark:text-white">"Install"</strong> or <strong class="text-zinc-900 dark:text-white">"Get App"</strong> icon that appears on the right side of the address bar.',
+                desktopStep3: 'Confirm installation in the popup prompt. The app icon will appear on your desktop or dock.',
+                mobileGuide: 'Mobile Installation Guide',
+                mobileIOS: '<strong class="text-zinc-900 dark:text-white">iOS (Safari):</strong><br>Tap the <strong class="text-zinc-900 dark:text-white">"Share"</strong> button at the bottom, scroll up the menu, find and tap <strong class="text-zinc-900 dark:text-white">"Add to Home Screen"</strong>.',
+                mobileAndroid: '<strong class="text-zinc-900 dark:text-white">Android (Chrome):</strong><br>The browser usually prompts installation automatically. If not, tap the <strong class="text-zinc-900 dark:text-white">"Menu"</strong> (three dots) in the top right, then select <strong class="text-zinc-900 dark:text-white">"Add to Home screen"</strong> or <strong class="text-zinc-900 dark:text-white">"Install app"</strong>.',
+                nativeTitle: 'Or Download Native Installers',
+                downloadApk: 'Download APK',
+                comingSoon: 'Coming Soon',
+                thankYouTitle: 'Thank You for Downloading!',
+                thankYouDesc: 'Your download has started. Please check your browser\'s download list.'
+            },
+            'ja': {
+                subtitle: '今すぐインストールして、すべてのデバイスでシームレスにコミュニケーションと作成。',
+                recommended: 'おすすめ',
+                pwaTitle: 'PWA アプリ',
+                pwaDesc: 'ダウンロード不要。すぐにネイティブ体験を取得し、常に最新バージョンを維持。',
+                desktopGuide: 'デスクトップインストールガイド',
+                desktopStep1: 'Chrome または Edge ブラウザで <a href="https://ai.littletea.xyz" class="text-blue-500 hover:underline font-medium">ai.littletea.xyz</a> を開く。',
+                desktopStep2: 'アドレスバーの右側に表示される <strong class="text-zinc-900 dark:text-white">"インストール"</strong> または <strong class="text-zinc-900 dark:text-white">"アプリを取得"</strong> アイコンをクリック。',
+                desktopStep3: 'ポップアップで表示されるプロンプトでインストールを確認。アプリアイコンがデスクトップまたはドックに表示されます。',
+                mobileGuide: 'モバイルインストールガイド',
+                mobileIOS: '<strong class="text-zinc-900 dark:text-white">iOS (Safari):</strong><br>下部の <strong class="text-zinc-900 dark:text-white">"共有"</strong> ボタンをタップし、メニューを上にスワイプし、<strong class="text-zinc-900 dark:text-white">"ホーム画面に追加"</strong> を見つけてタップ。',
+                mobileAndroid: '<strong class="text-zinc-900 dark:text-white">Android (Chrome):</strong><br>通常、ブラウザが自動的にインストールを促します。表示されない場合は、右上の <strong class="text-zinc-900 dark:text-white">"メニュー"</strong>（3つの点）をタップし、<strong class="text-zinc-900 dark:text-white">"ホーム画面に追加"</strong> または <strong class="text-zinc-900 dark:text-white">"アプリをインストール"</strong> を選択。',
+                nativeTitle: 'またはネイティブインストーラーをダウンロード',
+                downloadApk: 'APK をダウンロード',
+                comingSoon: '近日公開',
+                thankYouTitle: 'ダウンロードありがとうございます！',
+                thankYouDesc: 'ダウンロードが開始されました。ブラウザのダウンロードリストを確認してください。'
+            },
+            'ko': {
+                subtitle: '지금 설치하여 모든 장치에서 원활한 커뮤니케이션과 창작을 즐기세요.',
+                recommended: '추천',
+                pwaTitle: 'PWA 앱',
+                pwaDesc: '다운로드 불필요. 즉시 네이티브 경험을 얻고 항상 최신 버전을 유지하세요.',
+                desktopGuide: '데스크톱 설치 가이드',
+                desktopStep1: 'Chrome 또는 Edge 브라우저에서 <a href="https://ai.littletea.xyz" class="text-blue-500 hover:underline font-medium">ai.littletea.xyz</a>를 엽니다.',
+                desktopStep2: '주소창 오른쪽에 나타나는 <strong class="text-zinc-900 dark:text-white">"설치"</strong> 또는 <strong class="text-zinc-900 dark:text-white">"앱 받기"</strong> 아이콘을 클릭합니다.',
+                desktopStep3: '팝업 프롬프트에서 설치를 확인합니다. 앱 아이콘이 데스크톱 또는 독에 나타납니다.',
+                mobileGuide: '모바일 설치 가이드',
+                mobileIOS: '<strong class="text-zinc-900 dark:text-white">iOS (Safari):</strong><br>하단의 <strong class="text-zinc-900 dark:text-white">"공유"</strong> 버튼을 누르고 메뉴를 위로 스와이프한 후 <strong class="text-zinc-900 dark:text-white">"홈 화면에 추가"</strong>를 찾아 누릅니다.',
+                mobileAndroid: '<strong class="text-zinc-900 dark:text-white">Android (Chrome):</strong><br>일반적으로 브라우저가 자동으로 설치를 프롬프트합니다. 표시되지 않으면 오른쪽 상단의 <strong class="text-zinc-900 dark:text-white">"메뉴"</strong>(세 개의 점)를 누른 다음 <strong class="text-zinc-900 dark:text-white">"홈 화면에 추가"</strong> 또는 <strong class="text-zinc-900 dark:text-white">"앱 설치"</strong>를 선택합니다.',
+                nativeTitle: '또는 네이티브 설치 프로그램 다운로드',
+                downloadApk: 'APK 다운로드',
+                comingSoon: '곧 출시',
+                thankYouTitle: '다운로드 감사합니다!',
+                thankYouDesc: '다운로드가 시작되었습니다. 브라우저의 다운로드 목록을 확인하세요.'
+            }
+        };
+
+        // 从URL获取语言参数
+        function getLangFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('lang');
+        }
+
+        // 从URL获取主题参数
+        function getThemeFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('theme');
+        }
+
+        // 检测浏览器语言
+        function detectBrowserLanguage() {
+            const browserLang = navigator.language || navigator.userLanguage;
+            const supportedLangs = ['zh-CN', 'zh-TW', 'en', 'ja', 'ko'];
+
+            if (supportedLangs.includes(browserLang)) {
+                return browserLang;
+            }
+
+            const langPrefix = browserLang.split('-')[0];
+            if (langPrefix === 'zh') {
+                return browserLang.includes('TW') || browserLang.includes('HK') ? 'zh-TW' : 'zh-CN';
+            } else if (langPrefix === 'ja') {
+                return 'ja';
+            } else if (langPrefix === 'ko') {
+                return 'ko';
+            } else if (langPrefix === 'en') {
+                return 'en';
+            }
+
+            return 'zh-CN';
+        }
+
+        // 语言名称映射
+        const langNames = {
+            'zh-CN': '简体中文',
+            'zh-TW': '繁體中文',
+            'en': 'English',
+            'ja': '日本語',
+            'ko': '한국어'
+        };
+
+        // 应用翻译
+        function applyTranslations(lang) {
+            const t = translations[lang];
+            if (!t) return;
+
+            document.documentElement.lang = lang;
+            document.title = lang === 'zh-CN' ? '下载 LittleAIBox' :
+                lang === 'zh-TW' ? '下載 LittleAIBox' :
+                    lang === 'en' ? 'Download LittleAIBox' :
+                        lang === 'ja' ? 'LittleAIBox をダウンロード' :
+                            'LittleAIBox 다운로드';
+
+            // 应用普通文本翻译
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (t[key]) {
+                    el.textContent = t[key];
+                }
+            });
+
+            // 应用HTML翻译（包含标签）
+            document.querySelectorAll('[data-i18n-html]').forEach(el => {
+                const key = el.getAttribute('data-i18n-html');
+                if (t[key]) {
+                    el.innerHTML = t[key];
+                }
+            });
+
+            // 更新语言选择器显示
+            document.getElementById('currentLang').textContent = langNames[lang];
+
+            // 更新选项的active状态
+            document.querySelectorAll('.lang-option').forEach(option => {
+                if (option.dataset.lang === lang) {
+                    option.classList.add('active');
+                } else {
+                    option.classList.remove('active');
+                }
+            });
+
+            // 保存语言选择
+            localStorage.setItem('downloadPageLanguage', lang);
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            // 优先从URL参数获取语言，其次是localStorage，最后是浏览器检测
+            const urlLang = getLangFromURL();
+            const savedLang = localStorage.getItem('downloadPageLanguage');
+            const currentLang = urlLang || savedLang || detectBrowserLanguage();
+
+            const urlTheme = getThemeFromURL();
+            const currentTheme = urlTheme || 'light';
+
+            document.documentElement.setAttribute('data-theme', currentTheme);
+            // 应用翻译
+            applyTranslations(currentLang);
+
+            // 语言下拉菜单交互
+            const langButton = document.getElementById('langButton');
+            const langDropdown = document.getElementById('langDropdown');
+            const langMenu = document.getElementById('langMenu');
+
+            langButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isOpen = langDropdown.classList.toggle('open');
+                langButton.setAttribute('aria-expanded', isOpen);
+            });
+
+            // 点击选项切换语言
+            document.querySelectorAll('.lang-option').forEach(option => {
+                option.addEventListener('click', () => {
+                    const lang = option.dataset.lang;
+                    applyTranslations(lang);
+                    langDropdown.classList.remove('open');
+                    langButton.setAttribute('aria-expanded', 'false');
+                });
+            });
+
+            // 点击外部关闭菜单
+            document.addEventListener('click', () => {
+                if (langDropdown.classList.contains('open')) {
+                    langDropdown.classList.remove('open');
+                    langButton.setAttribute('aria-expanded', 'false');
+                }
+            });
+
+            // 手风琴功能
+            document.querySelectorAll('.accordion-item').forEach(item => {
+                const trigger = item.querySelector('.accordion-trigger');
+                const content = item.querySelector('.accordion-content');
+                trigger.addEventListener('click', () => {
+                    const isActive = item.classList.toggle('active');
+                    content.style.maxHeight = isActive ? content.scrollHeight + 'px' : null;
+                });
+            });
+
+            // 感谢框功能
+            const thankYouModal = document.getElementById('thank-you-modal');
+            const modalContent = document.getElementById('modal-content');
+            document.querySelectorAll('a[download]').forEach(link => {
+                link.addEventListener('click', () => {
+                    thankYouModal.classList.remove('hidden');
+                    setTimeout(() => {
+                        thankYouModal.classList.remove('opacity-0');
+                        modalContent.classList.remove('scale-95');
+                    }, 10);
+
+                    setTimeout(() => {
+                        thankYouModal.classList.add('opacity-0');
+                        modalContent.classList.add('scale-95');
+                        setTimeout(() => {
+                            thankYouModal.classList.add('hidden');
+                        }, 300);
+                    }, 3500);
+                });
+            });
+        });
+
+        // 全局点击波纹效果
+        document.addEventListener('click', function (e) {
+            if (e.target.closest('a, button')) return;
+            const ripple = document.createElement('span');
+            ripple.classList.add('ripple');
+            const size = Math.max(window.innerWidth, window.innerHeight) / 10;
+            ripple.style.width = ripple.style.height = `${size}px`;
+            ripple.style.left = `${e.clientX}px`;
+            ripple.style.top = `${e.clientY}px`;
+            document.body.appendChild(ripple);
+            ripple.addEventListener('animationend', () => ripple.remove());
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,1418 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+
+    <script>
+        (function () {
+            try {
+                let theme = 'light';
+                const userPreset = localStorage.getItem('userThemePreset');
+
+                if (userPreset) {
+                    theme = userPreset;
+                } else {
+                    const guestSettingsRaw = localStorage.getItem('guestThemeSettings');
+                    if (guestSettingsRaw) {
+                        const guestSettings = JSON.parse(guestSettingsRaw);
+                        if (guestSettings.preset === 'dark') {
+                            theme = 'dark';
+                        }
+                    }
+                }
+                document.documentElement.setAttribute('data-theme', theme);
+            } catch (e) {
+                document.documentElement.setAttribute('data-theme', 'light');
+                console.error('Error applying pre-load theme:', e);
+            }
+        })();
+    </script>
+
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>LittleAIBox</title>
+    <meta name="theme-color" content="#ffffff">
+    <meta name="color-scheme" content="light dark">
+
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="/images/favicon.ico">
+    <link rel="apple-touch-icon" href="/images/pwa-192x192.png">
+
+    <link rel="stylesheet" href="/libs/katex.min.css">
+    <link rel="stylesheet" href="/libs/github-dark.min.css">
+
+    <script src="/libs/fp.min.js" defer></script>
+    <script src="/libs/turndown.min.js" defer></script>
+    <script src="/libs/turndown-plugin-gfm.min.js" defer></script>
+    <script src="/libs/marked.min.js" defer></script>
+    <script src="/libs/purify.min.js" defer></script>
+    <script src="/libs/highlight.min.js" defer></script>
+    <script>
+        window.addEventListener('DOMContentLoaded', () => {
+            try {
+                if (!window.hljs) return;
+
+                const aliasMap = {
+                    riscv: 'x86asm',
+                    asm: 'x86asm',
+                    sh: 'bash',
+                    shell: 'bash',
+                    zsh: 'bash',
+                    yml: 'yaml',
+                    js: 'javascript',
+                    jsx: 'javascript',
+                    ts: 'typescript',
+                    tsx: 'typescript',
+                    proto: 'protobuf',
+                    ps1: 'powershell',
+                    kt: 'kotlin',
+                    rs: 'rust',
+                    'c++': 'cpp',
+                    'c#': 'csharp',
+                    objc: 'objectivec',
+                    md: 'markdown',
+                    text: 'plaintext'
+                };
+
+                const requested = new Map();
+                const resolveLang = (name) => aliasMap[name] || name;
+
+                if (hljs.registerAliases) {
+                    Object.entries(aliasMap).forEach(([alias, languageName]) => {
+                        try { hljs.registerAliases(alias, { languageName }); } catch (e) { }
+                    });
+                }
+
+                function loadLanguageIfNeeded(lang) {
+                    const target = resolveLang(lang);
+                    try { if (hljs.getLanguage(target)) return Promise.resolve(true); } catch (_) { }
+                    if (requested.has(target)) return requested.get(target);
+
+                    const p = new Promise((resolve) => {
+                        const s = document.createElement('script');
+                        s.src = `/libs/languages/${target}.min.js`;
+                        s.async = true;
+                        s.onload = () => resolve(true);
+                        s.onerror = () => resolve(false);
+                        document.head.appendChild(s);
+                    });
+                    requested.set(target, p);
+                    return p;
+                }
+
+                const originalHighlightElement = hljs.highlightElement.bind(hljs);
+                hljs.highlightElement = function (el) {
+                    try {
+                        const cls = Array.from(el.classList || []);
+                        const langClass = cls.find(c => c.startsWith('language-'));
+                        const lang = langClass ? langClass.slice('language-'.length) : null;
+                        if (lang && !hljs.getLanguage(resolveLang(lang))) {
+                            loadLanguageIfNeeded(lang).then((ok) => {
+                                if (ok) {
+                                    try { originalHighlightElement(el); } catch (_) { }
+                                } else {
+                                    el.classList.remove(`language-${lang}`);
+                                    el.classList.add('language-plaintext');
+                                    try { originalHighlightElement(el); } catch (_) { }
+                                }
+                            });
+                            return; 
+                        }
+                    } catch (_) { }
+                    return originalHighlightElement(el);
+                };
+            } catch (e) { }
+        });
+    </script>
+
+    <script src="/libs/katex.min.js" defer></script>
+    <script src="/libs/auto-render.min.js" defer></script>
+    <script src="/libs/mhchem.min.js" defer></script>
+    <script type="module" src="/libs/copy-tex.mjs"></script>
+
+    <!-- 主题相关标题栏颜色 -->
+    <script type="module">
+        import { Capacitor } from '@capacitor/core';
+        import { StatusBar, Style } from '@capacitor/status-bar';
+
+        const isNativeApp = Capacitor.isNativePlatform();
+
+        const THEME_CONFIG = {
+            light: {
+                statusBarStyle: Style.Light,
+                statusBarColor: '#ffffff'
+            },
+            dark: {
+                statusBarStyle: Style.Dark,
+                statusBarColor: '#1e1e1e'
+            }
+        };
+
+        const THEME_COLOR_META = {
+            light: '#ffffff',
+            dark: '#1e1e1e'
+        };
+
+        // 原生应用：更新系统状态栏（Android/iOS）
+        async function updateNativeStatusBar() {
+            if (!isNativeApp) return;
+            try {
+                const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+                const config = THEME_CONFIG[currentTheme];
+                await StatusBar.setStyle({ style: config.statusBarStyle });
+                await StatusBar.setBackgroundColor({ color: config.statusBarColor });
+            } catch (error) {
+                console.error('StatusBar error:', error);
+            }
+        }
+
+        // PWA：更新 Windows/浏览器标题栏颜色
+        function updatePwaThemeColor() {
+            try {
+                const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+                const color = THEME_COLOR_META[currentTheme] || '#ffffff';
+                let meta = document.querySelector('meta[name="theme-color"]');
+                if (!meta) {
+                    meta = document.createElement('meta');
+                    meta.setAttribute('name', 'theme-color');
+                    document.head.appendChild(meta);
+                }
+                meta.setAttribute('content', color);
+            } catch (e) {
+                console.error('theme-color meta update error:', e);
+            }
+        }
+
+        function watchThemeChanges() {
+            // 首次应用
+            updateNativeStatusBar();
+            updatePwaThemeColor();
+
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
+                        updateNativeStatusBar();
+                        updatePwaThemeColor();
+                    }
+                });
+            });
+            observer.observe(document.documentElement, {
+                attributes: true,
+                attributeFilter: ['data-theme']
+            });
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', watchThemeChanges);
+        } else {
+            watchThemeChanges();
+        }
+    </script>
+
+    <script type="module" src="/src/api-config.js"></script>
+    <script type="module" src="/src/main.js"></script>
+    <link rel="stylesheet" href="/src/floating-timeline.css">
+    <script type="module" src="/src/floating-timeline.js"></script>
+</head>
+
+<body>
+    <div id="loading-screen" class="loading-screen">
+        <div class="loading-container">
+            <div class="loading-logo">
+                <h1 data-i18n-key="ui.appTitle">LittleAIBox</h1>
+                <p data-i18n-key="ui.appSubtitle">智能AI对话助手</p>
+            </div>
+            <div class="loading-spinner">
+                <svg class="spinner" viewBox="0 0 50 50">
+                    <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="3"></circle>
+                </svg>
+            </div>
+            <div class="loading-text" data-i18n-key="ui.loadingCoreResources">正在加载核心资源...</div>
+        </div>
+    </div>
+
+    <div id="auth-overlay" class="auth-overlay">
+        <div class="auth-container">
+            <div class="auth-logo">
+                <h1 data-i18n-key="ui.appTitle">LittleAIBox</h1>
+                <p data-i18n-key="ui.appSubtitle">智能AI对话助手</p>
+            </div>
+
+            <div class="auth-tabs" id="auth-tabs">
+                <div class="auth-tab-indicator"></div>
+                <button class="auth-tab active" data-tab="login" data-i18n-key="login">登录</button>
+                <button class="auth-tab" data-tab="register" data-i18n-key="register">注册</button>
+            </div>
+
+            <div class="auth-forms-clipper">
+                <div class="auth-forms-container" id="auth-forms-container">
+                    <form id="login-form" class="auth-form active">
+                        <div class="form-group">
+                            <label for="login-email" data-i18n-key="emailLabel">邮箱</label>
+                            <input type="email" id="login-email" name="email" placeholder="请输入邮箱"
+                                data-i18n-placeholder-key="emailPlaceholder" autocomplete="username" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="login-password" data-i18n-key="passwordLabel">密码</label>
+                            <input type="password" id="login-password" name="password" placeholder="请输入密码"
+                                data-i18n-placeholder-key="passwordPlaceholder" autocomplete="current-password"
+                                required>
+                            <div style="text-align: right; margin-top: 5px;">
+                                <button type="button" id="forgot-password-btn"
+                                    style="background: none; border: none; color: #f44336; cursor: pointer; text-decoration: underline; font-size: 14px;"
+                                    data-i18n-key="forgotPassword">忘记密码？</button>
+                            </div>
+                        </div>
+                        <button type="submit" class="auth-submit" data-i18n-key="loginButton">登录</button>
+                    </form>
+
+                    <form id="register-form" class="auth-form">
+                        <div class="form-group">
+                            <label for="register-email" data-i18n-key="emailLabel">邮箱</label>
+                            <input type="email" id="register-email" name="registerEmail" placeholder="请输入邮箱"
+                                data-i18n-placeholder-key="emailPlaceholder" autocomplete="username" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="register-username" data-i18n-key="usernameLabel">用户名（可选）</label>
+                            <input type="text" id="register-username" name="registerUsername" placeholder="请输入用户名"
+                                data-i18n-placeholder-key="usernamePlaceholder" autocomplete="username">
+                        </div>
+                        <div class="form-group">
+                            <label for="register-password" data-i18n-key="passwordLabel">密码</label>
+                            <input type="password" id="register-password" name="registerPassword"
+                                placeholder="请输入密码（至少6位）" data-i18n-placeholder-key="passwordPlaceholderWithRule"
+                                autocomplete="new-password" required minlength="6">
+                        </div>
+                        <div class="form-group">
+                            <label for="register-confirm-password" data-i18n-key="confirmPasswordLabel">确认密码</label>
+                            <input type="password" id="register-confirm-password" name="registerConfirmPassword"
+                                placeholder="请再次输入密码" data-i18n-placeholder-key="confirmPasswordPlaceholder"
+                                autocomplete="new-password" required>
+                        </div>
+                        <button type="submit" class="auth-submit" data-i18n-key="registerButton">注册</button>
+                    </form>
+                </div>
+
+                <form id="verify-form" class="auth-form">
+                    <div class="form-group">
+                        <label for="verify-code" data-i18n-key="verificationCodeSent">验证码已发送至：<span
+                                id="verify-email-display"></span></label>
+                        <input type="text" id="verify-code" name="verificationCode" placeholder="请输入6位验证码"
+                            data-i18n-placeholder-key="verificationCodePlaceholder" autocomplete="one-time-code"
+                            required maxlength="6">
+                        <p style="font-size: 12px; color: #666; margin-top: 5px;" data-i18n-key="verificationCodeHint">
+                            验证码有效期为10分钟</p>
+                    </div>
+                    <button type="submit" class="auth-submit" data-i18n-key="verifyAndRegisterButton">验证并完成注册</button>
+                    <button type="button" id="resend-code-btn"
+                        style="background: none; border: 1px solid var(--border-color); color: var(--text-color); width: 100%; padding: 12px; border-radius: 8px; margin-top: 8px;"
+                        data-i18n-key="resendCodeButton">重新发送验证码</button>
+                </form>
+
+                <form id="forgot-password-form" class="auth-form">
+                    <div class="form-group">
+                        <label for="forgot-email" data-i18n-key="emailLabel">邮箱</label>
+                        <input type="email" id="forgot-email" name="forgotEmail" placeholder="请输入注册邮箱"
+                            data-i18n-placeholder-key="forgotEmailPlaceholder" autocomplete="username" required>
+                    </div>
+                    <button type="submit" class="auth-submit" data-i18n-key="sendResetLinkButton">发送重置链接</button>
+                    <button type="button" id="back-to-login-btn"
+                        style="background: none; border: 1px solid var(--border-color); color: var(--text-color); width: 100%; padding: 12px; border-radius: 8px; margin-top: 8px;">返回登录</button>
+                </form>
+
+                <form id="reset-password-form" class="auth-form">
+                    <input type="text" id="reset-username-autocomplete-fix" name="username"
+                        style="position: absolute; left: -9999px; opacity: 0;" autocomplete="username" tabindex="-1">
+                    <div class="form-group">
+                        <label for="new-password" data-i18n-key="newPasswordLabel">新密码</label>
+                        <input type="password" id="new-password" name="newPassword" placeholder="请输入新密码(至少6位)"
+                            data-i18n-placeholder-key="newPasswordPlaceholder" autocomplete="new-password" required
+                            minlength="6">
+                    </div>
+                    <div class="form-group">
+                        <label for="confirm-new-password" data-i18n-key="confirmNewPasswordLabel">确认新密码</label>
+                        <input type="password" id="confirm-new-password" name="confirmNewPassword"
+                            placeholder="请再次输入新密码" data-i18n-placeholder-key="confirmNewPasswordPlaceholder"
+                            autocomplete="new-password" required>
+                    </div>
+                    <button type="submit" class="auth-submit" data-i18n-key="resetPasswordButton">重置密码</button>
+                </form>
+            </div>
+
+            <div class="auth-footer">
+                <p><button type="button" id="guest-continue"
+                        style="background: none; border: none; color: var(--accent-color); cursor: pointer; text-decoration: underline;"
+                        data-i18n-key="continueAsGuest">以访客身份继续体验</button>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <div class="app-container">
+        <!-- 侧边栏 -->
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <h1 data-i18n-key="ui.appTitle">LittleAIBox</h1>
+            </div>
+            <button id="new-chat-btn">
+                <svg class="icon-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                </svg>
+                <svg class="icon-plus" viewBox="0 0 24 24" fill="currentColor" width="24" height="24">
+                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                </svg>
+                <span data-i18n-key="ui.newChat">新建聊天</span>
+            </button>
+            <ul id="chat-history">
+                <li id="chat-history-loader" class="chat-history-loading-item">
+                    <div class="loading-spinner">
+                        <svg class="spinner" viewBox="0 0 50 50">
+                            <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle>
+                        </svg>
+                    </div>
+                    <div class="loading-text" data-i18n-key="ui.loadingChatHistory">正在加载聊天记录...</div>
+                </li>
+            </ul>
+            <div id="delete-all-chats-btn" class="settings-item">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                </svg>
+                <span data-i18n-key="ui.deleteAll">一键删除</span>
+            </div>
+            <div id="clear-cache-btn" class="settings-item">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path
+                        d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM19 18H6c-2.21 0-4-1.79-4-4 0-2.05 1.53-3.76 3.56-3.97l1.07-.11.5-.95C8.08 7.14 9.94 6 12 6c2.62 0 4.88 1.86 5.39 4.43l.3 1.5 1.53.11c1.56.1 2.78 1.44 2.78 3.03 0 1.65-1.35 3-3 3zm-5.8-3.45l1.41-1.41-1.16-1.16-1.41 1.41-1.41-1.41-1.16 1.16 1.41 1.41-1.41 1.41 1.16 1.16 1.41-1.41 1.41 1.41 1.16-1.16zM12 10.5c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5-1.5-.67-1.5-1.5.67-1.5 1.5-1.5z" />
+                </svg>
+                <span data-i18n-key="ui.clearCache">清除缓存</span>
+            </div>
+            <div id="settings-btn" class="settings-item">
+                <svg viewBox="0 0 24 24">
+                    <path
+                        d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5a3.5,3.5 0 0,1 3.5,3.5A3.5,3.5 0 0,1 12,15.5M19.43,12.98C19.47,12.66 19.5,12.34 19.5,12C19.5,11.66 19.47,11.34 19.43,11.02L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.65 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.22,8.95 2.27,9.22 2.46,9.37L4.57,11.02C4.53,11.34 4.5,11.66 4.5,12C4.5,12.34 4.53,12.66 4.57,12.98L2.46,14.63C2.27,14.78 2.22,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.04 4.95,18.95L7.44,17.95C7.96,18.35 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.68 16.04,18.34 16.56,17.95L19.05,18.95C19.27,19.04 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.98Z" />
+                </svg>
+                <span data-i18n-key="ui.settings" id="settings-text">设置</span>
+            </div>
+            <div class="sidebar-footer">
+                <div id="multi-select-actions" style="display: none;">
+                    <button id="cancel-multi-select-btn" class="btn-secondary" data-i18n-key="ui.cancel">取消</button>
+                    <button id="delete-selected-btn" class="btn-danger" data-i18n-key="ui.deleteSelected">删除选中
+                        (0)</button>
+                </div>
+            </div>
+        </aside>
+
+        <div class="sidebar-overlay" id="sidebar-overlay"></div>
+        <!-- 聊天区域 -->
+        <div class="chat-area">
+            <header class="chat-header">
+                <button id="sidebar-toggle-btn" aria-label="切换侧边栏" data-i18n-aria-label="ui.toggleSidebar"
+                    aria-expanded="false">
+                    <svg aria-hidden="true" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                        <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"></path>
+                    </svg>
+                </button>
+
+                <div class="header-right-items">
+                    <a href="/download-app" id="download-guide-link" class="privacy-link-header">
+                        <span data-i18n-key="ui.downloadGuide">下载指引</span>
+                    </a>
+                    <span id="user-name-display-header" style="display: none;"></span>
+                    <div id="auth-container">
+                        <span id="user-name-display-main" style="display: none;"></span>
+                        <div id="auth-container-inner">
+                            <div id="user-avatar-button" class="avatar"
+                                style="display: none; cursor: pointer; width: 32px; height: 32px; background-color: rgb(26, 115, 232); color: white; font-weight: bold; font-size: 14px;">
+                            </div>
+                            <button id="custom-login-btn" style="display: none;"
+                                data-i18n-key="ui.loginRegister">登录/注册</button>
+                        </div>
+                        <div id="user-info-popover"></div>
+                    </div>
+            </header>
+            <div class="chat-content-wrapper">
+                <div id="chat-loader-bar" class="loader-bar"></div>
+                <main id="chat-container">
+                </main>
+            </div>
+            <div class="bottom-panel">
+                <div class="input-outer-wrapper">
+                    <div class="attachments-preview" id="attachments-preview"></div>
+                    <div id="quote-preview-container"></div>
+                    
+                    <div class="input-wrapper">
+                        <div id="upload-menu">
+                            <div class="upload-menu-item" id="upload-image-btn">
+                                <svg viewBox="0 0 24 24">
+                                    <path
+                                        d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
+                                </svg>
+                                <span data-i18n-key="ui.uploadImage">上传图片</span>
+                            </div>
+                            <div class="upload-menu-item" id="upload-code-btn">
+                                <svg viewBox="0 0 24 24">
+                                    <path
+                                        d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0L19.2 12l-4.6-4.6L16 6l6 6-6 6-1.4-1.4z" />
+                                </svg>
+                                <span data-i18n-key="ui.uploadCode">上传代码</span>
+                            </div>
+                            <div class="upload-menu-item" id="upload-file-btn">
+                                <svg viewBox="0 0 24 24">
+                                    <path
+                                        d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
+                                </svg>
+                                <span data-i18n-key="ui.uploadFile">上传文件</span>
+                            </div>
+                        </div>
+
+                        <!-- 主要输入行 -->
+                        <div class="input-main-row">
+                            <button id="add-file-btn">
+                                <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24">
+                                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                                </svg>
+                            </button>
+
+                            <input type="file" id="file-input" style="display: none;" multiple>
+                            <textarea id="message-input" name="message" placeholder="询问任何问题"
+                                data-i18n-placeholder-key="ui.askAnyQuestion" rows="1"></textarea>
+
+                            <div class="input-right-buttons">
+                                <button id="send-button" class="input-action-btn" disabled>
+                                    <svg viewBox="0 0 24 24" fill="white" width="16" height="16">
+                                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 模型选择行 -->
+                        <div class="input-model-row">
+                            <div class="model-row-controls left">
+                                <button id="search-mode-btn" class="input-action-btn" title="切换搜索模式"
+                                    data-i18n-title="ui.searchMode">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                                        <path
+                                            d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+                                    </svg>
+                                </button>
+                                <button id="image-mode-btn" class="input-action-btn" title="切换图片生成模式"
+                                    data-i18n-title="ui.imageMode">
+                                    <svg viewBox="0 0 24 24">
+                                        <path
+                                            d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
+                                    </svg>
+                                </button>
+                                <button id="voice-btn" class="input-action-btn" title="语音输入"
+                                    data-i18n-title="ui.voiceInput">
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                                        <path
+                                            d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.49 6-3.31 6-6.72h-1.7z">
+                                        </path>
+                                    </svg>
+                                </button>
+                                <div class="info-tooltip-container">
+                                    <svg class="info-icon" viewBox="0 0 24 24">
+                                        <path
+                                            d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z">
+                                        </path>
+                                    </svg>
+                                    <span class="info-tooltip-text"
+                                        data-i18n-key="ui.voiceInputTip">语音输入功能在桌面端Chrome浏览器上体验最佳，其他浏览器可能存在兼容性问题。</span>
+                                </div>
+                            </div>
+
+                            <div id="model-select-container" style="position: relative;">
+                                <button id="model-select-btn" class="input-action-btn">
+                                    <span id="selected-model-name"></span>
+                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                        <path d="M7 10l5 5 5-5z" />
+                                    </svg>
+                                </button>
+                                <div id="model-select-menu"></div>
+                            </div>
+
+                            <div class="model-row-controls right">
+                                <div id="char-counter" class="char-counter"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 自定义抽屉 -->
+    <aside id="right-sidebar">
+        <div class="sidebar-header">
+            <h1 data-i18n-key="ui.aiParameters">AI 参数设定（Beta）</h1>
+        </div>
+        <div class="right-sidebar-content">
+            <div id="parameter-loading" class="parameter-loading-state" style="display: none;">
+                <div class="parameter-loading-spinner">
+                    <svg class="spinner" viewBox="0 0 50 50">
+                        <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle>
+                    </svg>
+                </div>
+                <div class="parameter-loading-text" data-i18n-key="ui.loadingAIParameters">正在加载AI参数设置...</div>
+            </div>
+            <div class="sidebar-settings-container">
+                <div class="sidebar-setting">
+                    <div class="setting-label" data-i18n-key="ui.taskPreset">任务预设</div>
+                    <div class="custom-dropdown" id="task-preset-dropdown">
+                        <div class="dropdown-trigger" id="task-preset-trigger">
+                            <span class="dropdown-text" data-i18n-key="ui.selectPreset">请选择预设</span>
+                            <svg class="dropdown-arrow" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                                fill="currentColor">
+                                <path d="M7 10l5 5 5-5z" />
+                            </svg>
+                        </div>
+                        <div class="dropdown-menu" id="task-preset-menu">
+                            <div class="dropdown-item" data-value="daily-chat" data-i18n-key="ui.dailyChat">日常对话</div>
+                            <div class="dropdown-item" data-value="coding-assistant" data-i18n-key="ui.codingAssistant">
+                                编程助手</div>
+                            <div class="dropdown-item" data-value="writing-assistant"
+                                data-i18n-key="ui.writingAssistant">写作助手</div>
+                            <div class="dropdown-item" data-value="text-translation" data-i18n-key="ui.textTranslation">
+                                文本翻译</div>
+                            <div class="dropdown-item" data-value="classical-chinese-research"
+                                data-i18n-key="ui.classicalChineseAnalysis">古文/历史研究</div>
+                            <div class="dropdown-item" data-value="travel-guide" data-i18n-key="ui.travelGuide">旅行向导
+                            </div>
+                            <div class="dropdown-item" data-value="roleplay-creative"
+                                data-i18n-key="ui.roleplayCreative">角色扮演创作</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sidebar-setting">
+                    <label for="system-prompt">
+                        <span data-i18n-key="ui.systemPrompt">系统提示</span>
+                        <span class="help-tooltip" title="为AI设定一个角色或身份，例如：你是一名资深的软件工程师。"
+                            data-i18n-title="ui.systemPromptHelp">?</span>
+                    </label>
+                    <textarea id="system-prompt" name="system-prompt" rows="5" placeholder="例如：你是一位精通中国古诗词的专家。"
+                        data-i18n-placeholder-key="ui.systemPromptExample"></textarea>
+                    <div id="system-prompt-counter">0 / 1000</div>
+                </div>
+
+                <div class="sidebar-setting">
+                    <label for="temperature-slider">
+                        <span data-i18n-key="ui.temperature">温度</span>
+                        <span class="help-tooltip" title="数值越低，AI的回答越稳定、严谨；数值越高，回答越具创造性和多样性。"
+                            data-i18n-title="ui.temperatureHelp">?</span>
+                    </label>
+                    <div class="slider-container">
+                        <input type="range" id="temperature-slider" name="temperature" min="0" max="1" step="0.1"
+                            value="0.5">
+                        <span id="temperature-value">0.5</span>
+                    </div>
+                    <div class="slider-labels">
+                        <span data-i18n-key="ui.conservative">保守</span>
+                        <span data-i18n-key="ui.bold">大胆</span>
+                    </div>
+                </div>
+
+                <div class="sidebar-setting-divider" data-i18n-key="ui.advancedParameters">高级参数</div>
+                <div class="sidebar-setting-group">
+                    <div class="sidebar-setting horizontal">
+                        <label for="top-k-input" data-i18n-key="ui.topK">Top-K</label>
+                        <input type="number" id="top-k-input" name="top-k" min="1" max="100" step="1" value="40">
+                    </div>
+                    <div class="sidebar-setting horizontal">
+                        <label for="top-p-input" data-i18n-key="ui.topP">Top-P</label>
+                        <input type="number" id="top-p-input" name="top-p" min="0" max="1" step="0.05" value="0.95">
+                    </div>
+                </div>
+
+                <div id="weekly-timer-display"></div>
+
+                <div class="sidebar-setting-actions">
+                    <button id="cancel-settings-btn" class="btn-secondary" data-i18n-key="ui.cancel">取消</button>
+                    <button id="save-settings-btn" class="btn-primary" data-i18n-key="ui.save">保存</button>
+                </div>
+
+            </div>
+        </div>
+    </aside>
+
+    <button id="right-sidebar-toggle-btn" aria-label="Toggle right drawer" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+        </svg>
+    </button>
+
+    <!-- 文件查看器 -->
+    <div id="file-viewer-overlay" class="modal-overlay">
+        <div id="file-viewer" class="modal">
+            <div class="modal-header">
+                <span id="file-viewer-filename"></span>
+                <div class="file-viewer-actions">
+                    <button id="copy-file-content">
+                        <svg viewBox="0 0 24 24">
+                            <path
+                                d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
+                        </svg>
+                        <span data-i18n-key="ui.copyContent">复制内容</span>
+                    </button>
+                    <button id="file-viewer-close" class="close-btn">&times;</button>
+                </div>
+            </div>
+            <div class="modal-content">
+                <pre id="file-viewer-code-container"
+                    style="display: none;"><code id="file-viewer-code" class="hljs"></code></pre>
+
+                <div id="file-viewer-text-container"
+                    style="display: none; white-space: pre-wrap; padding: 20px; font-family: 'Fira Code', 'Consolas', monospace; font-size: 14px; line-height: 1.5;">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 设置模态框 -->
+    <div id="settings-modal-overlay" class="modal-overlay">
+        <div id="settings-modal" class="modal">
+            <div class="modal-header">
+                <button id="settings-nav-toggle-btn" aria-label="切换设置菜单" data-i18n-aria-label="ui.toggleSettingsMenu">
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                        <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"></path>
+                    </svg>
+                </button>
+                <h2 data-i18n-key="ui.settings">设置</h2>
+                <button id="settings-close-btn" class="close-btn">&times;</button>
+            </div>
+            <div class="settings-modal-body">
+                <nav class="settings-nav">
+                    <div class="settings-nav-header">
+                        <h3 data-i18n-key="ui.menu">菜单</h3>
+                        <button id="settings-nav-close-btn" class="close-btn">&times;</button>
+                    </div>
+                    <a href="#" class="settings-nav-item active" data-page="profile">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                        <span data-i18n-key="ui.profile">个人资料</span>
+                    </a>
+                    <a href="#" class="settings-nav-item" data-page="theme">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0L12 2.69z"></path>
+                        </svg>
+                        <span data-i18n-key="ui.themeFont">主题 & 字体</span>
+                    </a>
+                    <a href="#" class="settings-nav-item" data-page="language">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="2" y1="12" x2="22" y2="12"></line>
+                            <path
+                                d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z">
+                            </path>
+                        </svg>
+                        <span data-i18n-key="ui.language">语言</span>
+                    </a>
+                    <a href="#" class="settings-nav-item" data-page="timeline">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="6" r="2"></circle>
+                            <line x1="12" y1="8" x2="12" y2="16"></line>
+                            <circle cx="12" cy="18" r="2"></circle>
+                        </svg>
+                        <span data-i18n-key="ui.timelineAssistant">消息时间线</span>
+                    </a>
+                    <a href="#" class="settings-nav-item" data-page="api">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="m12 14 4-4"></path>
+                            <path d="M3.34 19a10 10 0 1 1 17.32 0"></path>
+                        </svg>
+                        <span data-i18n-key="ui.apiUsage">API & 用量</span>
+                    </a>
+                    <a href="#" class="settings-nav-item" data-page="security">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                        </svg>
+                        <span data-i18n-key="ui.security">安全性</span>
+                    </a>
+                    <a href="#" class="settings-nav-item" data-page="privacy-policy">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                        </svg>
+                        <span data-i18n-key="ui.privacyPolicy">隐私协议</span>
+                        <span class="update-badge" id="privacy-update-badge" style="display: none;">1</span>
+                    </a>
+                    <a href="#" class="settings-nav-item" data-page="about" id="about-nav-item">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="16" x2="12" y2="12"></line>
+                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                        </svg>
+                        <span data-i18n-key="ui.about">关于</span>
+                        <span class="update-badge" id="about-update-badge" style="display: none;">1</span>
+                    </a>
+                    <a href="#" class="settings-nav-item" data-page="donation">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path>
+                        </svg>
+                        <span data-i18n-key="ui.donation">捐赠</span>
+                    </a>
+                </nav>
+                <main class="settings-content">
+                    <div id="profile-settings-page" class="settings-page active">
+                        <div id="guest-profile-section" style="display: none;">
+                            <div class="guest-profile-card">
+                                <div class="guest-avatar">U</div>
+                                <div class="guest-info">
+                                    <h3 data-i18n-key="ui.guestUser">访客用户</h3>
+                                    <p data-i18n-key="ui.guestUserDesc">登录后可解锁更多功能，并永久保存您的对话记录。</p>
+                                </div>
+                                <button id="guest-login-prompt-btn" class="btn-primary"
+                                    data-i18n-key="ui.loginNow">立即登录/注册</button>
+                            </div>
+                        </div>
+
+                        <div id="edit-profile-section" style="display: none;">
+                            <div class="profile-edit-layout">
+
+                                <div class="avatar-upload-container">
+                                    <div class="avatar-preview-wrapper" id="avatar-preview-wrapper" title="点击更改头像"
+                                        data-i18n-title="ui.clickToChangeAvatar">
+                                        <img id="avatar-preview" src="/images/favicon.ico" alt="头像预览">
+                                        <div class="avatar-edit-overlay">
+                                            <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                                                <path
+                                                    d="M14.06 9.06L15.94 10.94 8.06 18.81 6.19 16.94zM16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z">
+                                                </path>
+                                            </svg>
+                                        </div>
+                                    </div>
+                                    <input type="file" id="avatar-file-input" accept="image/png, image/jpeg, image/gif"
+                                        style="display: none;">
+                                </div>
+
+                                <div class="form-group">
+                                    <input type="text" id="edit-username" name="username" placeholder="在此输入用户名"
+                                        data-i18n-placeholder-key="ui.enterUsername" autocomplete="username">
+                                </div>
+
+                                <div class="form-group email-display">
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="#888">
+                                        <path
+                                            d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z">
+                                        </path>
+                                    </svg>
+                                    <span id="display-email-text"></span>
+                                </div>
+                            </div>
+
+                            <button id="save-profile-btn" class="btn-primary"
+                                data-i18n-key="ui.savePersonalInfo">保存个人信息</button>
+                        </div>
+
+                        <div class="form-group account-actions-group">
+                            <h4 data-i18n-key="ui.accountActions">账户操作</h4>
+                            <button id="logout-btn" class="btn-secondary" style="display: none;"
+                                data-i18n-key="ui.logout">退出登录</button>
+                        </div>
+                    </div>
+                    <div id="api-settings-page" class="settings-page">
+                        <div class="settings-page-grid">
+                            <div class="settings-description">
+                                <h3 data-i18n-key="ui.customApiKey">自定义 API Key</h3>
+                                <p data-i18n-key="ui.customApiKeyDesc">配置您自己的Google Gemini API
+                                    Key后，将不再受平台每日调用次数的限制，并获得更快的响应速度。</p>
+                                <p class="usage-info" style="margin-top: 8px;">
+                                    <strong data-i18n-key="ui.mixedMode">混合模式：</strong><span
+                                        data-i18n-key="ui.mixedModeDesc">系统会智能调度、使用两个Key，并在一个Key失效时自动切换，处理能力翻倍。</span><br>
+                                    <strong data-i18n-key="ui.singleMode">单处理模式：</strong><span
+                                        data-i18n-key="ui.singleModeDesc">系统将仅使用KEY_ONE，KEY_TWO仅在第一个失效时作为备用。</span>
+                                </p>
+                            </div>
+                            <div class="settings-form-area">
+                                <form id="api-key-form" class="settings-form">
+                                    <input type="text" id="api-key-username-autocomplete-fix" name="username"
+                                        style="position: absolute; left: -9999px; opacity: 0;" autocomplete="username"
+                                        tabindex="-1">
+
+                                    <div class="form-group floating-label-group">
+                                        <input type="password" id="api-key-one" name="apiKeyOne" class="api-key-input"
+                                            placeholder=" " autocomplete="new-password">
+                                        <label for="api-key-one">KEY_ONE</label>
+                                    </div>
+
+                                    <div class="form-group floating-label-group">
+                                        <input type="password" id="api-key-two" name="apiKeyTwo" class="api-key-input"
+                                            placeholder=" " autocomplete="new-password">
+                                        <label for="api-key-two">KEY_TWO</label>
+                                    </div>
+
+                                    <p id="api-key-status" class="usage-info">已配置自定义 Key（混合模式）</p>
+
+                                    <div class="api-mode-selector">
+                                        <input type="radio" id="mode-mixed" name="api-mode" value="mixed" checked>
+                                        <label for="mode-mixed" class="mode-label"
+                                            data-i18n-key="ui.mixedMode">混合模式</label>
+
+                                        <input type="radio" id="mode-single" name="api-mode" value="single">
+                                        <label for="mode-single" class="mode-label"
+                                            data-i18n-key="ui.singleMode">单处理模式</label>
+                                    </div>
+
+                                    <button type="submit" id="settings-save-btn" class="btn-primary"
+                                        data-i18n-key="status.saveKeySettings">保存密钥设置</button>
+                                </form>
+                                <div id="usage-stats" style="margin-top: 24px; display: none;">
+                                    <p id="usage-display" data-i18n-key="ui.todayUsage">今日已用: 0 / ∞ (自定义Key)</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="theme-settings-page" class="settings-page">
+                        <div class="settings-page-grid">
+                            <div class="settings-description">
+                                <h3 data-i18n-key="ui.themePresets">预设主题</h3>
+                                <p data-i18n-key="ui.themePresetsDesc">选择一个整体界面风格。您仍然可以单独覆盖下方的聊天背景。</p>
+                            </div>
+                            <div class="settings-form-area">
+                                <div id="theme-preset-selector" class="theme-preset-selector">
+                                    <button class="theme-preset-btn" data-theme="light" aria-label="选择浅色模式主题"
+                                        data-i18n-aria-label="ui.selectLightMode">
+                                        <div class="theme-preview light"></div>
+                                        <span data-i18n-key="ui.lightMode">浅色模式</span>
+                                    </button>
+                                    <button class="theme-preset-btn" data-theme="dark" aria-label="选择深色模式主题"
+                                        data-i18n-aria-label="ui.selectDarkMode">
+                                        <div class="theme-preview dark"></div>
+                                        <span data-i18n-key="ui.darkMode">深色模式</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-page-grid">
+                            <div class="settings-description">
+                                <h3 data-i18n-key="ui.appFont">应用字体</h3>
+                                <p data-i18n-key="ui.appFontDesc">选择一个您喜欢的字体，更改将应用于整个应用界面。</p>
+                            </div>
+                            <div class="settings-form-area">
+                                <div class="form-group">
+                                    <div class="setting-label"
+                                        style="font-weight: 500; margin-bottom: 8px; display: block;"
+                                        data-i18n-key="ui.fontSelection">字体选择</div>
+                                    <div class="custom-dropdown" id="font-dropdown">
+                                        <div class="dropdown-trigger" id="font-trigger">
+                                            <span class="dropdown-text" data-i18n-key="ui.serif">衬线字体 (Serif)</span>
+                                            <svg class="dropdown-arrow" xmlns="http://www.w3.org/2000/svg"
+                                                viewBox="0 0 24 24" fill="currentColor">
+                                                <path d="M7 10l5 5 5-5z" />
+                                            </svg>
+                                        </div>
+                                        <div class="dropdown-menu" id="font-menu">
+                                            <div class="dropdown-item" data-value="system"
+                                                data-i18n-key="ui.systemDefault">系统默认</div>
+                                            <div class="dropdown-item active" data-value="serif"
+                                                data-i18n-key="ui.serif">衬线字体 (Serif)</div>
+                                            <div class="dropdown-item" data-value="monospace"
+                                                data-i18n-key="ui.monospace">等宽字体 (Monospace)</div>
+                                            <div class="dropdown-item" data-value="cursive_kai"
+                                                data-i18n-key="ui.cursiveKai">典雅楷体 (Cursive)</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <div id="language-settings-page" class="settings-page">
+                        <div class="language-settings-container">
+                            <div class="language-settings-header">
+                                <h3 data-i18n-key="ui.language">界面语言</h3>
+                                <p data-i18n-key="ui.languageDesc">选择您偏好的界面显示语言。</p>
+                            </div>
+                            <div class="language-settings-divider"></div>
+                            <div class="language-settings-content">
+                                <div class="language-selector">
+                                    <button id="lang-btn-zh-cn" class="language-btn" data-lang="zh-CN"
+                                        aria-label="简体中文">
+                                        <div class="language-content">
+                                            <span class="language-name">简体中文</span>
+                                        </div>
+                                        <div class="language-check"></div>
+                                    </button>
+                                    <button id="lang-btn-zh-tw" class="language-btn" data-lang="zh-TW"
+                                        aria-label="繁體中文">
+                                        <div class="language-content">
+                                            <span class="language-name">繁體中文</span>
+                                        </div>
+                                        <div class="language-check"></div>
+                                    </button>
+                                    <button id="lang-btn-ja" class="language-btn" data-lang="ja" aria-label="日本語">
+                                        <div class="language-content">
+                                            <span class="language-name">日本語</span>
+                                        </div>
+                                        <div class="language-check"></div>
+                                    </button>
+                                    <button id="lang-btn-ko" class="language-btn" data-lang="ko" aria-label="한국어">
+                                        <div class="language-content">
+                                            <span class="language-name">한국어</span>
+                                        </div>
+                                        <div class="language-check"></div>
+                                    </button>
+                                    <button id="lang-btn-en" class="language-btn" data-lang="en" aria-label="English">
+                                        <div class="language-content">
+                                            <span class="language-name">English</span>
+                                        </div>
+                                        <div class="language-check"></div>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="timeline-settings-page" class="settings-page">
+                        <div class="settings-page-grid">
+                            <div class="settings-description">
+                                <h3 data-i18n-key="ui.timelineFeatureTitle">时间线悬浮球</h3>
+                                <p data-i18n-key="ui.timelineFeatureDesc">启用后可通过悬浮球快速定位上一段或下一段模型回复。</p>
+                            </div>
+                            <div class="settings-form-area">
+                            </div>
+                        </div>
+
+                        <div class="settings-page-grid">
+                            <div class="settings-description">
+                                <div class="setting-label" data-i18n-key="ui.timelineFloatingBallToggle">启用时间线悬浮球</div>
+                            </div>
+                            <div class="settings-form-area">
+                                <div class="form-group">
+                                    <label class="settings-toggle" for="timeline-floating-toggle">
+                                        <input type="checkbox" id="timeline-floating-toggle">
+                                        <span class="settings-toggle-slider"></span>
+                                    </label>
+                                    <p class="usage-info" data-i18n-key="ui.timelineFloatingBallHint">
+                                        关闭后悬浮球将被隐藏，设置会保存在本地数据中。</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="security-settings-page" class="settings-page">
+                        <div class="settings-page-grid">
+                            <div class="settings-description">
+                                <h3 data-i18n-key="ui.changePassword">修改密码</h3>
+                                <p data-i18n-key="ui.changePasswordDesc">为了您的账户安全，建议定期更换密码。新密码长度请不要少于6位。</p>
+                            </div>
+                            <div class="settings-form-area">
+                                <form id="change-password-form" class="settings-form">
+                                    <input type="text" id="change-username-autocomplete-fix" name="username"
+                                        style="position: absolute; left: -9999px; opacity: 0;" autocomplete="username"
+                                        tabindex="-1">
+                                    <div class="form-group">
+                                        <input type="password" id="current-password" name="currentPassword"
+                                            placeholder="当前密码" data-i18n-placeholder-key="ui.currentPassword"
+                                            autocomplete="current-password">
+                                        <input type="password" id="new-password-setting" name="newPassword"
+                                            placeholder="新密码（至少6位）" data-i18n-placeholder-key="ui.newPassword"
+                                            minlength="6" autocomplete="new-password">
+                                        <input type="password" id="confirm-new-password-setting"
+                                            name="confirmNewPassword" placeholder="确认新密码"
+                                            data-i18n-placeholder-key="ui.confirmNewPassword"
+                                            autocomplete="new-password">
+                                    </div>
+                                    <button type="submit" id="change-password-btn" class="btn-secondary"
+                                        data-i18n-key="ui.changePasswordBtn">修改密码</button>
+                                    <p id="password-change-status" class="usage-info" style="margin-top: 10px;"></p>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="privacy-policy-settings-page" class="settings-page">
+                        <div class="privacy-policy-content">
+                            <h2 data-i18n-key="ui.privacyPolicy">隐私协议</h2>
+                            <p><strong data-i18n-key="privacyPolicy.effectiveDate">生效日期：2025年10月5日</strong></p>
+                            <p data-i18n-key="privacyPolicy.welcome">欢迎您使用
+                                LittleAIBox！我们深知隐私对您的重要性，并致力于保护您的个人信息。本隐私协议旨在向您清晰地说明，当您使用我们的服务时，我们如何收集、使用、存储、共享和保护您的信息。请在使用我们的服务前，仔细阅读并充分理解本协议。
+                            </p>
+
+                            <h3 data-i18n-key="privacyPolicy.section1Title">1. 我们收集的信息</h3>
+                            <p data-i18n-key="privacyPolicy.section1Desc">
+                                为了向您提供服务并持续优化，我们会根据您选择的使用方式（访客或注册用户），收集实现产品功能所必需的以下信息：</p>
+
+                            <h4 data-i18n-key="privacyPolicy.section1_1Title">1.1 作为访客（未登录用户）</h4>
+                            <ul>
+                                <li><strong data-i18n-key="privacyPolicy.browserFingerprintLabel">浏览器指纹信息：</strong><span
+                                        data-i18n-key="privacyPolicy.browserFingerprint">我们通过
+                                        FingerprintJS
+                                        技术收集您浏览器的匿名特征（如浏览器类型、屏幕分辨率、时区等）以生成一个匿名的访客ID。这用于区分不同的浏览器，以实现每日使用次数的限制，并防止服务滥用。</span>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.ipAddressLabel">IP 地址：</strong><span
+                                        data-i18n-key="privacyPolicy.ipAddress">我们收集您的 IP
+                                        地址，主要用于将来自同一网络的多个浏览器指纹进行关联，以防止通过频繁切换浏览器滥用我们的免费服务。</span></li>
+                                <li><strong data-i18n-key="privacyPolicy.chatHistoryLabel">聊天记录：</strong><span
+                                        data-i18n-key="privacyPolicy.chatHistory">您作为访客的聊天对话历史会临时存储在您本地浏览器的
+                                        localStorage
+                                        中。我们不会将此记录上传到服务器。当您清除浏览器缓存或更换设备时，这些记录将会丢失。</span></li>
+                                <li><strong data-i18n-key="privacyPolicy.usageStatsLabel">使用统计：</strong><span
+                                        data-i18n-key="privacyPolicy.usageStats">我们会将您的匿名访客ID和IP地址与您的每日使用次数关联，这些数据会临时存储在我们的服务器（Cloudflare
+                                        KV）中，并在24小时后自动过期删除。</span>
+                                </li>
+                            </ul>
+
+                            <h4 data-i18n-key="privacyPolicy.section1_2Title">1.2 作为注册用户</h4>
+                            <ul>
+                                <li><strong data-i18n-key="privacyPolicy.accountInfoLabel">账户信息：</strong><span
+                                        data-i18n-key="privacyPolicy.accountInfo">您在注册时提供的邮箱地址、用户名（可选）以及经过加盐哈希加密处理的密码。您的邮箱将用于账户登录、验证和密码重置。</span>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.profileInfoLabel">个人资料信息：</strong><span
+                                        data-i18n-key="privacyPolicy.profileInfo">您可以选择性地上传头像来个性化您的账户，头像文件将存储在我们的对象存储服务（Cloudflare
+                                        R2）中。</span></li>
+                                <li><strong data-i18n-key="privacyPolicy.chatAndAiParamsLabel">聊天记录与AI参数：</strong><span
+                                        data-i18n-key="privacyPolicy.chatAndAiParams">您的所有聊天对话（包括标题、内容、模型选择等）以及您保存的自定义AI参数（系统提示、温度等）都将安全地存储在我们的服务器数据库（Cloudflare
+                                        D1）中，以便您在不同设备上登录后都能访问。</span></li>
+                                <li><strong data-i18n-key="privacyPolicy.userUsageStatsLabel">使用统计：</strong><span
+                                        data-i18n-key="privacyPolicy.userUsageStats">我们会记录您账户的每日使用次数，以便管理您的服务配额。</span>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.sessionInfoLabel">会话信息：</strong><span
+                                        data-i18n-key="privacyPolicy.sessionInfo">当您登录后，我们会在您的本地浏览器
+                                        localStorage 中存储一个会话ID
+                                        (sessionId)，用于在您保持登录状态时验证您的身份。</span></li>
+                            </ul>
+
+                            <h4 data-i18n-key="privacyPolicy.section1_3Title">1.3 您主动提供的信息</h4>
+                            <ul>
+                                <li><strong data-i18n-key="privacyPolicy.chatContentLabel">聊天内容与上传文件：</strong><span
+                                        data-i18n-key="privacyPolicy.chatContent">您在输入框中输入的文本、上传的图片、以及文档（如PDF,
+                                        Word,
+                                        Excel, PPTX等）的全部内容。这些信息将被发送至后端，并提交给第三方AI模型以生成回复。</span></li>
+                                <li><strong data-i18n-key="privacyPolicy.voiceInputLabel">语音输入（仅限桌面端）：</strong><span
+                                        data-i18n-key="privacyPolicy.voiceInput">当您在支持的桌面浏览器上使用语音输入功能时，您的语音数据会由您的浏览器或操作系统原生的语音识别服务进行处理，并转换为文本。我们的服务器仅接收转换后的文本，不处理或存储您的原始语音数据。</span>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.customApiKeyLabel">自定义 API
+                                        Key：</strong><span data-i18n-key="privacyPolicy.customApiKey">如果您在设置中提供了您自己的
+                                        Google Gemini API
+                                        Key，我们会将其安全地存储在数据库中并用于处理您的请求。我们只会使用这个Key向Google发出请求，不会与任何其他第三方共享。</span>
+                                </li>
+                            </ul>
+
+                            <h3 data-i18n-key="privacyPolicy.section2Title">2. 我们如何使用您的信息</h3>
+                            <ul>
+                                <li><strong data-i18n-key="privacyPolicy.provideServiceLabel">提供和维护服务：</strong><span
+                                        data-i18n-key="privacyPolicy.provideService">确保您能够正常登录、进行AI对话、查看历史记录、使用自定义参数等核心功能。</span>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.securityPreventionLabel">安全与滥用防范：</strong><span
+                                        data-i18n-key="privacyPolicy.securityPrevention">通过访客指纹和IP地址限制每日使用次数，保护服务不被恶意程序滥用，保障所有用户的公平使用权。</span>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.aiIntentAnalysisLabel">AI意图分析：</strong><span
+                                        data-i18n-key="privacyPolicy.aiIntentAnalysis">在"图片模式"下，为了更准确地理解您的意图（是生成新图片、修改图片还是普通聊天），您的当前输入和部分对话历史可能会被发送给AI模型进行意图预判断。</span>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.ragProcessingLabel">长文本/多文件处理
+                                        (RAG)：</strong><span
+                                        data-i18n-key="privacyPolicy.ragProcessing">当您上传大型文档或提出复杂分析请求时，系统会启动"检索增强生成"流程。这包括：(1)
+                                        对您的文档进行智能分块；(2) 调用AI对每个小块进行索引和摘要；(3)
+                                        根据您的问题检索最相关的信息块；(4)
+                                        将这些相关信息块提交给AI以生成精准回答。此过程涉及多次、小批量地将您的文档内容发送给AI。</span></li>
+                                <li><strong data-i18n-key="privacyPolicy.enhanceTimelinessLabel">增强信息时效性：</strong><span
+                                        data-i18n-key="privacyPolicy.enhanceTimeliness">我们通过两种方式为您获取实时信息：</span>
+                                    <ul>
+                                        <li style="margin-top: 8px;" data-i18n-key="privacyPolicy.searchMode">
+                                            当您启用"搜索模式"时，我们会将您的查询发送给第三方搜索服务（Brave
+                                            Search）以获取网页摘要，并将其作为上下文提供给AI模型，从而生成基于最新网络信息的回答。
+                                        </li>
+                                        <li style="margin-top: 8px;" data-i18n-key="privacyPolicy.newsMode">
+                                            当您的提问包含新闻或时事性关键词（如"今天的新闻"）时，我们会自动将关键词发送给第三方新闻服务（GNews）以获取最新资讯，并将其融入AI的回答中。
+                                        </li>
+                                    </ul>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.accountManagementLabel">账户管理与通讯：</strong><span
+                                        data-i18n-key="privacyPolicy.accountManagement">处理您的注册、登录、密码修改/重置等请求，并在必要时通过您的邮箱向您发送验证邮件。</span>
+                                </li>
+                            </ul>
+
+                            <h3 data-i18n-key="privacyPolicy.section3Title">3. 关于敏感信息的特别提示</h3>
+                            <p data-i18n-key="privacyPolicy.sensitiveInfoWarning">我们强烈建议您不要在与 AI
+                                的对话中输入、上传或分享任何敏感的个人信息。这包括但不限于：</p>
+                            <ul>
+                                <li data-i18n-key="privacyPolicy.financialInfo">财务信息（如银行卡号、账单、发票）</li>
+                                <li data-i18n-key="privacyPolicy.identityInfo">身份信息（如身份证号码、护照、驾照）</li>
+                                <li data-i18n-key="privacyPolicy.healthInfo">个人健康与医疗信息</li>
+                                <li data-i18n-key="privacyPolicy.privateDocs">包含个人隐私的合同、信件或法律文件</li>
+                                <li data-i18n-key="privacyPolicy.anyPrivate">任何您认为私密或不希望被第三方知晓的内容</li>
+                            </ul>
+                            <p data-i18n-key="privacyPolicy.fileContentWarning">请知悉，为了生成回复，您上传文件的全部内容将被提取并发送给第三方
+                                AI 服务提供商（如
+                                Google）。对于您主动分享的敏感信息所可能导致的任何风险，您需要自行承担。</p>
+
+                            <h3 data-i18n-key="privacyPolicy.section4Title">4. AI高级功能与用户责任</h3>
+                            <p data-i18n-key="privacyPolicy.aiAdvancedFeatures">我们提供"AI
+                                参数设定"等高级功能（目前主要在桌面端提供），允许注册用户通过设置系统提示（System
+                                Prompt）、温度（Temperature）等参数来定制AI的行为和输出风格。当您使用这些高级功能时，您需要理解并同意：</p>
+                            <ul>
+                                <li data-i18n-key="privacyPolicy.userResponsibility">您对您设置的参数和输入的提示词负全部责任。</li>
+                                <li data-i18n-key="privacyPolicy.legalCompliance">
+                                    您必须确保您对AI的配置和使用方式符合您所在国家或地区的所有适用法律法规。</li>
+                                <li data-i18n-key="privacyPolicy.usageLimit">
+                                    我们为注册用户提供在48小时内3次免费激活高级参数的机会。每次保存设置会消耗一次机会并开启一个48小时的有效期。次数用尽后，需等待冷却期结束方可再次激活。
+                                </li>
+                                <li data-i18n-key="privacyPolicy.contentRestriction">
+                                    您不得利用此功能生成、诱导或传播任何非法的、有害的、侵权的、歧视性的、或侵犯他人隐私的内容。
+                                </li>
+                                <li data-i18n-key="privacyPolicy.outputResponsibility">
+                                    对于您利用自定义参数生成的任何输出内容，其后果由您自行承担。LittleAIBox
+                                    不对此类由用户高度定制化后产生的内容负责。</li>
+                            </ul>
+
+                            <h3 data-i18n-key="privacyPolicy.section5Title">5. 信息的共享与第三方服务</h3>
+                            <p data-i18n-key="privacyPolicy.noSelling">
+                                我们不会将您的个人信息出售给任何第三方。但为了实现本应用的核心功能，我们会在必要时与以下第三方服务共享您的部分信息：
+                            </p>
+                            <ul>
+                                <li><a href="https://deepmind.google/technologies/gemini/" target="_blank"
+                                        rel="noopener noreferrer"><strong
+                                            data-i18n-key="privacyPolicy.googleGeminiName">Google
+                                            (Gemini API)</strong></a>：<span
+                                        data-i18n-key="privacyPolicy.googleGemini">您的聊天内容（包括文本和您上传文件的内容）、AI参数以及用于意图分析和长文本处理的内容将被发送至
+                                        Google 的 Gemini AI
+                                        模型进行处理，以生成智能回复。</span></li>
+                                <li><a href="https://pollinations.ai/" target="_blank" rel="noopener noreferrer"><strong
+                                            data-i18n-key="privacyPolicy.pollinationsName">Pollinations.ai</strong></a>：<span
+                                        data-i18n-key="privacyPolicy.pollinations">当您的输入被识别为图片生成请求时，处理后的文本提示词将被发送至
+                                        Pollinations.ai 服务来生成图片。</span></li>
+                                <li><a href="https://search.brave.com/api" target="_blank"
+                                        rel="noopener noreferrer"><strong
+                                            data-i18n-key="privacyPolicy.braveSearchName">Brave
+                                            Search API</strong></a>：<span
+                                        data-i18n-key="privacyPolicy.braveSearch">当您使用"搜索模式"时，您的查询将被发送至 Brave
+                                        Search 以获取网络搜索结果。</span></li>
+                                <li><a href="https://gnews.io/" target="_blank" rel="noopener noreferrer"><strong
+                                            data-i18n-key="privacyPolicy.gnewsName">GNews
+                                            API</strong></a>：<span
+                                        data-i18n-key="privacyPolicy.gnews">当您的提问涉及实时新闻或事件时，您的查询关键词将被发送至
+                                        GNews
+                                        以获取相关新闻摘要。</span></li>
+                                <li><a href="https://resend.com/" target="_blank" rel="noopener noreferrer"><strong
+                                            data-i18n-key="privacyPolicy.resendName">Resend</strong></a>：<span
+                                        data-i18n-key="privacyPolicy.resend">在您注册需要邮箱验证或申请重置密码时，您的邮箱地址将被共享给
+                                        Resend
+                                        服务，以便向您发送验证码或重置链接邮件。</span></li>
+                                <li><a href="https://www.cloudflare.com/" target="_blank"
+                                        rel="noopener noreferrer"><strong
+                                            data-i18n-key="privacyPolicy.cloudflareName">Cloudflare</strong></a>：<span
+                                        data-i18n-key="privacyPolicy.cloudflare">本应用的所有后端服务（包括网站托管、数据库D1、键值存储KV、对象存储R2）均构建在
+                                        Cloudflare 平台上。您的数据在传输和存储过程中会经过 Cloudflare 的服务器。</span></li>
+                                <li><a href="https://fingerprint.com/" target="_blank" rel="noopener noreferrer"><strong
+                                            data-i18n-key="privacyPolicy.fingerprintjsName">FingerprintJS</strong></a>：<span
+                                        data-i18n-key="privacyPolicy.fingerprintjs">我们使用此技术为未登录的访客生成匿名浏览器ID，用于实现使用限制和安全防范。</span>
+                                </li>
+                            </ul>
+
+                            <h3 data-i18n-key="privacyPolicy.section6Title">6. 数据的存储与安全</h3>
+                            <ul>
+                                <li><strong data-i18n-key="privacyPolicy.storageLocationLabel">存储位置：</strong><span
+                                        data-i18n-key="privacyPolicy.storageLocation">您的数据存储于 Cloudflare
+                                        提供的全球分布式网络中。</span></li>
+                                <li><strong data-i18n-key="privacyPolicy.storageDurationLabel">存储期限：</strong>
+                                    <ul>
+                                        <li style="margin-top: 8px;" data-i18n-key="privacyPolicy.guestData">
+                                            访客数据：使用统计数据（记录于Cloudflare
+                                            KV）的有效期为24小时，过期后将自动删除。聊天记录存储于您的本地浏览器，由您自行管理。</li>
+                                        <li style="margin-top: 8px;" data-i18n-key="privacyPolicy.userData">
+                                            注册用户数据：您的账户信息、聊天记录和AI参数将持续存储，直到您请求删除您的账户。</li>
+                                    </ul>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.securityMeasuresLabel">安全措施：</strong><span
+                                        data-i18n-key="privacyPolicy.securityMeasures">我们高度重视您的数据安全。您的密码经过了加盐哈希（Salted
+                                        Hashing）的单向加密处理，我们无法获取您的明文密码。所有数据传输均通过HTTPS 协议进行加密。</span></li>
+                            </ul>
+
+                            <h3 data-i18n-key="privacyPolicy.section7Title">7. 您的权利与选择</h3>
+                            <p data-i18n-key="privacyPolicy.userRights">您对自己的个人信息拥有控制权，我们保障您行使以下权利：</p>
+                            <ul>
+                                <li><strong data-i18n-key="privacyPolicy.accessModifyLabel">访问和修改：</strong><span
+                                        data-i18n-key="privacyPolicy.accessModify">您可以随时登录您的账户，在"设置"中访问和修改您的个人资料（用户名、头像）和自定义
+                                        API Key。</span></li>
+                                <li><strong data-i18n-key="privacyPolicy.manageChatsLabel">管理聊天记录：</strong><span
+                                        data-i18n-key="privacyPolicy.manageChats">您可以重命名、单独删除、或通过多选模式批量删除您的任何聊天对话。</span>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.shareChatsLabel">分享对话：</strong><span
+                                        data-i18n-key="privacyPolicy.shareChats">您可以为您的某次对话创建一个公开的分享链接。请注意，任何拥有此链接的人都将能够查看该对话的全部内容。</span>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.deleteAccountLabel">删除账户：</strong><span
+                                        data-i18n-key="privacyPolicy.deleteAccount">如果您希望删除您的账户及所有相关数据，请通过我们的联系方式与我们联系，我们将在核实您的身份后为您处理。</span>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.clearLocalDataLabel">清除本地数据：</strong><span
+                                        data-i18n-key="privacyPolicy.clearLocalData">您可以随时通过清除您浏览器的
+                                        localStorage
+                                        来删除本地存储的会话ID和访客聊天记录。</span></li>
+                            </ul>
+
+                            <h3 data-i18n-key="privacyPolicy.section8Title">8. 本协议的变更</h3>
+                            <p data-i18n-key="privacyPolicy.policyChanges">
+                                我们可能会适时修订本隐私协议。当协议发生重大变更时，我们会在应用内通过显著的方式通知您。请您定期查看本协议，以确保了解最新的隐私政策。</p>
+
+                            <h3 data-i18n-key="privacyPolicy.section9Title">9. 联系我们</h3>
+                            <p data-i18n-key="privacyPolicy.contactUs">如果您对本隐私协议有任何疑问、意见或建议，请通过以下方式与我们联系：</p>
+                            <ul>
+                                <li><span data-i18n-key="privacyPolicy.email">Email: </span><a
+                                        href="mailto:support@littletea.xyz">support@littletea.xyz</a></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div id="about-settings-page" class="settings-page">
+                        <div class="about-container">
+                            <div class="about-header">
+                                <svg viewBox="0 0 24 24" class="about-icon">
+                                    <path
+                                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                                </svg>
+                                <div class="about-version">
+                                    <h3 data-i18n-key="ui.appVersion">应用版本</h3>
+                                    <p class="version-number" id="current-version">加载中...</p>
+                                </div>
+                            </div>
+                            <div class="about-actions">
+                                <button id="check-update-btn" class="btn-secondary">
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"
+                                        style="margin-right: 8px;">
+                                        <path
+                                            d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+                                    </svg>
+                                    <span data-i18n-key="version.checkUpdate">检查版本更新</span>
+                                </button>
+                                <button id="update-now-btn" class="btn-primary" style="display: none;">
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"
+                                        style="margin-right: 8px;">
+                                        <path
+                                            d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5zm0 18c-4.52 0-8.19-3.67-8.19-8.19 0-4.52 3.67-8.19 8.19-8.19 4.52 0 8.19 3.67 8.19 8.19 0 4.52-3.67 8.19-8.19 8.19zm-1-13v7l5.25 3.15.75-1.23-4.5-2.67V7z" />
+                                    </svg>
+                                    <span data-i18n-key="version.updateNow">立即更新</span>
+                                </button>
+                            </div>
+                            <div id="version-update-notice" class="version-update-notice" style="display: none;">
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                                    <path
+                                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+                                </svg>
+                                <span id="version-update-notice-text"></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="donation-settings-page" class="settings-page">
+                        <div class="donation-container">
+                            <div class="donation-header">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor" class="donation-icon">
+                                    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path>
+                                </svg>
+                                <h3 data-i18n-key="donation.title">支持 LittleAIBox</h3>
+                                <p data-i18n-key="donation.message">如果您觉得这个应用对您有帮助，可以考虑捐赠一小笔费用来支持开发者的持续维护和服务器开销。感谢您的支持！</p>
+                            </div>
+
+                            <div class="donation-top-action">
+                                <a class="buymeacoffee-btn" href="https://buymeacoffee.com/diandiancha" target="_blank" rel="noopener noreferrer" title="" data-i18n-title="donation.openLink" data-i18n-aria-label="donation.openLink" aria-label="">
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                        <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
+                                        <path d="M2 8h16v7a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4Z" />
+                                        <line x1="6" y1="1" x2="6" y2="4" />
+                                        <line x1="10" y1="1" x2="10" y2="4" />
+                                        <line x1="14" y1="1" x2="14" y2="4" />
+                                    </svg>
+                                    <span data-i18n-key="donation.buyMeACoffee">Buy Me a Coffee</span>
+                                </a>
+                            </div>
+                            <div class="donation-methods">
+                                <div class="donation-method">
+                                    <img src="/DonateMe/Wechatpay.jpg" alt="" id="wechat-qr-code" title="" data-i18n-title="donation.wechatPayTitle" data-i18n-alt="donation.wechatQrAlt">
+                                    <div class="donation-caption">
+                                        <span data-i18n-key="donation.wechatPay">微信支付</span>
+                                        <button type="button"
+                                                class="donation-save-btn"
+                                                data-action="download-image"
+                                                data-image-url="/DonateMe/Wechatpay.jpg"
+                                                data-description-key="donation.wechatPay"
+                                                title=""
+                                                data-i18n-title="image.downloadImage"
+                                                data-i18n-aria-label="image.downloadImage"
+                                                aria-label="">
+                                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M12 3v9"></path>
+                                            <polyline points="8.5 9.5 12 13 15.5 9.5"></polyline>
+                                            <path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"></path>
+                                        </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="donation-method">
+                                    <img src="/DonateMe/Alipay.jpg" alt="" id="alipay-qr-code" title="" data-i18n-title="donation.alipayPayTitle" data-i18n-alt="donation.alipayQrAlt">
+                                    <div class="donation-caption">
+                                        <span data-i18n-key="donation.alipayPay">支付宝</span>
+                                        <button type="button"
+                                                class="donation-save-btn"
+                                                data-action="download-image"
+                                                data-image-url="/DonateMe/Alipay.jpg"
+                                                data-description-key="donation.alipayPay"
+                                                title=""
+                                                data-i18n-title="image.downloadImage"
+                                                data-i18n-aria-label="image.downloadImage"
+                                                aria-label="">
+                                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M12 3v9"></path>
+                                            <polyline points="8.5 9.5 12 13 15.5 9.5"></polyline>
+                                            <path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"></path>
+                                        </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                        </div>
+                    </div>
+                </main>
+                <div id="settings-nav-overlay" class="sidebar-overlay"></div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- 限制提示模态框 -->
+    <div id="limit-modal-overlay" class="modal-overlay">
+        <div id="limit-modal" class="modal">
+            <div class="modal-header">
+                <h2 data-i18n-key="ui.tip">提示</h2>
+                <button id="limit-close-btn" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-content" style="text-align: center;">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                    style="width: 56px; height: 56px; fill: var(--accent-color); margin-bottom: 16px;">
+                    <path
+                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z">
+                    </path>
+                </svg>
+                <h3 id="limit-modal-title" data-i18n-key="ui.limitReached">已达上限</h3>
+                <p id="limit-modal-text" data-i18n-key="ui.limitReachedDesc">访客试用次数已达上限，请登录或明日再试。</p>
+            </div>
+            <div class="modal-footer">
+                <button id="limit-login-btn" class="btn-primary" data-i18n-key="ui.loginNow">立即登录</button>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

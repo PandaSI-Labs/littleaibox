@@ -1,0 +1,40 @@
+{
+  "name": "littleaibox",
+  "version": "2.3.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.4.3",
+    "@capacitor/app": "^7.1.0",
+    "@capacitor/browser": "^7.0.2",
+    "@capacitor/camera": "^7.0.2",
+    "@capacitor/cli": "^7.4.3",
+    "@capacitor/clipboard": "^7.0.2",
+    "@capacitor/core": "^7.4.3",
+    "@capacitor/filesystem": "^7.1.4",
+    "@capacitor/keyboard": "^7.0.3",
+    "@capacitor/local-notifications": "^7.0.2",
+    "@capacitor/splash-screen": "^7.0.3",
+    "@capacitor/status-bar": "^7.0.3",
+    "@capawesome/capacitor-file-picker": "^7.2.0",
+    "@sentry/browser": "^10.20.0",
+    "@vercel/kv": "^3.0.0",
+    "cheerio": "^1.1.2",
+    "d3": "^7.9.0",
+    "idb": "^8.0.3",
+    "jose": "^5.2.0",
+    "tslib": "^2.8.1",
+    "wrangler": "^4.37.0"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.14",
+    "vite": "^7.1.5",
+    "vite-plugin-pwa": "^1.0.3"
+  }
+}

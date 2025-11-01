@@ -1,0 +1,30 @@
+# ----------------------------------------------------------------------
+# 缓存策略 (Cache Policy)
+# ----------------------------------------------------------------------
+
+# 1. 对由 Vite 生成的、带哈希值的文件进行永久缓存 (1年)
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# 2. 对 public 文件夹中不常变动的静态资源进行缓存 
+/images/*
+  Cache-Control: public, max-age=86400
+/libs/*
+  Cache-Control: public, max-age=86400
+/locales/*
+  Cache-Control: public, max-age=86400, immutable
+/favicon.ico
+  Cache-Control: public, max-age=86400
+
+# 3. 对主入口文件 index.html 不进行强缓存
+/index.html
+  Cache-Control: no-cache
+
+# 4. APK文件的MIME类型和缓存设置
+/downloads/*.apk
+  Content-Type: application/vnd.android.package-archive
+  Cache-Control: public, max-age=86400, immutable
+
+# 5. 对所有其他请求使用默认的验证缓存
+/*
+  Cache-Control: no-cache

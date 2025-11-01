@@ -1,0 +1,35 @@
+# 依赖
+/node_modules
+
+# 构建产物
+/dist
+/.vite/
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+*.env
+
+# 日志文件
+*.log
+npm-debug.log*
+
+# Cloudflare
+/.wrangler
+/functions
+wrangler.toml
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# Android & Capacitor
+/android/build/
+/android/app/build/
+/android/app/.cxx/
+/android/local.properties
+/android/.gradle/
+/android/.idea/
+/android/capacitor-cordova-android-plugins/
+.capacitor/

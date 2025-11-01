@@ -1,0 +1,8 @@
+/assets/*          /assets/:splat          200
+/libs/*            /libs/:splat            200
+/locales/*         /locales/:splat         200
+/images/*          /images/:splat          200
+/downloads/*       /downloads/:splat       200
+/registerSW.js     /registerSW.js          200
+/sw-custom.js      /sw-custom.js           200
+/*                 /index.html             200

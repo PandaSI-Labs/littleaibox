@@ -1,0 +1,25 @@
+{
+  "appId": "com.littleaibox.app",
+  "appName": "LittleAIBox",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "StatusBar": {
+      "overlaysWebView": true,
+      "style": "DARK"
+    },
+    "Keyboard": {
+      "resize": "native"
+    },
+    "SplashScreen": {
+      "launchShowDuration": 0,
+      "launchAutoHide": true
+    },
+    "Filesystem": {
+      "iosIsDocumentPickerEnabled": true,
+      "androidIsDocumentPickerEnabled": true
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+    "version": 1,
+    "include": [
+        "/*"
+    ],
+    "exclude": [
+        "/sw.js",
+        "/manifest.json",
+        "/favicon.ico",
+        "/apple-touch-icon.png",
+        "/images/*",
+        "/libs/*",
+        "/assets/*",
+        "/downloads/*"
+    ]
+}
