@@ -18,7 +18,11 @@
 
 ### 🚀 在线体验
 
-🌐 **立即访问**: https://ai.littletea.xyz
+<div align="center">
+
+🌐 **立即访问**: [**https://ai.littletea.xyz**](https://ai.littletea.xyz)
+
+</div>
 
 ### 📱 应用截图
 

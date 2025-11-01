@@ -18,7 +18,11 @@
 
 ### 🚀 라이브 데모
 
-🌐 **지금 사용해보세요**: https://ai.littletea.xyz
+<div align="center">
+
+🌐 **지금 사용해보세요**: [**https://ai.littletea.xyz**](https://ai.littletea.xyz)
+
+</div>
 
 ### 📱 애플리케이션 스크린샷
 

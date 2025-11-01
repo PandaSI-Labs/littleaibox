@@ -18,7 +18,11 @@ This project is built using **Google Gemini API** for conversational AI interact
 
 ### 🚀 Live Demo
 
-🌐 **Try it now**: https://ai.littletea.xyz
+<div align="center">
+
+🌐 **Try it now**: [**https://ai.littletea.xyz**](https://ai.littletea.xyz)
+
+</div>
 
 ### 📱 Application Screenshots
 
