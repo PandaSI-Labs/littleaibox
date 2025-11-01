@@ -6,6 +6,10 @@
 
 **モダンなクロスプラットフォーム AI 会話アシスタント**
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20PWA%20%7C%20Android-orange)](https://github.com/diandiancha/LittleAIBox)
+[![Language](https://img.shields.io/badge/Language-Multi--language-blue)](https://github.com/diandiancha/LittleAIBox)
+
 [中文](README.zh-CN.md) | [English](README.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
 このプロジェクトは、インテリジェントな AI 体験を提供するため、**Google Gemini API** を使用して会話機能を構築しています。
@@ -104,6 +108,21 @@ LittleAIBox は以下の方に最適です：
 ---
 
 ## 🏗️ アーキテクチャ
+
+### システム概要
+
+```mermaid
+graph TD
+    A[Frontend: Vite + Tailwind + Capacitor] --> B[Cloudflare Workers Backend]
+    B --> C[Gemini API]
+    B --> D[Brave Search API]
+    B --> E[Cloudflare R2 Storage]
+    B --> F[Cloudflare D1 Database]
+    B --> G[Cloudflare KV Cache]
+    H[Client-Side Processing] --> A
+    H --> I[PPTX, PDF, DOCX, XLSX]
+    H --> J[IndexedDB Storage]
+```
 
 ### フロントエンドスタック
 
