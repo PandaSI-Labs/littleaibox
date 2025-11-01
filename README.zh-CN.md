@@ -113,15 +113,15 @@ LittleAIBox 非常适合：
 
 ```mermaid
 graph TD
-    A[Frontend: Vite + Tailwind + Capacitor] --> B[Cloudflare Workers Backend]
+    A[前端: Vite + Tailwind + Capacitor] --> B[Cloudflare Workers 后端]
     B --> C[Gemini API]
     B --> D[Brave Search API]
-    B --> E[Cloudflare R2 Storage]
-    B --> F[Cloudflare D1 Database]
-    B --> G[Cloudflare KV Cache]
-    H[Client-Side Processing] --> A
+    B --> E[Cloudflare R2 存储]
+    B --> F[Cloudflare D1 数据库]
+    B --> G[Cloudflare KV 缓存]
+    H[客户端处理] --> A
     H --> I[PPTX, PDF, DOCX, XLSX]
-    H --> J[IndexedDB Storage]
+    H --> J[IndexedDB 存储]
 ```
 
 ### 前端技术栈

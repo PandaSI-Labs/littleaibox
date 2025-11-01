@@ -113,15 +113,15 @@ LittleAIBox は以下の方に最適です：
 
 ```mermaid
 graph TD
-    A[Frontend: Vite + Tailwind + Capacitor] --> B[Cloudflare Workers Backend]
+    A[フロントエンド: Vite + Tailwind + Capacitor] --> B[Cloudflare Workers バックエンド]
     B --> C[Gemini API]
     B --> D[Brave Search API]
-    B --> E[Cloudflare R2 Storage]
-    B --> F[Cloudflare D1 Database]
-    B --> G[Cloudflare KV Cache]
-    H[Client-Side Processing] --> A
+    B --> E[Cloudflare R2 ストレージ]
+    B --> F[Cloudflare D1 データベース]
+    B --> G[Cloudflare KV キャッシュ]
+    H[クライアント側処理] --> A
     H --> I[PPTX, PDF, DOCX, XLSX]
-    H --> J[IndexedDB Storage]
+    H --> J[IndexedDB ストレージ]
 ```
 
 ### フロントエンドスタック
