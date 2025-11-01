@@ -20,7 +20,7 @@
 
 <div align="center">
 
-🌐 **今すぐ試す**: [**https://ai.littletea.xyz**](https://ai.littletea.xyz)
+🌐 **今すぐ試す**: [**LittleAIBox**](https://ai.littletea.xyz)
 
 </div>
 

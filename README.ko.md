@@ -20,7 +20,7 @@
 
 <div align="center">
 
-🌐 **지금 사용해보세요**: [**https://ai.littletea.xyz**](https://ai.littletea.xyz)
+🌐 **지금 사용해보세요**: [**LittleAIBox**](https://ai.littletea.xyz)
 
 </div>
 

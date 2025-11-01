@@ -20,7 +20,7 @@
 
 <div align="center">
 
-🌐 **立即访问**: [**https://ai.littletea.xyz**](https://ai.littletea.xyz)
+🌐 **立即访问**: [**LittleAIBox**](https://ai.littletea.xyz)
 
 </div>
 

@@ -20,7 +20,7 @@ This project is built using **Google Gemini API** for conversational AI interact
 
 <div align="center">
 
-🌐 **Try it now**: [**https://ai.littletea.xyz**](https://ai.littletea.xyz)
+🌐 **Try it now**: [**LittleAIBox**](https://ai.littletea.xyz)
 
 </div>
 
