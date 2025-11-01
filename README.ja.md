@@ -34,7 +34,9 @@ LittleAIBox は以下の方に最適です：
 
 <div align="center">
 
-🌐 **今すぐ試す**: [**今すぐ訪問**](https://ai.littletea.xyz)
+🚀 **今すぐ試す:**  
+
+[![アプリにアクセス](https://img.shields.io/badge/LittleAIBox%20を開く-クリック- brightgreen?style=for-the-badge)](https://ai.littletea.xyz)
 
 </div>
 
@@ -109,7 +111,7 @@ LittleAIBox は以下の方に最適です：
 
 ## 🏗️ アーキテクチャ
 
-### システム概要
+### 🏗️ システムアーキテクチャ図
 
 ```mermaid
 graph TD
@@ -124,7 +126,7 @@ graph TD
     H --> J[IndexedDB ストレージ]
 ```
 
-### フロントエンドスタック
+### 🧩 フロントエンドスタック
 
 **コア技術**
 - **ビルドツール**: Vite 7.x
@@ -140,7 +142,7 @@ graph TD
 - **ファイル解析**: mammoth (Word)、PDF.js、xlsx、pptx2html
 - **ストレージ**: IndexedDB + localStorage
 
-### クライアント側処理
+### 💾 クライアント側処理
 
 すべてのファイル解析と処理は完全にブラウザ内で実行されます：
 - **PPTX パース**: PowerPoint コンテンツの完全抽出
@@ -381,6 +383,8 @@ npx cap open android
 - **トラッキングなし**: プライバシーファーストの設計
 - **オープンソース**: 透明で監査可能なコード
 
+🧠 **すべての処理はローカルまたは設定された API キーを通じて実行されます — 同意なくデータがデバイスから流出することはありません。**
+
 ---
 
 ## 📄 ライセンス
@@ -396,5 +400,7 @@ Copyright (c) 2025 diandiancha
 Made with ❤️ by diandiancha
 
 **役に立ったら ⭐ スターをお願いします！**
+
+💬 **質問やフィードバック？[Issue を開く](https://github.com/diandiancha/LittleAIBox/issues) — すべて読んでいます！**
 
 </div>

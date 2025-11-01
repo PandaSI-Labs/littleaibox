@@ -34,7 +34,9 @@ LittleAIBox is perfect for:
 
 <div align="center">
 
-🌐 **Try it now**: [**Visit Now**](https://ai.littletea.xyz)
+🚀 **Try it now:**  
+
+[![Visit App](https://img.shields.io/badge/Open%20LittleAIBox-Click%20Here-brightgreen?style=for-the-badge)](https://ai.littletea.xyz)
 
 </div>
 
@@ -109,7 +111,7 @@ LittleAIBox is perfect for:
 
 ## 🏗️ Architecture
 
-### System Overview
+### 🏗️ System Diagram
 
 ```mermaid
 graph TD
@@ -124,7 +126,7 @@ graph TD
     H --> J[IndexedDB Storage]
 ```
 
-### Frontend Stack
+### 🧩 Frontend Stack
 
 **Core Technologies**
 - **Build Tool**: Vite 7.x
@@ -140,7 +142,7 @@ graph TD
 - **File Parsing**: mammoth (Word), PDF.js, xlsx, pptx2html
 - **Storage**: IndexedDB + localStorage
 
-### Client-Side Processing
+### 💾 Client-Side Processing
 
 All file parsing and processing happens entirely in the browser:
 - **PPTX Parsing**: Full PowerPoint content extraction
@@ -381,6 +383,8 @@ Have ideas? [Open an issue](https://github.com/diandiancha/LittleAIBox/issues) o
 - **No Tracking**: Privacy-first design
 - **Open Source**: Transparent and auditable code
 
+🧠 **All processing happens locally or through your configured API key — no data ever leaves your device without your consent.**
+
 ---
 
 ## 📄 License
@@ -396,5 +400,7 @@ Copyright (c) 2025 diandiancha
 Made with ❤️ by diandiancha
 
 **Star ⭐ this repo if you find it helpful!**
+
+💬 **Questions or feedback? [Open an issue](https://github.com/diandiancha/LittleAIBox/issues) — I read every one of them!**
 
 </div>

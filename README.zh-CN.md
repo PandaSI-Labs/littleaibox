@@ -34,7 +34,9 @@ LittleAIBox 非常适合：
 
 <div align="center">
 
-🌐 **立即访问**: [**点击这里**](https://ai.littletea.xyz)
+🚀 **立即访问:**  
+
+[![访问应用](https://img.shields.io/badge/打开%20LittleAIBox-点击这里-brightgreen?style=for-the-badge)](https://ai.littletea.xyz)
 
 </div>
 
@@ -109,7 +111,7 @@ LittleAIBox 非常适合：
 
 ## 🏗️ 技术架构
 
-### 系统概览
+### 🏗️ 系统架构图
 
 ```mermaid
 graph TD
@@ -124,7 +126,7 @@ graph TD
     H --> J[IndexedDB 存储]
 ```
 
-### 前端技术栈
+### 🧩 前端技术栈
 
 **核心技术**
 - **构建工具**: Vite 7.x
@@ -140,7 +142,7 @@ graph TD
 - **文件解析**: mammoth (Word)、PDF.js、xlsx、pptx2html
 - **存储**: IndexedDB + localStorage
 
-### 客户端处理
+### 💾 客户端处理
 
 所有文件解析和处理完全在浏览器端完成：
 - **PPTX 解析**: 完整提取 PowerPoint 内容
@@ -381,6 +383,8 @@ npx cap open android
 - **无追踪**: 隐私优先的设计理念
 - **开源透明**: 代码完全开源，可审计
 
+🧠 **所有处理都在本地或通过您配置的 API 密钥完成 — 未经您同意，数据绝不会离开您的设备。**
+
 ---
 
 ## 📄 许可证
@@ -396,5 +400,7 @@ Copyright (c) 2025 diandiancha
 Made with ❤️ by diandiancha
 
 **如果觉得有帮助，请给个 ⭐ Star！**
+
+💬 **有问题或建议？[提交 Issue](https://github.com/diandiancha/LittleAIBox/issues) — 我会认真阅读每一个！**
 
 </div>

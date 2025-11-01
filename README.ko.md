@@ -34,7 +34,9 @@ LittleAIBox는 다음 사용자에게 완벽합니다:
 
 <div align="center">
 
-🌐 **지금 사용해보세요**: [**지금 방문**](https://ai.littletea.xyz)
+🚀 **지금 사용해보세요:**  
+
+[![앱 접근](https://img.shields.io/badge/LittleAIBox%20열기-클릭하기-brightgreen?style=for-the-badge)](https://ai.littletea.xyz)
 
 </div>
 
@@ -109,7 +111,7 @@ LittleAIBox는 다음 사용자에게 완벽합니다:
 
 ## 🏗️ 아키텍처
 
-### 시스템 개요
+### 🏗️ 시스템 아키텍처 다이어그램
 
 ```mermaid
 graph TD
@@ -124,7 +126,7 @@ graph TD
     H --> J[IndexedDB 스토리지]
 ```
 
-### 프론트엔드 스택
+### 🧩 프론트엔드 스택
 
 **핵심 기술**
 - **빌드 도구**: Vite 7.x
@@ -140,7 +142,7 @@ graph TD
 - **파일 파싱**: mammoth (Word), PDF.js, xlsx, pptx2html
 - **스토리지**: IndexedDB + localStorage
 
-### 클라이언트 측 처리
+### 💾 클라이언트 측 처리
 
 모든 파일 파싱 및 처리는 완전히 브라우저 내에서 실행됩니다:
 - **PPTX 파싱**: PowerPoint 콘텐츠의 완전한 추출
@@ -381,6 +383,8 @@ npx cap open android
 - **추적 없음**: 개인정보 보호 우선 설계
 - **오픈 소스**: 투명하고 감사 가능한 코드
 
+🧠 **모든 처리는 로컬 또는 설정된 API 키를 통해 수행됩니다 — 동의 없이 데이터가 장치를 떠나지 않습니다.**
+
 ---
 
 ## 📄 라이선스
@@ -396,5 +400,7 @@ Copyright (c) 2025 diandiancha
 Made with ❤️ by diandiancha
 
 **도움이 되었다면 ⭐ 스타를 주세요!**
+
+💬 **질문이나 피드백이 있으신가요? [Issue 열기](https://github.com/diandiancha/LittleAIBox/issues) — 모든 것을 읽고 있습니다!**
 
 </div>
