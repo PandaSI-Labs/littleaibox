@@ -14,6 +14,18 @@ This project is built using **Google Gemini API** for conversational AI interact
 
 ---
 
+## 🎯 Who Is This For?
+
+LittleAIBox is perfect for:
+
+- **Users in Restricted Regions**: Built-in service relay solutions to easily connect you with Gemini
+- **Students & Researchers**: Analyze papers, presentations, and documents without leaving your browser
+- **Developers**: Get coding help with file context, code explanations, and technical assistance
+- **Content Creators**: Generate and edit markdown content with AI support
+- **Privacy-Conscious Users**: All processing happens locally; you control your data
+
+---
+
 ### 🚀 Live Demo
 
 <div align="center">
@@ -21,6 +33,23 @@ This project is built using **Google Gemini API** for conversational AI interact
 🌐 **Try it now**: [**Visit Now**](https://ai.littletea.xyz)
 
 </div>
+
+### 💡 Why LittleAIBox?
+
+**What makes this project different?**
+
+| Feature | LittleAIBox | Others |
+|---------|-------------|--------|
+| File Processing | 📄 PPTX, DOCX, PDF, XLSX support | Limited or server-side only |
+| Privacy | 🔒 Client-side processing, no uploads | Often requires file uploads |
+| Offline Support | 📱 Full PWA, works offline | Limited offline capabilities |
+| Cross-Platform | 🌐 Web + PWA + Android native | Usually web or mobile only |
+| Framework | ⚡ Vanilla JS, zero bloat | Often React/Vue dependencies |
+| Regional Access | 🌍 Built-in proxy solution | May be regionally restricted |
+| Open Source | ✅ 100% frontend open-source | Varies |
+| Cost | 💰 Use your own API key | Often subscription-based |
+
+**Choose LittleAIBox if you want**: Maximum privacy, offline-first design, zero framework dependencies, and complete control over your AI conversations.
 
 ### 📱 Application Screenshots
 
@@ -47,7 +76,7 @@ This project is built using **Google Gemini API** for conversational AI interact
 - **Flexible Storage**: Registered users' API keys are persisted for multi-device sync; guest users' keys are stored locally only and automatically cleared on page refresh, ensuring privacy
 
 ### 🌍 **Universal Access**
-- **Regional Restriction Solution**: Built-in proxy routing to bypass geographical limitations
+- **Regional Restriction Solution**: Built-in service relay routing to bypass geographical limitations
 - **Offline-First**: Full PWA support with offline capabilities
 - **Cross-Platform**: Works seamlessly on Web, PWA, and Android native apps
 
@@ -106,9 +135,28 @@ All file parsing and processing happens entirely in the browser:
 - **IndexedDB**: Local chat history and settings storage
 - **Progressive Web App**: Installable and works offline
 
-### 🛡️ Backend Architecture (Closed-Source)
+### 🛡️ Backend Architecture
 
-The project's backend is built on **Cloudflare Workers**, leveraging a modern serverless architecture. The backend remains closed-source to protect user data and core assets while achieving high elasticity and intelligent regional restriction solutions.
+The project's backend is built on **Cloudflare Workers**, leveraging a modern serverless architecture. 
+
+**Why is the backend closed-source?**
+
+While I'm committed to transparency, the backend remains closed-source for several important reasons:
+
+1. **Security**: Protecting user data, API keys, and authentication mechanisms
+2. **Cost Control**: Preventing API key abuse and ensuring sustainable service costs
+3. **Infrastructure**: Safeguarding proprietary optimization strategies and failover systems
+4. **Compliance**: Meeting regional requirements while maintaining service quality
+
+**What's transparent?**
+
+- ✅ All frontend code is open-source and MIT licensed
+- ✅ All API endpoints are public and well-documented
+- ✅ You can inspect all network requests
+- ✅ Client-side processing is fully auditable
+- ✅ No hidden tracking or data collection
+
+**For developers:** The frontend code demonstrates all backend interactions, and you can build your own backend or self-host the entire stack. All APIs are public and stable.
 
 #### Core Database Layer
 
@@ -120,7 +168,7 @@ The project's backend is built on **Cloudflare Workers**, leveraging a modern se
 
 #### Core: Elastic API Key Pool (APIKeyPool)
 
-We designed and implemented a production-grade, highly available API key management system:
+This system features a production-grade, highly available API key management system:
 
 - **Multi-Key Rotation**: Intelligent management of multiple Gemini and Brave Search API keys with automatic load balancing
 - **Health Check Mechanism**: Real-time monitoring of each key's availability and response quality
@@ -157,8 +205,6 @@ The system automatically detects and bypasses regional restrictions, invalid key
 - **Cloudflare R2**: S3-compatible object storage for user avatars and attachments
 - Global CDN acceleration with low-latency access
 - **Cloudflare KV**: High-performance key-value storage for caching, session management, and usage limit tracking
-
-**Developer-Friendly**: While the backend implementation is closed-source, all API endpoints are public and stable. The frontend code fully demonstrates how to interact with the backend, and developers can build custom frontends or integrate into their own applications using the same APIs.
 
 ---
 
@@ -199,6 +245,9 @@ Get API Key: [Google AI Studio](https://aistudio.google.com/api-keys)
 
 - Node.js 18+ 
 - npm or yarn
+- A Gemini API key (optional, but recommended for best experience)
+
+> **Note**: While the service can work with shared API keys, we strongly recommend using your own API key for better performance and privacy.
 
 ### Installation
 
@@ -216,6 +265,34 @@ npm run dev
 # Build for production
 npm run build
 ```
+
+### Configuration
+
+1. **Get Your API Key** (if you don't have one):
+   - Visit [Google AI Studio](https://aistudio.google.com/api-keys)
+   - Create a new API key
+   - Copy the key for use in the app
+
+2. **Configure in App**:
+   - Open the app: [LittleAIBox](https://ai.littletea.xyz)
+   - Go to Settings
+   - Enter your Gemini API key
+   - Save and start chatting!
+
+### Troubleshooting
+
+**Common Issues:**
+
+| Issue | Solution |
+|-------|----------|
+| API Key not working | Ensure your key is from Google AI Studio and has quota remaining |
+| Files not parsing | Check browser console for errors; ensure file format is supported |
+| Slow responses | Check your network connection; consider using your own API key |
+| Mobile build fails | Ensure Android Studio is installed and environment is set up correctly |
+
+**Need Help?**
+- Check [Issues](https://github.com/diandiancha/LittleAIBox/issues) for known problems
+- Open a new issue with your problem details
 
 ### Building for Mobile
 
@@ -242,6 +319,42 @@ npx cap open android
 
 ---
 
+## 🤝 Contributing
+
+We welcome contributions! Whether you're fixing bugs, adding features, or improving documentation, every contribution makes LittleAIBox better.
+
+### How to Contribute
+
+1. **Fork the repository** and clone it locally
+2. **Create a branch**: `git checkout -b feature/your-feature-name`
+3. **Make your changes** and test them thoroughly
+4. **Commit your changes**: `git commit -m "Add: description of your changes"`
+5. **Push to your fork**: `git push origin feature/your-feature-name`
+6. **Open a Pull Request** with a clear description of your changes
+
+### Guidelines
+
+- Follow existing code style and conventions
+- Add comments for complex logic
+- Update documentation for new features
+- Write clear commit messages
+- Test your changes before submitting
+
+### Roadmap
+
+I'm actively working on:
+
+- 🌐 iOS support (Capacitor)
+- 📊 More file format support
+- 🎨 Custom themes
+- 🔌 Plugin system
+- 🌍 More languages
+- 📱 Enhanced mobile features
+
+Have ideas? [Open an issue](https://github.com/diandiancha/LittleAIBox/issues) or start a discussion!
+
+---
+
 ## 🔒 Privacy & Security
 
 - **Client-Side Processing**: File parsing happens in your browser
@@ -261,7 +374,7 @@ Copyright (c) 2025 diandiancha
 
 <div align="center">
 
-Made with ❤️ by LittleAIBox Team
+Made with ❤️ by diandiancha
 
 **Star ⭐ this repo if you find it helpful!**
 
