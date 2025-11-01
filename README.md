@@ -45,7 +45,7 @@ LittleAIBox is perfect for:
 | Offline Support | 📱 Full PWA, works offline | Limited offline capabilities |
 | Cross-Platform | 🌐 Web + PWA + Android native | Usually web or mobile only |
 | Framework | ⚡ Vanilla JS, zero bloat | Often React/Vue dependencies |
-| Regional Access | 🌍 Built-in proxy solution | May be regionally restricted |
+| Regional Access | 🌍 Built-in service relay solution | May be regionally restricted |
 | Open Source | ✅ 100% frontend open-source | Varies |
 | Cost | 💰 Use your own API key | Often subscription-based |
 
