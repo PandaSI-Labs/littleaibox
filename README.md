@@ -1,5 +1,3 @@
-# LittleAIBox
-
 <div align="center">
 
 ![LittleAIBox Logo](public/images/pwa-192x192.png)
@@ -20,7 +18,7 @@ This project is built using **Google Gemini API** for conversational AI interact
 
 <div align="center">
 
-🌐 **Try it now**: [**LittleAIBox**](https://ai.littletea.xyz)
+🌐 **Try it now**: [**Visit Now**](https://ai.littletea.xyz)
 
 </div>
 

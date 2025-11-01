@@ -1,5 +1,3 @@
-# LittleAIBox
-
 <div align="center">
 
 ![LittleAIBox Logo](public/images/pwa-192x192.png)
@@ -20,7 +18,7 @@
 
 <div align="center">
 
-🌐 **지금 사용해보세요**: [**LittleAIBox**](https://ai.littletea.xyz)
+🌐 **지금 사용해보세요**: [**지금 방문**](https://ai.littletea.xyz)
 
 </div>
 
