@@ -9,6 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20PWA%20%7C%20Android-orange)](https://github.com/diandiancha/LittleAIBox)
 [![Language](https://img.shields.io/badge/Language-Multi--language-blue)](https://github.com/diandiancha/LittleAIBox)
+[![Product Hunt](https://img.shields.io/badge/Product%20Hunt-LittleAIBox-orange?logo=product-hunt)](https://www.producthunt.com/products/littleaibox)
 
 [中文](README.zh-CN.md) | [English](../README.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
@@ -63,6 +64,20 @@ LittleAIBox는 다음 사용자에게 완벽합니다:
 | 비용 | 💰 자체 API 키 사용 | 종종 구독 기반 |
 
 **LittleAIBox를 선택하는 이유**: 최대 프라이버시, 오프라인 우선 설계, 제로 프레임워크 종속성, AI 대화에 대한 완전한 제어.
+
+### 🌟 공식 설명
+
+> **프라이빗하고 글로벌한 AI 채팅 및 통합 플랫폼**
+>
+> LittleAIBox는 전체 스택, 크로스 플랫폼 Gemini AI 채팅 애플리케이션(Vite/Capacitor/Cloudflare 기반)입니다. 백엔드는 지역 제한을 우회하고 안정적인 글로벌 액세스를 보장하는 지능형 API 풀링 및 프록시 기능을 갖추고 있습니다. 주요 기능:
+>
+> - 클라이언트 측 파싱(PDF/DOCX/PPTX 지원)
+> - Mermaid/LaTeX 렌더링
+> - 실시간 웹 검색
+>
+> 기존 AI 애플리케이션과 달리 LittleAIBox는 로컬에서 실행되어 파일과 메시지가 디바이스를 떠나지 않습니다. 프라이버시를 강화하고 지능형 API 키 로테이션 메커니즘을 채택하며, 안정적인 글로벌 액세스를 제공하고 채팅 경험을 최적화하기 위한 사용자 정의 AI 매개변수를 허용합니다. 사용자는 선택적으로 클라우드 동기화에 등록할 수 있지만, 플랫폼은 계정 없이도 완전히 작동하며 위치나 요청 원본을 노출하지 않습니다. LittleAIBox는 오픈 소스이고 가볍게 설계되었으며, 프라이버시, 제어 및 자유를 중시하는 사용자를 위해 만들어졌습니다.
+>
+> *[Product Hunt에서 보기 →](https://www.producthunt.com/products/littleaibox)*
 
 ### 📱 애플리케이션 스크린샷
 

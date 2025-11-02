@@ -9,6 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20PWA%20%7C%20Android-orange)](https://github.com/diandiancha/LittleAIBox)
 [![Language](https://img.shields.io/badge/Language-Multi--language-blue)](https://github.com/diandiancha/LittleAIBox)
+[![Product Hunt](https://img.shields.io/badge/Product%20Hunt-LittleAIBox-orange?logo=product-hunt)](https://www.producthunt.com/products/littleaibox)
 
 [中文](docs/README.zh-CN.md) | [English](README.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
@@ -63,6 +64,20 @@ LittleAIBox is perfect for:
 | Cost | 💰 Use your own API key | Often subscription-based |
 
 **Choose LittleAIBox if you want**: Maximum privacy, offline-first design, zero framework dependencies, and complete control over your AI conversations.
+
+### 🌟 Official Description
+
+> **Private, Global AI Chat & Integration Platform**
+>
+> LittleAIBox is a full-stack, cross-platform Gemini AI chat application (built with Vite/Capacitor/Cloudflare) featuring an intelligent API pooling and proxy backend that bypasses regional restrictions for stable global access. Key features include:
+>
+> - Client-side parsing (PDF/DOCX/PPTX support)
+> - Mermaid/LaTeX rendering
+> - Real-time web search
+>
+> Unlike traditional AI applications, LittleAIBox runs locally, ensuring your files and messages never leave your device. It emphasizes privacy with intelligent API key rotation, provides stable global access, and allows custom AI parameters to optimize your chat experience. Users can optionally register for cloud sync, but the platform works fully without an account and doesn't expose your location or request origin. LittleAIBox is open-source, lightweight, and designed for users who value privacy, control, and freedom.
+>
+> *[View on Product Hunt →](https://www.producthunt.com/products/littleaibox)*
 
 ### 📱 Application Screenshots
 

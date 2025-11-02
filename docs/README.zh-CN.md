@@ -9,6 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20PWA%20%7C%20Android-orange)](https://github.com/diandiancha/LittleAIBox)
 [![Language](https://img.shields.io/badge/Language-Multi--language-blue)](https://github.com/diandiancha/LittleAIBox)
+[![Product Hunt](https://img.shields.io/badge/Product%20Hunt-LittleAIBox-orange?logo=product-hunt)](https://www.producthunt.com/products/littleaibox)
 
 [中文](README.zh-CN.md) | [English](../README.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
@@ -63,6 +64,20 @@ LittleAIBox 非常适合：
 | 成本 | 💰 使用您自己的 API 密钥 | 通常是订阅制 |
 
 **选择 LittleAIBox，如果您需要**：最大隐私、离线优先设计、零框架依赖以及对 AI 对话的完全控制。
+
+### 🌟 官方描述
+
+> **私密、全球化的 AI 聊天与集成平台**
+>
+> LittleAIBox 是一款全栈、跨平台的 Gemini AI 聊天应用（基于 Vite/Capacitor/Cloudflare）。其后端具备智能 API 池化和代理功能，能够绕过区域限制，确保稳定的全球访问。主要功能包括：
+>
+> - 客户端解析（支持 PDF/DOCX/PPTX）
+> - Mermaid/LaTeX 渲染
+> - 实时网页搜索
+>
+> 与传统 AI 应用不同，LittleAIBox 在本地运行，确保您的文件和消息不会离开您的设备。它强化了隐私保护，采用智能 API 密钥轮换机制，提供稳定的全球访问，并允许自定义 AI 参数，以优化您的聊天体验。用户可选择注册云同步，但该平台在无需账户的情况下也能完全运行，且不会暴露您的位置或请求来源。LittleAIBox 是开源的、轻量级的，专为重视隐私、控制和自由的用户设计。
+>
+> *[在 Product Hunt 上查看 →](https://www.producthunt.com/products/littleaibox)*
 
 ### 📱 应用截图
 
