@@ -138,23 +138,23 @@ graph TB
         H --> J
     end
     
-    subgraph "백엔드 레이어 - Cloudflare Workers"
+    subgraph "백엔드 - Cloudflare Pages Functions"
         B[API 게이트웨이]
         B1[인증 핸들러]
         B2[채팅 핸들러]
-        B3[API 요청 핸들러]
+        B3[API 핸들러]
         B4[공유 핸들러]
         B --> B1
         B --> B2
         B --> B3
         B --> B4
         
-        subgraph "엔터프라이즈급 API 관리"
+        subgraph "엔터프라이즈 API 관리"
             B5[API 키 풀]
-            B6[헬스 체커]
+            B6[헬스 체크]
             B7[서킷 브레이커]
-            B8[재시도 관리자]
-            B9[4단계 성능 저하]
+            B8[재시도 관리]
+            B9[4단계 저하]
             B5 --> B6
             B6 --> B7
             B7 --> B8
@@ -245,7 +245,7 @@ graph TB
 
 ### 🛡️ 백엔드 아키텍처
 
-본 프로젝트의 백엔드는 **Cloudflare Workers** 위에 구축되었으며, 현대적인 서버리스 아키텍처를 채택하고 있습니다.
+본 프로젝트의 백엔드는 **Cloudflare Pages Functions** 위에 구축되었으며, 현대적인 서버리스 아키텍처를 채택하고 있습니다.
 
 **왜 백엔드가 클로즈드 소스인가요?**
 

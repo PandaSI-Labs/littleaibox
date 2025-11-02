@@ -138,20 +138,20 @@ graph TB
         H --> J
     end
     
-    subgraph "Backend Layer - Cloudflare Workers"
+    subgraph "Backend - Cloudflare Pages Functions"
         B[API Gateway]
-        B1[Authentication Handler]
+        B1[Auth Handler]
         B2[Chat Handler]
-        B3[API Request Handler]
+        B3[API Handler]
         B4[Share Handler]
         B --> B1
         B --> B2
         B --> B3
         B --> B4
         
-        subgraph "Enterprise-Grade API Management"
+        subgraph "Enterprise API Management"
             B5[APIKeyPool]
-            B6[Health Checker]
+            B6[Health Check]
             B7[Circuit Breaker]
             B8[Retry Manager]
             B9[4-Tier Degradation]
@@ -245,7 +245,7 @@ All file parsing and processing happens entirely in the browser:
 
 ### 🛡️ Backend Architecture
 
-The project's backend is built on **Cloudflare Workers**, leveraging a modern serverless architecture. 
+The project's backend is built on **Cloudflare Pages Functions**, leveraging a modern serverless architecture. 
 
 **Why is the backend closed-source?**
 

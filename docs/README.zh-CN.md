@@ -138,11 +138,11 @@ graph TB
         H --> J
     end
     
-    subgraph "后端层 - Cloudflare Workers"
+    subgraph "后端 - Cloudflare Pages Functions"
         B[API 网关]
-        B1[身份认证处理器]
+        B1[认证处理器]
         B2[聊天处理器]
-        B3[API 请求处理器]
+        B3[API 处理器]
         B4[分享处理器]
         B --> B1
         B --> B2
@@ -151,10 +151,10 @@ graph TB
         
         subgraph "企业级 API 管理"
             B5[API 密钥池]
-            B6[健康检查器]
+            B6[健康检查]
             B7[熔断器]
-            B8[重试管理器]
-            B9[四层降级系统]
+            B8[重试管理]
+            B9[四层降级]
             B5 --> B6
             B6 --> B7
             B7 --> B8
@@ -245,7 +245,7 @@ graph TB
 
 ### 🛡️ 后端架构
 
-本项目的后端基于 **Cloudflare Workers** 构建，采用现代化的无服务器架构。
+本项目的后端基于 **Cloudflare Pages Functions** 构建，采用现代化的无服务器架构。
 
 **为什么后端闭源？**
 
