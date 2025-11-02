@@ -153,9 +153,8 @@ function smartChunking(text, maxSize = 8000, overlap = 200) {
 
 クリーンパターンで 5 つの言語をサポート。
 
-**構造：**
+**構造：** (例: `public/locales/ja.json`)
 ```json
-// public/locales/ja.json
 {
   "chat": {
     "placeholder": "メッセージを入力...",
@@ -257,8 +256,8 @@ function addMessage(chatId, message) {
 ```json
 {
   "scripts": {
-    "dev": "vite",           // 開発サーバーを起動
-    "build": "vite build"    // 本番ビルド
+    "dev": "vite",
+    "build": "vite build"
   }
 }
 ```

@@ -235,6 +235,23 @@ graph TD
 
 ---
 
+## 📚 문서 탐색
+
+<div align="center">
+
+**프로젝트 리소스 빠른 접근**
+
+[![학습 가이드](https://img.shields.io/badge/📘_학습_가이드-클릭_하기-blue?style=for-the-badge&logo=bookstack)](LEARN.ko.md) 
+[![기여 가이드](https://img.shields.io/badge/🤝_기여-가이드-orange?style=for-the-badge&logo=github)](CONTRIBUTING.ko.md) 
+[![행동 강령](https://img.shields.io/badge/🧠_행동_강령-보기-green?style=for-the-badge&logo=checklist)](../.github/CODE_OF_CONDUCT.md) 
+[![보안](https://img.shields.io/badge/🛡️_보안-정책-red?style=for-the-badge&logo=shield-check)](../.github/SECURITY.md)
+
+**📖 [전체 문서 인덱스](../docs/)**
+
+</div>
+
+---
+
 ## 📁 프로젝트 구조
 
 ```

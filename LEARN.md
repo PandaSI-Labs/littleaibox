@@ -153,9 +153,8 @@ function smartChunking(text, maxSize = 8000, overlap = 200) {
 
 Support 5 languages with a clean pattern.
 
-**Structure:**
+**Structure:** (e.g., `public/locales/en.json`)
 ```json
-// public/locales/en.json
 {
   "chat": {
     "placeholder": "Type your message...",
@@ -259,8 +258,8 @@ function addMessage(chatId, message) {
 ```json
 {
   "scripts": {
-    "dev": "vite",           // Start dev server
-    "build": "vite build"    // Production build
+    "dev": "vite",
+    "build": "vite build"
   }
 }
 ```

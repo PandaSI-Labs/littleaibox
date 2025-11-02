@@ -235,6 +235,23 @@ graph TD
 
 ---
 
+## 📚 文档导航
+
+<div align="center">
+
+**快速访问项目资源**
+
+[![学习指南](https://img.shields.io/badge/📘_学习指南-点击这里-blue?style=for-the-badge&logo=bookstack)](LEARN.zh-CN.md) 
+[![贡献指南](https://img.shields.io/badge/🤝_贡献指南-查看-orange?style=for-the-badge&logo=github)](CONTRIBUTING.zh-CN.md) 
+[![行为准则](https://img.shields.io/badge/🧠_行为准则-阅读-green?style=for-the-badge&logo=checklist)](../.github/CODE_OF_CONDUCT.md) 
+[![安全政策](https://img.shields.io/badge/🛡️_安全政策-查看-red?style=for-the-badge&logo=shield-check)](../.github/SECURITY.md)
+
+**📖 [完整文档索引](../docs/)**
+
+</div>
+
+---
+
 ## 📁 项目结构
 
 ```

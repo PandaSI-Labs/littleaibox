@@ -153,9 +153,8 @@ function smartChunking(text, maxSize = 8000, overlap = 200) {
 
 깔끔한 패턴으로 5개 언어 지원。
 
-**구조：**
+**구조：** (예: `public/locales/ko.json`)
 ```json
-// public/locales/ko.json
 {
   "chat": {
     "placeholder": "메시지를 입력하세요...",
@@ -257,8 +256,8 @@ function addMessage(chatId, message) {
 ```json
 {
   "scripts": {
-    "dev": "vite",           // 개발 서버 시작
-    "build": "vite build"    // 프로덕션 빌드
+    "dev": "vite",
+    "build": "vite build"
   }
 }
 ```

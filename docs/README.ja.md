@@ -235,6 +235,23 @@ graph TD
 
 ---
 
+## 📚 ドキュメントナビゲーション
+
+<div align="center">
+
+**プロジェクトリソースへのアクセス**
+
+[![学習ガイド](https://img.shields.io/badge/📘_学習ガイド-クリック-blue?style=for-the-badge&logo=bookstack)](LEARN.ja.md) 
+[![貢献ガイド](https://img.shields.io/badge/🤝_貢献-ガイド-orange?style=for-the-badge&logo=github)](CONTRIBUTING.ja.md) 
+[![行動規範](https://img.shields.io/badge/🧠_行動規範-閲覧-green?style=for-the-badge&logo=checklist)](../.github/CODE_OF_CONDUCT.md) 
+[![セキュリティ](https://img.shields.io/badge/🛡️_セキュリティ-ポリシー-red?style=for-the-badge&logo=shield-check)](../.github/SECURITY.md)
+
+**📖 [完全なドキュメントインデックス](../docs/)**
+
+</div>
+
+---
+
 ## 📁 プロジェクト構造
 
 ```

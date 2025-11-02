@@ -235,6 +235,23 @@ The system automatically detects and bypasses regional restrictions, invalid key
 
 ---
 
+## 📚 Documentation
+
+<div align="center">
+
+**Quick Navigation to Project Resources**
+
+[![Learn Guide](https://img.shields.io/badge/📘_Learn_Guide-Click_Here-blue?style=for-the-badge&logo=bookstack)](LEARN.md) 
+[![Contribute](https://img.shields.io/badge/🤝_Contributing-Guide-orange?style=for-the-badge&logo=github)](CONTRIBUTING.md) 
+[![Code of Conduct](https://img.shields.io/badge/🧠_Code_of_Conduct-View-green?style=for-the-badge&logo=checklist)](.github/CODE_OF_CONDUCT.md) 
+[![Security](https://img.shields.io/badge/🛡️_Security-Policy-red?style=for-the-badge&logo=shield-check)](.github/SECURITY.md)
+
+**📖 [Full Documentation Index](docs/)**
+
+</div>
+
+---
+
 ## 📁 Project Structure
 
 ```

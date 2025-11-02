@@ -153,9 +153,8 @@ function smartChunking(text, maxSize = 8000, overlap = 200) {
 
 使用简洁的模式支持 5 种语言。
 
-**结构：**
+**结构：** (例如 `public/locales/zh-CN.json`)
 ```json
-// public/locales/zh-CN.json
 {
   "chat": {
     "placeholder": "输入你的消息...",
@@ -259,8 +258,8 @@ function addMessage(chatId, message) {
 ```json
 {
   "scripts": {
-    "dev": "vite",           // 启动开发服务器
-    "build": "vite build"    // 生产构建
+    "dev": "vite",
+    "build": "vite build"
   }
 }
 ```
