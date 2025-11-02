@@ -50,7 +50,7 @@ Everyone's learning — help others grow with you. ❤️
 - 📝 **Improve Documentation** — fix typos, add examples
 - 🌍 **Translate UI** — help make LittleAIBox accessible worldwide
 - 🔧 **Submit Code** — bug fixes, refactors, new features
-- 🏗️ **Refactor Large Files** — help split `main.js` into smaller modules
+- 🏗️ **Help Refactor Code** — work together to improve codebase structure
 
 ---
 
