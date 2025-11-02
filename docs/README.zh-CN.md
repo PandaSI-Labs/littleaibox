@@ -1,6 +1,6 @@
 <div align="center">
 
-![LittleAIBox Logo](public/images/pwa-192x192.png)
+![LittleAIBox Logo](../public/images/pwa-192x192.png)
 
 # LittleAIBox
 
@@ -10,11 +10,17 @@
 [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20PWA%20%7C%20Android-orange)](https://github.com/diandiancha/LittleAIBox)
 [![Language](https://img.shields.io/badge/Language-Multi--language-blue)](https://github.com/diandiancha/LittleAIBox)
 
-[中文](README.zh-CN.md) | [English](README.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
+[中文](README.zh-CN.md) | [English](../README.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
 本项目基于 **Google Gemini API** 构建对话功能，提供智能的 AI 交互体验。
 
 </div>
+
+---
+
+> 🎓 本项目为教育和研究目的而开发。
+
+> 💼 商业部署和高级服务由作者独立运营，以确保安全性和可持续性。
 
 ---
 
@@ -61,11 +67,11 @@ LittleAIBox 非常适合：
 
 #### 主页面
 
-![主页面 - 中文](appshow/main_zh-CN.png)
+![主页面 - 中文](../appshow/main_zh-CN.png)
 
 #### 设置页面
 
-![设置页面 - 中文](appshow/settings_zh-CN.png)
+![设置页面 - 中文](../appshow/settings_zh-CN.png)
 
 ---
 

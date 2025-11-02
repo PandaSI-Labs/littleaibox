@@ -1,6 +1,6 @@
 <div align="center">
 
-![LittleAIBox Logo](public/images/pwa-192x192.png)
+![LittleAIBox Logo](../public/images/pwa-192x192.png)
 
 # LittleAIBox
 
@@ -10,11 +10,17 @@
 [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20PWA%20%7C%20Android-orange)](https://github.com/diandiancha/LittleAIBox)
 [![Language](https://img.shields.io/badge/Language-Multi--language-blue)](https://github.com/diandiancha/LittleAIBox)
 
-[中文](README.zh-CN.md) | [English](README.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
+[中文](README.zh-CN.md) | [English](../README.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
 이 프로젝트는 지능형 AI 경험을 제공하기 위해 **Google Gemini API**를 사용하여 대화 기능을 구축합니다.
 
 </div>
+
+---
+
+> 🎓 이 프로젝트는 교육 및 연구 목적으로 개발되었습니다。
+
+> 💼 상업적 배포 및 프리미엄 서비스는 보안과 지속가능성을 보장하기 위해 작성자가 별도로 운영합니다。
 
 ---
 
@@ -61,11 +67,11 @@ LittleAIBox는 다음 사용자에게 완벽합니다:
 
 #### 메인 페이지
 
-![메인 페이지 - 한국어](appshow/main_ko.png)
+![메인 페이지 - 한국어](../appshow/main_ko.png)
 
 #### 설정 페이지
 
-![설정 페이지 - 한국어](appshow/settings_ko.png)
+![설정 페이지 - 한국어](../appshow/settings_ko.png)
 
 ---
 

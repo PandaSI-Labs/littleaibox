@@ -10,11 +10,17 @@
 [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20PWA%20%7C%20Android-orange)](https://github.com/diandiancha/LittleAIBox)
 [![Language](https://img.shields.io/badge/Language-Multi--language-blue)](https://github.com/diandiancha/LittleAIBox)
 
-[中文](README.zh-CN.md) | [English](README.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
+[中文](docs/README.zh-CN.md) | [English](README.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
 This project is built using **Google Gemini API** for conversational AI interactions, providing an intelligent AI experience.
 
 </div>
+
+---
+
+> 🎓 This project is developed for educational and research purposes.  
+
+> 💼 Commercial deployments and premium services are operated separately by the author to ensure security and sustainability.
 
 ---
 
