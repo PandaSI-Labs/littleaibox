@@ -138,7 +138,7 @@ graph TB
         H --> J
     end
     
-    subgraph "バックエンド - Cloudflare Pages Functions"
+    subgraph "バックエンド - Cloudflare Pages"
         B[API ゲートウェイ]
         B1[認証ハンドラー]
         B2[チャットハンドラー]
@@ -245,7 +245,7 @@ graph TB
 
 ### 🛡️ バックエンドアーキテクチャ
 
-本プロジェクトのバックエンドは **Cloudflare Pages Functions** 上に構築され、モダンなサーバーレスアーキテクチャを採用しています。
+本プロジェクトのバックエンドは **Cloudflare Pages** 上に構築され、モダンなサーバーレスアーキテクチャを採用しています。
 
 **なぜバックエンドはクローズドソースなのか？**
 

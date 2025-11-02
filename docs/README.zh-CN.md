@@ -138,7 +138,7 @@ graph TB
         H --> J
     end
     
-    subgraph "后端 - Cloudflare Pages Functions"
+    subgraph "后端 - Cloudflare Pages"
         B[API 网关]
         B1[认证处理器]
         B2[聊天处理器]
@@ -245,7 +245,7 @@ graph TB
 
 ### 🛡️ 后端架构
 
-本项目的后端基于 **Cloudflare Pages Functions** 构建，采用现代化的无服务器架构。
+本项目的后端基于 **Cloudflare Pages** 构建，采用现代化的无服务器架构。
 
 **为什么后端闭源？**
 

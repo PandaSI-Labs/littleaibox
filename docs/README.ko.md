@@ -138,7 +138,7 @@ graph TB
         H --> J
     end
     
-    subgraph "백엔드 - Cloudflare Pages Functions"
+    subgraph "백엔드 - Cloudflare Pages"
         B[API 게이트웨이]
         B1[인증 핸들러]
         B2[채팅 핸들러]
@@ -245,7 +245,7 @@ graph TB
 
 ### 🛡️ 백엔드 아키텍처
 
-본 프로젝트의 백엔드는 **Cloudflare Pages Functions** 위에 구축되었으며, 현대적인 서버리스 아키텍처를 채택하고 있습니다.
+본 프로젝트의 백엔드는 **Cloudflare Pages** 위에 구축되었으며, 현대적인 서버리스 아키텍처를 채택하고 있습니다.
 
 **왜 백엔드가 클로즈드 소스인가요?**
 

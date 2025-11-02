@@ -138,7 +138,7 @@ graph TB
         H --> J
     end
     
-    subgraph "Backend - Cloudflare Pages Functions"
+    subgraph "Backend - Cloudflare Pages"
         B[API Gateway]
         B1[Auth Handler]
         B2[Chat Handler]
@@ -245,7 +245,7 @@ All file parsing and processing happens entirely in the browser:
 
 ### 🛡️ Backend Architecture
 
-The project's backend is built on **Cloudflare Pages Functions**, leveraging a modern serverless architecture. 
+The project's backend is built on **Cloudflare Pages**, leveraging a modern serverless architecture. 
 
 **Why is the backend closed-source?**
 
