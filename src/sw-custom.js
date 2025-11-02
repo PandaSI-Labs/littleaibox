@@ -97,6 +97,18 @@ registerRoute(
     new CacheFirst({ cacheName: 'libs-script-cache' })
 );
 
+// PDF.js CMaps（文字映射表）
+registerRoute(
+    ({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/libs/cmaps/'),
+    new CacheFirst({ cacheName: 'libs-cmaps-cache' })
+);
+
+// 字体资源（KaTeX/Highlight 等）
+registerRoute(
+    ({ url, request }) => request.method === 'GET' && (url.pathname.startsWith('/libs/fonts/') || /\.(?:woff2?|ttf|otf|eot)$/.test(url.pathname)),
+    new CacheFirst({ cacheName: 'libs-fonts-cache' })
+);
+
 // APK：默认强缓存
 const apkCacheFirst = new CacheFirst({ cacheName: 'apk-cache' });
 const apkNetworkFirst = new NetworkFirst({ cacheName: 'apk-cache', networkTimeoutSeconds: 3 });
@@ -116,13 +128,31 @@ registerRoute(
     new CacheFirst({ cacheName: 'assets-cache' })
 );
 
+// 图片
+registerRoute(
+    ({ url, request }) => request.method === 'GET' && /\.(?:png|gif|jpg|jpeg|svg|webp)$/.test(url.pathname),
+    new CacheFirst({ cacheName: 'images-cache' })
+);
+
+// CDN 静态资源
+registerRoute(
+    ({ url, request }) => request.method === 'GET' && url.hostname === 'cdn.jsdelivr.net',
+    new CacheFirst({ cacheName: 'cdn-fonts-cache' })
+);
+
+// 分享页
+registerRoute(
+    ({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/share/'),
+    new StaleWhileRevalidate({ cacheName: 'share-page-cache' })
+);
+
 // API
 registerRoute(
     ({ url }) => url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/'),
     networkOnlyWithFallback
 );
 
-// 语言包：默认强缓存；在强制刷新时走网络优先并更新缓存
+// 语言包
 const stripSearchPlugin = {
     cacheKeyWillBeUsed: async ({ request }) => {
         const url = new URL(request.url);

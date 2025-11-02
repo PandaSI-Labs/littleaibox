@@ -1,6 +1,6 @@
 {
   "name": "littleaibox",
-  "version": "2.3.1",
+  "version": "2.3.3",
   "type": "module",
   "scripts": {
     "dev": "vite",

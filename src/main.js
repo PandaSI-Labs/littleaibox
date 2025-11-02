@@ -7181,6 +7181,27 @@ function blobToBase64(blob) {
     });
 }
 
+function base64ToBlob(base64, contentType) {
+    try {
+        const byteCharacters = atob(base64);
+        const byteArrays = [];
+        const sliceSize = 1024;
+        for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+            const slice = byteCharacters.slice(offset, offset + sliceSize);
+            const byteNumbers = new Array(slice.length);
+            for (let i = 0; i < slice.length; i++) {
+                byteNumbers[i] = slice.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            byteArrays.push(byteArray);
+        }
+        return new Blob(byteArrays, { type: contentType || 'application/octet-stream' });
+    } catch (e) {
+        console.error('Failed to convert base64 to Blob:', e);
+        throw e;
+    }
+}
+
 async function imageToBase64(file) {
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
@@ -9834,9 +9855,56 @@ async function processFilesArray(files) {
 
 async function handlePickedFiles(pickedFiles) {
     if (!pickedFiles || pickedFiles.length === 0) return;
-    const files = pickedFiles.map(pf => new File([pf.blob], pf.name, { type: pf.mimeType }));
-    await processFilesArray(files);
+
+    const files = [];
+    for (const pf of pickedFiles) {
+        try {
+            // Web 端
+            if (pf.blob instanceof Blob) {
+                files.push(new File([pf.blob], pf.name, { type: pf.mimeType || pf.blob.type }));
+                continue;
+            }
+
+            if (pf.data) {
+                const blob = base64ToBlob(pf.data, pf.mimeType);
+                files.push(new File([blob], pf.name, { type: pf.mimeType || blob.type }));
+                continue;
+            }
+
+            const candidatePath = pf.path || pf.webPath;
+            if (candidatePath) {
+                try {
+                    const res = await Filesystem.readFile({ path: candidatePath });
+                    const blob = base64ToBlob(res.data, pf.mimeType);
+                    files.push(new File([blob], pf.name, { type: pf.mimeType || blob.type }));
+                    continue;
+                } catch (readErr) {
+                    console.warn('Filesystem.readFile fallback failed:', readErr);
+                }
+            }
+
+            if (pf.webPath) {
+                try {
+                    const response = await fetch(pf.webPath);
+                    const blob = await response.blob();
+                    files.push(new File([blob], pf.name, { type: pf.mimeType || blob.type }));
+                    continue;
+                } catch (fetchErr) {
+                    console.warn('Fetch webPath fallback failed:', fetchErr);
+                }
+            }
+
+            throw new Error('Can not read file content');
+        } catch (err) {
+            showToast(`${getToastMessage('console.skipFile', { filename: pf.name })}: ${err.message || err}`, 'info');
+        }
+    }
+
+    if (files.length > 0) {
+        await processFilesArray(files);
+    }
 }
+
 function setupEventListeners() {
     const isTouchDevice = 'ontouchstart' in window;
 
@@ -10635,7 +10703,9 @@ function setupEventListeners() {
             try {
                 const result = await FilePicker.pickFiles({
                     types: ['text/plain', 'text/markdown', 'application/javascript', 'text/css', 'text/html', 'application/json', 'application/xml', 'public.source-code'], // 尝试指定代码类型
-                    multiple: true
+                    multiple: true,
+                    // 原生端需要主动读取文件数据，否则不会返回 blob
+                    readFile: true
                 });
 
                 handlePickedFiles(result.files);
@@ -10655,7 +10725,9 @@ function setupEventListeners() {
         if (isNativeApp) {
             try {
                 const result = await FilePicker.pickFiles({
-                    multiple: true
+                    multiple: true,
+                    // 原生端需要主动读取文件数据，否则不会返回 blob
+                    readFile: true
                 });
 
                 handlePickedFiles(result.files);
