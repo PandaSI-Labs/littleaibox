@@ -127,16 +127,90 @@ LittleAIBox is perfect for:
 ### 🏗️ System Diagram
 
 ```mermaid
-graph TD
-    A[Frontend: Vite + Tailwind + Capacitor] --> B[Cloudflare Workers Backend]
-    B --> C[Gemini API]
-    B --> D[Brave Search API]
-    B --> E[Cloudflare R2 Storage]
-    B --> F[Cloudflare D1 Database]
-    B --> G[Cloudflare KV Cache]
-    H[Client-Side Processing] --> A
-    H --> I[PPTX, PDF, DOCX, XLSX]
-    H --> J[IndexedDB Storage]
+graph TB
+    subgraph "Client Layer"
+        A[Vite + Tailwind + Capacitor]
+        H[Client-Side Processing]
+        I[PPTX, PDF, DOCX, XLSX Parsing]
+        J[IndexedDB + localStorage]
+        A --> H
+        H --> I
+        H --> J
+    end
+    
+    subgraph "Backend Layer - Cloudflare Workers"
+        B[API Gateway]
+        B1[Authentication Handler]
+        B2[Chat Handler]
+        B3[API Request Handler]
+        B4[Share Handler]
+        B --> B1
+        B --> B2
+        B --> B3
+        B --> B4
+        
+        subgraph "Enterprise-Grade API Management"
+            B5[APIKeyPool]
+            B6[Health Checker]
+            B7[Circuit Breaker]
+            B8[Retry Manager]
+            B9[4-Tier Degradation]
+            B5 --> B6
+            B6 --> B7
+            B7 --> B8
+            B8 --> B9
+        end
+        
+        B2 --> B5
+        B3 --> B5
+    end
+    
+    subgraph "External Services"
+        C[Gemini API]
+        D[Brave Search API]
+        D1[GNews API]
+        D2[pollinations.ai]
+    end
+    
+    subgraph "Cloudflare Infrastructure"
+        E[Cloudflare R2<br/>Object Storage]
+        F[Cloudflare D1<br/>SQLite Database]
+        G1[Cloudflare KV<br/>Guest Usage]
+        G2[Cloudflare KV<br/>Proxy Cache]
+        G3[Cloudflare KV<br/>Session Cache]
+    end
+    
+    subgraph "Email & Storage"
+        K[Resend API<br/>Email Service]
+        L[Avatar & Files<br/>R2 Storage]
+    end
+    
+    A --> B
+    B1 --> F
+    B2 --> B5
+    B3 --> B5
+    B4 --> F
+    
+    B5 --> C
+    B3 --> D
+    B3 --> D1
+    B3 --> D2
+    
+    B1 --> F
+    B2 --> F
+    B3 --> F
+    B1 --> G3
+    B3 --> G1
+    B3 --> G2
+    
+    B1 --> K
+    B1 --> E
+    A --> E
+    
+    style B5 fill:#ff6b6b,stroke:#c92a2a,stroke-width:3px
+    style B9 fill:#ff8787,stroke:#c92a2a,stroke-width:2px
+    style B6 fill:#ffd43b,stroke:#fab005,stroke-width:2px
+    style B7 fill:#ffd43b,stroke:#fab005,stroke-width:2px
 ```
 
 ### 🧩 Frontend Stack

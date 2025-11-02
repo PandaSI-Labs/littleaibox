@@ -127,16 +127,90 @@ LittleAIBox は以下の方に最適です：
 ### 🏗️ システムアーキテクチャ図
 
 ```mermaid
-graph TD
-    A[フロントエンド: Vite + Tailwind + Capacitor] --> B[Cloudflare Workers バックエンド]
-    B --> C[Gemini API]
-    B --> D[Brave Search API]
-    B --> E[Cloudflare R2 ストレージ]
-    B --> F[Cloudflare D1 データベース]
-    B --> G[Cloudflare KV キャッシュ]
-    H[クライアント側処理] --> A
-    H --> I[PPTX, PDF, DOCX, XLSX]
-    H --> J[IndexedDB ストレージ]
+graph TB
+    subgraph "クライアント層"
+        A[Vite + Tailwind + Capacitor]
+        H[クライアント側処理]
+        I[PPTX, PDF, DOCX, XLSX 解析]
+        J[IndexedDB + localStorage]
+        A --> H
+        H --> I
+        H --> J
+    end
+    
+    subgraph "バックエンド層 - Cloudflare Workers"
+        B[API ゲートウェイ]
+        B1[認証ハンドラー]
+        B2[チャットハンドラー]
+        B3[API リクエストハンドラー]
+        B4[共有ハンドラー]
+        B --> B1
+        B --> B2
+        B --> B3
+        B --> B4
+        
+        subgraph "エンタープライズグレード API 管理"
+            B5[API キープール]
+            B6[ヘルスチェッカー]
+            B7[サーキットブレーカー]
+            B8[リトライマネージャー]
+            B9[4層劣化システム]
+            B5 --> B6
+            B6 --> B7
+            B7 --> B8
+            B8 --> B9
+        end
+        
+        B2 --> B5
+        B3 --> B5
+    end
+    
+    subgraph "外部サービス"
+        C[Gemini API]
+        D[Brave Search API]
+        D1[GNews API]
+        D2[pollinations.ai]
+    end
+    
+    subgraph "Cloudflare インフラ"
+        E[Cloudflare R2<br/>オブジェクトストレージ]
+        F[Cloudflare D1<br/>SQLite データベース]
+        G1[Cloudflare KV<br/>ゲスト使用量]
+        G2[Cloudflare KV<br/>プロキシキャッシュ]
+        G3[Cloudflare KV<br/>セッションキャッシュ]
+    end
+    
+    subgraph "メールとストレージ"
+        K[Resend API<br/>メールサービス]
+        L[アバターとファイル<br/>R2 ストレージ]
+    end
+    
+    A --> B
+    B1 --> F
+    B2 --> B5
+    B3 --> B5
+    B4 --> F
+    
+    B5 --> C
+    B3 --> D
+    B3 --> D1
+    B3 --> D2
+    
+    B1 --> F
+    B2 --> F
+    B3 --> F
+    B1 --> G3
+    B3 --> G1
+    B3 --> G2
+    
+    B1 --> K
+    B1 --> E
+    A --> E
+    
+    style B5 fill:#ff6b6b,stroke:#c92a2a,stroke-width:3px
+    style B9 fill:#ff8787,stroke:#c92a2a,stroke-width:2px
+    style B6 fill:#ffd43b,stroke:#fab005,stroke-width:2px
+    style B7 fill:#ffd43b,stroke:#fab005,stroke-width:2px
 ```
 
 ### 🧩 フロントエンドスタック

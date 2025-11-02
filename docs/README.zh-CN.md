@@ -127,16 +127,90 @@ LittleAIBox 非常适合：
 ### 🏗️ 系统架构图
 
 ```mermaid
-graph TD
-    A[前端: Vite + Tailwind + Capacitor] --> B[Cloudflare Workers 后端]
-    B --> C[Gemini API]
-    B --> D[Brave Search API]
-    B --> E[Cloudflare R2 存储]
-    B --> F[Cloudflare D1 数据库]
-    B --> G[Cloudflare KV 缓存]
-    H[客户端处理] --> A
-    H --> I[PPTX, PDF, DOCX, XLSX]
-    H --> J[IndexedDB 存储]
+graph TB
+    subgraph "客户端层"
+        A[Vite + Tailwind + Capacitor]
+        H[客户端处理]
+        I[PPTX, PDF, DOCX, XLSX 解析]
+        J[IndexedDB + localStorage]
+        A --> H
+        H --> I
+        H --> J
+    end
+    
+    subgraph "后端层 - Cloudflare Workers"
+        B[API 网关]
+        B1[身份认证处理器]
+        B2[聊天处理器]
+        B3[API 请求处理器]
+        B4[分享处理器]
+        B --> B1
+        B --> B2
+        B --> B3
+        B --> B4
+        
+        subgraph "企业级 API 管理"
+            B5[API 密钥池]
+            B6[健康检查器]
+            B7[熔断器]
+            B8[重试管理器]
+            B9[四层降级系统]
+            B5 --> B6
+            B6 --> B7
+            B7 --> B8
+            B8 --> B9
+        end
+        
+        B2 --> B5
+        B3 --> B5
+    end
+    
+    subgraph "外部服务"
+        C[Gemini API]
+        D[Brave Search API]
+        D1[GNews API]
+        D2[pollinations.ai]
+    end
+    
+    subgraph "Cloudflare 基础设施"
+        E[Cloudflare R2<br/>对象存储]
+        F[Cloudflare D1<br/>SQLite 数据库]
+        G1[Cloudflare KV<br/>访客用量]
+        G2[Cloudflare KV<br/>代理缓存]
+        G3[Cloudflare KV<br/>会话缓存]
+    end
+    
+    subgraph "邮件与存储"
+        K[Resend API<br/>邮件服务]
+        L[头像与文件<br/>R2 存储]
+    end
+    
+    A --> B
+    B1 --> F
+    B2 --> B5
+    B3 --> B5
+    B4 --> F
+    
+    B5 --> C
+    B3 --> D
+    B3 --> D1
+    B3 --> D2
+    
+    B1 --> F
+    B2 --> F
+    B3 --> F
+    B1 --> G3
+    B3 --> G1
+    B3 --> G2
+    
+    B1 --> K
+    B1 --> E
+    A --> E
+    
+    style B5 fill:#ff6b6b,stroke:#c92a2a,stroke-width:3px
+    style B9 fill:#ff8787,stroke:#c92a2a,stroke-width:2px
+    style B6 fill:#ffd43b,stroke:#fab005,stroke-width:2px
+    style B7 fill:#ffd43b,stroke:#fab005,stroke-width:2px
 ```
 
 ### 🧩 前端技术栈

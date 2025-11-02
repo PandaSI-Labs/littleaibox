@@ -127,16 +127,90 @@ LittleAIBox는 다음 사용자에게 완벽합니다:
 ### 🏗️ 시스템 아키텍처 다이어그램
 
 ```mermaid
-graph TD
-    A[프론트엔드: Vite + Tailwind + Capacitor] --> B[Cloudflare Workers 백엔드]
-    B --> C[Gemini API]
-    B --> D[Brave Search API]
-    B --> E[Cloudflare R2 스토리지]
-    B --> F[Cloudflare D1 데이터베이스]
-    B --> G[Cloudflare KV 캐시]
-    H[클라이언트 측 처리] --> A
-    H --> I[PPTX, PDF, DOCX, XLSX]
-    H --> J[IndexedDB 스토리지]
+graph TB
+    subgraph "클라이언트 레이어"
+        A[Vite + Tailwind + Capacitor]
+        H[클라이언트 측 처리]
+        I[PPTX, PDF, DOCX, XLSX 파싱]
+        J[IndexedDB + localStorage]
+        A --> H
+        H --> I
+        H --> J
+    end
+    
+    subgraph "백엔드 레이어 - Cloudflare Workers"
+        B[API 게이트웨이]
+        B1[인증 핸들러]
+        B2[채팅 핸들러]
+        B3[API 요청 핸들러]
+        B4[공유 핸들러]
+        B --> B1
+        B --> B2
+        B --> B3
+        B --> B4
+        
+        subgraph "엔터프라이즈급 API 관리"
+            B5[API 키 풀]
+            B6[헬스 체커]
+            B7[서킷 브레이커]
+            B8[재시도 관리자]
+            B9[4단계 성능 저하]
+            B5 --> B6
+            B6 --> B7
+            B7 --> B8
+            B8 --> B9
+        end
+        
+        B2 --> B5
+        B3 --> B5
+    end
+    
+    subgraph "외부 서비스"
+        C[Gemini API]
+        D[Brave Search API]
+        D1[GNews API]
+        D2[pollinations.ai]
+    end
+    
+    subgraph "Cloudflare 인프라"
+        E[Cloudflare R2<br/>객체 스토리지]
+        F[Cloudflare D1<br/>SQLite 데이터베이스]
+        G1[Cloudflare KV<br/>게스트 사용량]
+        G2[Cloudflare KV<br/>프록시 캐시]
+        G3[Cloudflare KV<br/>세션 캐시]
+    end
+    
+    subgraph "이메일 및 스토리지"
+        K[Resend API<br/>이메일 서비스]
+        L[아바타 및 파일<br/>R2 스토리지]
+    end
+    
+    A --> B
+    B1 --> F
+    B2 --> B5
+    B3 --> B5
+    B4 --> F
+    
+    B5 --> C
+    B3 --> D
+    B3 --> D1
+    B3 --> D2
+    
+    B1 --> F
+    B2 --> F
+    B3 --> F
+    B1 --> G3
+    B3 --> G1
+    B3 --> G2
+    
+    B1 --> K
+    B1 --> E
+    A --> E
+    
+    style B5 fill:#ff6b6b,stroke:#c92a2a,stroke-width:3px
+    style B9 fill:#ff8787,stroke:#c92a2a,stroke-width:2px
+    style B6 fill:#ffd43b,stroke:#fab005,stroke-width:2px
+    style B7 fill:#ffd43b,stroke:#fab005,stroke-width:2px
 ```
 
 ### 🧩 프론트엔드 스택
