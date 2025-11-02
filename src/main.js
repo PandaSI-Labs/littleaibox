@@ -1,4 +1,4 @@
-import { App } from '@capacitor/app';
+﻿import { App } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Clipboard } from '@capacitor/clipboard';
@@ -13,6 +13,14 @@ import { deleteChatsFromDB, getChatsFromDB, getSettingsFromDB, saveChatsToDB, sa
 import { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLanguageApplied, preloadAllTranslations, t } from './i18n.js';
 import { renderMermaidDiagrams } from './mermaid-renderer.js';
 import './style.css';
+
+
+import * as Sentry from "@sentry/browser";
+
+Sentry.init({
+    dsn: "https://3d6d8b2274218b8b423a5ce3b7d40536@o4510203764670464.ingest.us.sentry.io/4510203772207104",
+    sendDefaultPii: true
+});
 
 const ApkInstaller = Capacitor.isNativePlatform()
     ? registerPlugin('ApkInstaller', {
@@ -1653,18 +1661,6 @@ function setupBackgroundProcessing() {
         isPageVisible = !document.hidden;
 
         if (isPageVisible && !wasVisible) {
-            if (sessionId && currentUser) {
-                const serverLang = currentUser?.language;
-                const localLang = localStorage.getItem('selectedLanguage');
-                if (serverLang && serverLang !== localLang) {
-                    console.log(`visibilitychange: Syncing language from server (${serverLang})`);
-                    localStorage.setItem('selectedLanguage', serverLang);
-                    applyLanguage(serverLang).catch(error => {
-                        console.error('Failed to apply synced language on visibility change:', error);
-                    });
-                }
-            }
-
             if (isProcessing) {
                 if (globalContentDiv) {
                     try {
@@ -4314,11 +4310,33 @@ async function login(email, password) {
                         notifyBackendCacheInvalidation('user_login', { userId: currentUser.id });
                     });
             } else {
-                showEmptyState();
-                scheduleRenderSidebar();
-                updateUI();
-                showToast(getToastMessage('toast.loginSuccess'), 'success');
-                notifyBackendCacheInvalidation('user_login', { userId: currentUser.id });
+                // 未设置语言：按系统/浏览器语言确定并保存
+                try {
+                    const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'zh-CN';
+                    const defaultLang = (browserLang && (browserLang.startsWith('zh-TW') || browserLang.startsWith('zh-HK'))) ? 'zh-TW'
+                        : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
+                            : (browserLang && browserLang.startsWith('ja')) ? 'ja'
+                                : (browserLang && browserLang.startsWith('ko')) ? 'ko'
+                                    : (browserLang && browserLang.startsWith('en')) ? 'en'
+                                        : 'zh-CN';
+                    localStorage.setItem('selectedLanguage', defaultLang);
+                    currentUser.language = defaultLang;
+                    try { localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(currentUser)); } catch (_) { }
+                    applyLanguage(defaultLang).then(afterLangApplied).catch(() => {
+                        showEmptyState();
+                        scheduleRenderSidebar();
+                        updateUI();
+                        showToast(getToastMessage('toast.loginSuccess'), 'success');
+                        notifyBackendCacheInvalidation('user_login', { userId: currentUser.id });
+                    });
+                    try { makeAuthRequest('update-language', { language: defaultLang }); } catch (_) { }
+                } catch (_) {
+                    showEmptyState();
+                    scheduleRenderSidebar();
+                    updateUI();
+                    showToast(getToastMessage('toast.loginSuccess'), 'success');
+                    notifyBackendCacheInvalidation('user_login', { userId: currentUser.id });
+                }
             }
         });
         resetToDefaultModel();
@@ -4507,11 +4525,8 @@ async function handlePasswordResetToken() {
             }
 
             resetToken = token;
-
-            // 显示认证遮罩层，并直接切换到重置密码表单
             elements.authOverlay.classList.add('visible');
 
-            // 隐藏主聊天页面，避免显示
             if (elements.chatContainer) {
                 elements.chatContainer.style.display = 'none';
             }
@@ -4550,6 +4565,8 @@ async function checkSession() {
             asyncStorage.setItem('selectedLanguage', currentUser.language);
         }
 
+        // 快速新鲜度检查：即使有缓存，也发起一次网络校验；
+        // 首次页面会话需等待该请求完成，避免跨设备设置显示为旧值。
         sessionValidationPromise = makeAuthRequest('me').then(result => {
             if (result.success && result.user) {
                 simpleCache.set(`user_session_${sessionId}`, result.user, 60000);
@@ -4577,6 +4594,7 @@ async function checkSession() {
         }).finally(() => {
             sessionValidationPromise = null;
         });
+
         return true;
     }
 
@@ -5881,20 +5899,28 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             }
 
             let normalized = body
+                // 集合符号 - 不属于
                 .replace(/\u2208\s*\/\s*/g, '\\notin ')
                 .replace(/\u2208\u0338/g, '\\notin ')
                 .replace(/\u2209/g, '\\notin ')
+                // 集合符号 - 子集
                 .replace(/\u2282\s*\/\s*/g, '\\not\\subset ')
                 .replace(/\u2282\u0338/g, '\\not\\subset ')
                 .replace(/\u2286\s*\/\s*/g, '\\not\\subseteq ')
                 .replace(/\u2286\u0338/g, '\\not\\subseteq ')
+                // 集合符号 - 超集
                 .replace(/\u2283\s*\/\s*/g, '\\not\\supset ')
                 .replace(/\u2283\u0338/g, '\\not\\supset ')
                 .replace(/\u2287\s*\/\s*/g, '\\not\\supseteq ')
                 .replace(/\u2287\u0338/g, '\\not\\supseteq ')
+                // 集合符号 - 不包含
                 .replace(/\u220B\s*\/\s*/g, '\\not\\ni ')
                 .replace(/\u220B\u0338/g, '\\not\\ni ')
-                .replace(/\u00AC\s*(\w)/g, '\\neg \\! $1');
+                // 逻辑符号 - 否定
+                .replace(/\u00AC\s*(\w)/g, '\\neg \\! $1')
+                // 下划线和上标规范化 - 修正不规范的下标/上标
+                .replace(/_(\w+)/g, '_{$1}')
+                .replace(/\^(\w+)/g, '^{$1}');
 
             return start + normalized + end;
         } catch (e) {
@@ -11010,7 +11036,9 @@ function setupEventListeners() {
                 if (pageId === 'language') {
                     const languageSelector = targetPage.querySelector('.language-selector');
                     if (languageSelector) {
-                        const currentLang = currentUser ? currentUser.language : (localStorage.getItem('selectedLanguage') || getCurrentLanguage());
+                        const currentLang = currentUser
+                            ? (currentUser.language || localStorage.getItem('selectedLanguage') || getCurrentLanguage())
+                            : (localStorage.getItem('selectedLanguage') || getCurrentLanguage());
                         languageSelector.querySelectorAll('.language-btn').forEach(btn => {
                             btn.classList.toggle('active', btn.dataset.lang === currentLang);
                         });
@@ -11089,11 +11117,15 @@ function setupEventListeners() {
 
                 intentAnalyzer.clearKeywordCache();
 
-                // 立即更新本地语言设置
-                localStorage.setItem('selectedLanguage', selectedLang);
+                // 立即更新语言设置：
+                // - 登录用户：持久化到 localStorage，并更新缓存的 currentUser
+                // - 访客：仅会话内有效（不写入 localStorage）
                 if (currentUser) {
+                    localStorage.setItem('selectedLanguage', selectedLang);
                     currentUser.language = selectedLang;
                     localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(currentUser));
+                } else {
+                    try { sessionStorage.setItem('guest_selectedLanguage', selectedLang); } catch (_) { }
                 }
                 refreshSettingsI18nTexts();
 
@@ -12597,6 +12629,8 @@ async function initialize() {
             elements.voiceBtn.style.display = (isMobile || !isNativeApp) ? 'none' : 'flex';
         }
         setupBackgroundProcessing();
+
+        // 会话内锁定语言：不监听系统语言变化或原生恢复事件自动切换
         if ('ontouchstart' in window) {
             let isGestureReturn = false;
             document.addEventListener('visibilitychange', () => {
@@ -12647,8 +12681,23 @@ async function initialize() {
             }
 
             savedLanguage = localStorage.getItem('selectedLanguage');
+            if (!sessionId && savedLanguage) {
+                try { localStorage.removeItem('selectedLanguage'); } catch (_) { }
+                savedLanguage = null;
+            }
+
+            // 启动时快速渲染：优先应用本地语言；访客按系统语言但不持久化
             if (savedLanguage) {
-                await applyLanguage(savedLanguage);
+                try { await applyLanguage(savedLanguage); } catch (_) { }
+            } else if (!sessionId) {
+                const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'zh-CN';
+                const defaultLang = (browserLang && (browserLang.startsWith('zh-TW') || browserLang.startsWith('zh-HK'))) ? 'zh-TW'
+                    : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
+                        : (browserLang && browserLang.startsWith('ja')) ? 'ja'
+                            : (browserLang && browserLang.startsWith('ko')) ? 'ko'
+                                : (browserLang && browserLang.startsWith('en')) ? 'en'
+                                    : 'zh-CN';
+                try { await applyLanguage(defaultLang); } catch (_) { }
             }
 
             try {
@@ -12710,10 +12759,23 @@ async function initialize() {
             task4_CoreResources
         ]);
 
-        const sessionValid = await task5_Session;
+        // 2 秒窗口内尝试获取并应用服务端更新；超时则保持已渲染的本地设置
+        const hasSession = !!sessionId;
+        let sessionValid = hasSession;
+        let resolvedWithinWindow = false;
+        try {
+            const raceRes = await Promise.race([
+                Promise.resolve(task5_Session).then(v => { resolvedWithinWindow = true; return v; }),
+                new Promise(resolve => setTimeout(() => resolve('__timeout__'), 2000))
+            ]);
+            if (raceRes !== '__timeout__') {
+                sessionValid = !!raceRes;
+            }
+        } catch (_) { }
+        const initialLang = getCurrentLanguage();
         const serverLang = currentUser?.language;
 
-        if (sessionValid) {
+        if (resolvedWithinWindow && sessionValid) {
             const serverTheme = currentUser?.theme_settings;
 
             if (serverTheme) {
@@ -12758,16 +12820,32 @@ async function initialize() {
             if (serverLang) {
                 localStorage.setItem('selectedLanguage', serverLang);
                 await applyLanguage(serverLang);
+            } else {
+                // 登录用户未设置语言：按系统/浏览器语言显示并保存到服务器
+                const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'zh-CN';
+                const defaultLang = (browserLang && (browserLang.startsWith('zh-TW') || browserLang.startsWith('zh-HK'))) ? 'zh-TW'
+                    : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
+                        : (browserLang && browserLang.startsWith('ja')) ? 'ja'
+                            : (browserLang && browserLang.startsWith('ko')) ? 'ko'
+                                : (browserLang && browserLang.startsWith('en')) ? 'en'
+                                    : 'zh-CN';
+                localStorage.setItem('selectedLanguage', defaultLang);
+                currentUser.language = defaultLang;
+                try { localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(currentUser)); } catch (_) { }
+                await applyLanguage(defaultLang);
+                try { makeAuthRequest('update-language', { language: defaultLang }); } catch (_) { }
             }
         } else if (!savedLanguage) {
-            const browserLang = navigator.language || navigator.languages[0] || 'zh-CN';
-            const defaultLang = browserLang.startsWith('zh-TW') || browserLang.startsWith('zh-HK') ? 'zh-TW' :
-                browserLang.startsWith('zh') ? 'zh-CN' :
-                    browserLang.startsWith('ja') ? 'ja' :
-                        browserLang.startsWith('ko') ? 'ko' :
-                            browserLang.startsWith('en') ? 'en' : 'zh-CN';
-            localStorage.setItem('selectedLanguage', defaultLang);
+            const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'zh-CN';
+            const defaultLang = (browserLang && (browserLang.startsWith('zh-TW') || browserLang.startsWith('zh-HK'))) ? 'zh-TW'
+                : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
+                    : (browserLang && browserLang.startsWith('ja')) ? 'ja'
+                        : (browserLang && browserLang.startsWith('ko')) ? 'ko'
+                            : (browserLang && browserLang.startsWith('en')) ? 'en'
+                                : 'zh-CN';
             await applyLanguage(defaultLang);
+        } else {
+            await applyLanguage(savedLanguage);
         }
 
         await new Promise(resolve => requestAnimationFrame(() => {
@@ -12874,7 +12952,6 @@ async function initialize() {
         }
 
     } catch (error) {
-        console.error('Initialization error:', error);
         hideLoadingScreen();
     } finally {
         isInitializing = false;
