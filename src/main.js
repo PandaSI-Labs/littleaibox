@@ -14,14 +14,6 @@ import { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLangua
 import { renderMermaidDiagrams } from './mermaid-renderer.js';
 import './style.css';
 
-
-import * as Sentry from "@sentry/browser";
-
-Sentry.init({
-    dsn: "https://3d6d8b2274218b8b423a5ce3b7d40536@o4510203764670464.ingest.us.sentry.io/4510203772207104",
-    sendDefaultPii: true
-});
-
 const ApkInstaller = Capacitor.isNativePlatform()
     ? registerPlugin('ApkInstaller', {
         android: {
@@ -608,6 +600,65 @@ function ensurePlaintextHighlightLanguage() {
     } catch (error) {
         console.warn('Failed to register plaintext language for highlight.js:', error);
     }
+}
+
+function rerenderDynamicContent(root) {
+    try {
+        const container = root || elements.chatContainer || document;
+
+        if (window.renderMathInElement) {
+            const contents = container.querySelectorAll('.message .content');
+            contents.forEach(el => {
+                try {
+                    const hasMath = el.textContent.includes('$') || el.textContent.includes('\\(') || el.textContent.includes('\\[');
+                    if (!hasMath) return;
+
+                    const hasRendered = el.querySelector('.katex') !== null;
+                    if (!hasRendered) {
+                        renderMathInElement(el, KATEX_CONFIG);
+                    } else {
+                        const nodes = el.querySelectorAll('*');
+                        nodes.forEach(node => {
+                            try {
+                                if (!node.querySelector || node.querySelector('.katex')) return;
+                                const t = node.textContent || '';
+                                if (t.includes('$') || t.includes('\\(') || t.includes('\\[')) {
+                                    renderMathInElement(node, {
+                                        delimiters: KATEX_CONFIG.delimiters,
+                                        throwOnError: false,
+                                        strict: false,
+                                        trust: true,
+                                        macros: KATEX_CONFIG.macros
+                                    });
+                                }
+                            } catch (_) { }
+                        });
+                    }
+                } catch (_) { }
+            });
+        }
+
+        try {
+            renderMermaidDiagrams(container, { loadScript, isFinalRender: true });
+        } catch (_) { }
+
+        if (window.hljs) {
+            ensurePlaintextHighlightLanguage();
+            const blocks = Array.from(container.querySelectorAll('pre code'))
+                .filter(block => !block.classList.contains('hljs')
+                    && (block.dataset.mermaidProcessed !== 'true')
+                    && !((block.className || '').includes('language-mermaid')));
+            blocks.forEach(block => { try { hljs.highlightElement(block); } catch (_) { } });
+        }
+    } catch (_) { }
+}
+
+function setupVisibilityRerender() {
+    const schedule = () => setTimeout(() => rerenderDynamicContent(), 60);
+
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(); });
+    window.addEventListener('focus', schedule);
+    window.addEventListener('pageshow', () => schedule());
 }
 
 function canUseScriptCache() {
@@ -5918,14 +5969,72 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 .replace(/\u220B\u0338/g, '\\not\\ni ')
                 // 逻辑符号 - 否定
                 .replace(/\u00AC\s*(\w)/g, '\\neg \\! $1')
+                // 电子排布等紧凑写法: 处理如 1s^22s^22p^6 连写无空格
+                // 在指数后、下一段以“数字+spdfg”的起始之间插入空格并包裹指数
+                .replace(/([A-Za-z])\^(\d{1,2})(?=\d[spdfg])/gi, ($0, base, exp) => `${base}^{${exp}} `)
                 // 下划线和上标规范化 - 修正不规范的下标/上标
-                .replace(/_(\w+)/g, '_{$1}')
-                .replace(/\^(\w+)/g, '^{$1}');
+                .replace(/_([A-Za-z0-9]+)/g, '_{$1}')
+                // 仅包装简单指数（字母或纯数字），避免吞并后续字母，例如 ^22s
+                .replace(/\^([A-Za-z]|\d+)/g, '^{$1}');
 
             return start + normalized + end;
         } catch (e) {
             return texWithDelimiters;
         }
+    }
+
+    // 尝试在普通文本中自动包裹常见的 TeX 片段（未写 $...$ 的场景）
+    function autoWrapInlineMath(root) {
+        try {
+            const IGNORE = new Set(['CODE', 'PRE', 'KBD', 'SAMP', 'VAR', 'SCRIPT', 'STYLE', 'A']);
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+            const electronSeq = /((?:\d[spdfg]\^\d+)+)/gi;
+            const electronToken = /\d[spdfg]\^\d+/gi;
+
+            const needsProcess = (node) => {
+                const p = node.parentNode;
+                if (!p || (p.tagName && IGNORE.has(p.tagName.toUpperCase()))) return false;
+                const t = node.nodeValue || '';
+                if (!t.trim()) return false;
+                if (t.includes('$') || t.includes('\\(') || t.includes('\\[')) return false;
+                return /[_^\\]|\d[spdfg]\^\d+/i.test(t);
+            };
+
+            const processText = (text) => {
+                let s = text;
+
+                // 电子排布的连续片段整体包裹并规范化 1s^22s^2 -> $1s^{2} 2s^{2}$
+                s = s.replace(electronSeq, (m) => {
+                    const tokens = m.match(electronToken);
+                    if (!tokens) return m;
+                    const fixed = tokens.map(t => t.replace(/\^(\d+)/, '^{$1}'));
+                    return '$' + fixed.join(' ') + '$';
+                });
+
+                // 一般上标：x^2, s^n, 10^3
+                s = s.replace(/(^|[^A-Za-z0-9])([A-Za-z0-9])\^([A-Za-z0-9]+)(?![A-Za-z0-9])/g,
+                    (all, pre, base, exp) => pre + '$' + base + '^{' + exp + '}$');
+
+                // 一般下标：r_k, a_1
+                s = s.replace(/(^|[^A-Za-z0-9])([A-Za-z])_([A-Za-z0-9]+)(?![A-Za-z0-9])/g,
+                    (all, pre, base, sub) => pre + '$' + base + '_{' + sub + '}$');
+
+                // 希腊字母等命令：\alpha, \beta
+                s = s.replace(/(^|\s)(\\[a-zA-Z]+)(?=\s|[\.,;:!?]|$)/g, (all, pre, cmd) => pre + '$' + cmd + '$');
+
+                return s;
+            };
+
+            const nodes = [];
+            let n;
+            while ((n = walker.nextNode())) {
+                if (needsProcess(n)) nodes.push(n);
+            }
+            nodes.forEach(node => {
+                const replaced = processText(node.nodeValue || '');
+                if (replaced !== node.nodeValue) node.nodeValue = replaced;
+            });
+        } catch (_) { }
     }
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     let renderTimeout;
@@ -6197,6 +6306,8 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             }
         } catch (_) { }
 
+        autoWrapInlineMath(tempContainer);
+
         const finalSanitizedHtml = tempContainer.innerHTML;
         const renderState = element.__renderState || (element.__renderState = {
             lockedLength: 0,
@@ -6340,7 +6451,9 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                     .filter(block => block.dataset.mermaidPending !== 'true' &&
                         block.dataset.mermaidProcessed !== 'true' &&
                         block.closest('.mermaid-render-container') === null &&
-                        !(block.className || '').includes('language-plaintext'));
+                        !(block.className || '').includes('language-plaintext') &&
+                        !(block.className || '').includes('language-mermaid'));
+
                 const totalCodeBlocks = candidateBlocks.length;
                 const highlightedBlocks = candidateBlocks.filter(block => block.classList.contains('hljs')).length;
 
@@ -6358,7 +6471,8 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                     if (block.dataset.mermaidPending === 'true' ||
                         block.dataset.mermaidProcessed === 'true' ||
                         block.closest('.mermaid-render-container') ||
-                        (block.className || '').includes('language-plaintext')) {
+                        (block.className || '').includes('language-plaintext') ||
+                        (block.className || '').includes('language-mermaid')) {
                         return;
                     }
                     try {
@@ -12629,8 +12743,8 @@ async function initialize() {
             elements.voiceBtn.style.display = (isMobile || !isNativeApp) ? 'none' : 'flex';
         }
         setupBackgroundProcessing();
+        setupVisibilityRerender();
 
-        // 会话内锁定语言：不监听系统语言变化或原生恢复事件自动切换
         if ('ontouchstart' in window) {
             let isGestureReturn = false;
             document.addEventListener('visibilitychange', () => {
@@ -12654,7 +12768,6 @@ async function initialize() {
         }
         sessionId = localStorage.getItem('sessionId');
 
-        // 访客密钥仅在本次页面会话有效：新会话（无 sessionStorage 标记）清空本地密钥
         try {
             if (!sessionId) {
                 if (!sessionStorage.getItem('guest_session_active')) {

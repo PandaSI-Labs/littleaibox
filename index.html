@@ -112,6 +112,12 @@
                         const cls = Array.from(el.classList || []);
                         const langClass = cls.find(c => c.startsWith('language-'));
                         const lang = langClass ? langClass.slice('language-'.length) : null;
+                
+                        if (lang === 'mermaid') {
+                            el.classList.remove('language-mermaid');
+                            el.classList.add('language-plaintext');
+                            try { return originalHighlightElement(el); } catch (_) { return; }
+                        }
                         if (lang && !hljs.getLanguage(resolveLang(lang))) {
                             loadLanguageIfNeeded(lang).then((ok) => {
                                 if (ok) {
