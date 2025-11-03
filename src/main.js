@@ -14,6 +14,14 @@ import { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLangua
 import { renderMermaidDiagrams } from './mermaid-renderer.js';
 import './style.css';
 
+
+import * as Sentry from "@sentry/browser";
+
+Sentry.init({
+    dsn: "https://3d6d8b2274218b8b423a5ce3b7d40536@o4510203764670464.ingest.us.sentry.io/4510203772207104",
+    sendDefaultPii: true
+});
+
 const ApkInstaller = Capacitor.isNativePlatform()
     ? registerPlugin('ApkInstaller', {
         android: {
@@ -3227,6 +3235,33 @@ function getCurrentUserId() {
     return currentUser?.id || 'guest';
 }
 
+let guestApiState = { keyOne: '', keyTwo: '', mode: 'mixed', toggle: '0' };
+
+function clearGuestApiKeys() {
+    try {
+        guestApiState.keyOne = '';
+        guestApiState.keyTwo = '';
+        guestApiState.toggle = '0';
+
+        localStorage.removeItem('guest_api_key_one');
+        localStorage.removeItem('guest_api_key_two');
+        localStorage.removeItem('guest_api_mode');
+        localStorage.removeItem('guest_api_key_toggle');
+    } catch (_) { }
+}
+
+function sanitizeUserForCache(user) {
+    try {
+        if (!user || typeof user !== 'object') return user;
+        const sanitized = { ...user };
+        delete sanitized.custom_api_key;
+        delete sanitized.custom_api_key_t;
+        return sanitized;
+    } catch (_) {
+        return user;
+    }
+}
+
 const asyncStorage = {
     setItem: (key, value) => {
         return new Promise((resolve) => {
@@ -3287,14 +3322,12 @@ const asyncStorage = {
 };
 
 function getGuestKeySettings() {
-    try {
-        const keyOne = localStorage.getItem('guest_api_key_one') || '';
-        const keyTwo = localStorage.getItem('guest_api_key_two') || '';
-        const mode = localStorage.getItem('guest_api_mode') || 'mixed';
-        return { keyOne: keyOne.trim(), keyTwo: keyTwo.trim(), mode };
-    } catch (_) {
-        return { keyOne: '', keyTwo: '', mode: 'mixed' };
-    }
+    // Only use in-memory guest key state; never read from local storage
+    return {
+        keyOne: (guestApiState.keyOne || '').trim(),
+        keyTwo: (guestApiState.keyTwo || '').trim(),
+        mode: guestApiState.mode || 'mixed'
+    };
 }
 
 function selectGuestApiKeyForRequest() {
@@ -3303,10 +3336,8 @@ function selectGuestApiKeyForRequest() {
     if (mode === 'single') return keyOne || keyTwo || null;
     // mixed mode: alternate when both available, otherwise fallback to existing
     if (keyOne && keyTwo) {
-        let toggle = localStorage.getItem('guest_api_key_toggle');
-        toggle = toggle === '1' ? '0' : '1';
-        localStorage.setItem('guest_api_key_toggle', toggle);
-        return toggle === '1' ? keyTwo : keyOne;
+        guestApiState.toggle = guestApiState.toggle === '1' ? '0' : '1';
+        return guestApiState.toggle === '1' ? keyTwo : keyOne;
     }
     return keyOne || keyTwo || null;
 }
@@ -3331,7 +3362,7 @@ function getCustomApiKey() {
         return combined || null;
     }
 
-    // Guest keys saved locally
+    // Guest keys (memory only)
     const { keyOne, keyTwo } = getGuestKeySettings();
     const combinedGuest = [keyOne, keyTwo].filter(Boolean).join(',');
     return combinedGuest || null;
@@ -4319,7 +4350,7 @@ async function login(email, password) {
             await applyLanguage(currentUser.language);
         }
 
-        localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(currentUser));
+        localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser)));
 
         // 清理访客的聊天记录和使用统计
         await deleteChatsFromDB('guest');
@@ -4332,8 +4363,6 @@ async function login(email, password) {
 
         chats = {};
         currentChatId = null;
-
-        // 先恢复主聊天页面的显示，再隐藏登录界面
         if (elements.chatContainer) {
             elements.chatContainer.style.display = 'flex';
         }
@@ -4372,7 +4401,7 @@ async function login(email, password) {
                                         : 'zh-CN';
                     localStorage.setItem('selectedLanguage', defaultLang);
                     currentUser.language = defaultLang;
-                    try { localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(currentUser)); } catch (_) { }
+                    try { localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser))); } catch (_) { }
                     applyLanguage(defaultLang).then(afterLangApplied).catch(() => {
                         showEmptyState();
                         scheduleRenderSidebar();
@@ -4653,6 +4682,10 @@ async function checkSession() {
     if (cachedUserFromStorage) {
         try {
             currentUser = JSON.parse(cachedUserFromStorage);
+            if (currentUser && typeof currentUser === 'object') {
+                delete currentUser.custom_api_key;
+                delete currentUser.custom_api_key_t;
+            }
 
             if (currentUser.language) {
                 localStorage.setItem('selectedLanguage', currentUser.language);
@@ -4681,11 +4714,15 @@ async function checkSession() {
                     asyncStorage.setItem('selectedLanguage', currentUser.language);
                 }
 
-                asyncStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(currentUser));
+                asyncStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser)));
 
                 if (currentUser && (currentUser.custom_api_key || currentUser.custom_api_key_t)) {
                     checkKeyValidationOnLogin();
                 }
+
+                try {
+                    updateUI(false);
+                } catch (_) { }
 
                 fetchUsageStats().catch(err => console.error(`${getToastMessage('console.usageStatsFailed')}:`, err));
                 fetchWeeklyFeatureStatus().catch(err => console.error(`${getToastMessage('console.weeklyFeatureStatusFailed')}:`, err));
@@ -4760,7 +4797,7 @@ async function updateApiKey(apiKey, mode = 'mixed', options = {}) {
 
             try {
                 if (sessionId) {
-                    localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(currentUser));
+                    localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser)));
                 }
             } catch (_) { }
         }
@@ -8135,8 +8172,7 @@ async function handleSearchAndChat(userMessageText) {
         try {
             const invalidated = response.headers.get('X-Guest-Invalidated') === 'true';
             if (!currentUser && invalidated) {
-                localStorage.removeItem('guest_api_key_one');
-                localStorage.removeItem('guest_api_key_two');
+                clearGuestApiKeys();
                 try { updateActiveModel(); renderModelMenu(); } catch (_) { }
             }
         } catch (_) { }
@@ -8520,12 +8556,10 @@ async function handleChatMessage(userContent, options = {}) {
             }
         }
 
-        // 访客密钥在本次请求中被判无效并回退时，后端会返回标记头，前端立刻清除本地Key并刷新模型菜单
         try {
             const invalidated = response.headers.get('X-Guest-Invalidated') === 'true';
             if (!currentUser && invalidated) {
-                localStorage.removeItem('guest_api_key_one');
-                localStorage.removeItem('guest_api_key_two');
+                clearGuestApiKeys();
                 try { updateActiveModel(); renderModelMenu(); } catch (_) { }
             }
         } catch (_) { }
@@ -9352,12 +9386,10 @@ async function callAISynchronously(prompt, model = 'gemini-2.5-flash-lite', incr
             body: JSON.stringify(payload),
         });
 
-        // 若后端判定访客密钥无效并进入试用，响应头将包含 X-Guest-Invalidated
         try {
             const invalidated = response.headers.get('X-Guest-Invalidated') === 'true';
             if (!sessionId && invalidated) {
-                localStorage.removeItem('guest_api_key_one');
-                localStorage.removeItem('guest_api_key_two');
+                clearGuestApiKeys();
                 try { updateActiveModel(); renderModelMenu(); } catch (_) { }
             }
         } catch (_) { }
@@ -9642,9 +9674,7 @@ function setupInputPanelObserver() {
 async function handleCloseSettingsModal() {
     const currentUsername = elements.editUsernameInput.value.trim();
     const profileChanged = (currentUser) && (currentUsername !== originalUsername || newAvatarFile !== null);
-
-    // 检查API密钥是否有未保存的更改
-    const apiKeysChanged = checkApiKeysChanged();
+    checkApiKeysChanged();
 
     if (profileChanged || apiKeysChanged) {
         const confirmed = await showCustomConfirm(
@@ -9657,6 +9687,30 @@ async function handleCloseSettingsModal() {
         if (!confirmed) {
             return false;
         }
+
+        // 重置个人资料相关的状态
+        newAvatarFile = null;
+
+        // 重置 API 密钥相关的状态
+        apiKeysChanged = false;
+        keyOneTouched = false;
+        keyTwoTouched = false;
+
+        // 将 API 密钥UI恢复到原始值
+        if (currentUser) {
+            elements.apiKeyOneInput.value = originalApiKeys.keyOne || '';
+            elements.apiKeyTwoInput.value = originalApiKeys.keyTwo || '';
+            const savedMode = (originalApiKeys.mode === 'server_fallback') ? 'mixed' : (originalApiKeys.mode || 'mixed');
+            const modeInput = document.querySelector(`input[name="api-mode"][value="${savedMode}"]`);
+            if (modeInput) modeInput.checked = true;
+        } else {
+            const { keyOne, keyTwo, mode } = getGuestKeySettings();
+            elements.apiKeyOneInput.value = keyOne || '';
+            elements.apiKeyTwoInput.value = keyTwo || '';
+            const modeInput = document.querySelector(`input[name="api-mode"][value="${mode || 'mixed'}"]`);
+            if (modeInput) modeInput.checked = true;
+        }
+        clearApiKeyErrorStates();
     }
 
     elements.settingsModal.classList.remove('visible');
@@ -10960,7 +11014,7 @@ function setupEventListeners() {
 
         const combinedApiKey = [apiKeyOne, apiKeyTwo].filter(Boolean).join(',');
         const originalButtonText = elements.settingsSaveBtn.textContent;
-        const currentMode = currentUser ? (currentUser.api_mode || 'mixed') : (localStorage.getItem('guest_api_mode') || 'mixed');
+        const currentMode = currentUser ? (currentUser.api_mode || 'mixed') : (guestApiState.mode || 'mixed');
 
         if (!isGuestUser) {
             if (combinedApiKey === (currentUser.custom_api_key || '') && selectedMode === currentMode) {
@@ -10968,9 +11022,9 @@ function setupEventListeners() {
                 return;
             }
         } else {
-            const prevKeyOne = (localStorage.getItem('guest_api_key_one') || '').trim();
-            const prevKeyTwo = (localStorage.getItem('guest_api_key_two') || '').trim();
-            const prevMode = (localStorage.getItem('guest_api_mode') || 'mixed');
+            const prevKeyOne = (guestApiState.keyOne || '').trim();
+            const prevKeyTwo = (guestApiState.keyTwo || '').trim();
+            const prevMode = (guestApiState.mode || 'mixed');
             const noGuestChange = (apiKeyOne === prevKeyOne) && (apiKeyTwo === prevKeyTwo) && (selectedMode === prevMode);
             if (noGuestChange) {
                 elements.settingsModal.classList.remove('visible');
@@ -10980,10 +11034,9 @@ function setupEventListeners() {
 
         if (combinedApiKey === '') {
             if (isGuestUser) {
-                // 清除本地保存并即时刷新模型菜单
-                localStorage.removeItem('guest_api_key_one');
-                localStorage.removeItem('guest_api_key_two');
-                localStorage.setItem('guest_api_mode', selectedMode);
+                guestApiState.keyOne = '';
+                guestApiState.keyTwo = '';
+                guestApiState.mode = selectedMode || 'mixed';
                 showToast(getToastMessage('toast.apiKeyUpdateSuccess'), 'success');
                 try { updateActiveModel(); renderModelMenu(); } catch (_) { }
                 try { refreshSettingsI18nTexts(); } catch (_) { }
@@ -11021,8 +11074,8 @@ function setupEventListeners() {
 
             let keyOneChanged, keyTwoChanged;
             if (isGuestUser) {
-                const prevKeyOne = (localStorage.getItem('guest_api_key_one') || '').trim();
-                const prevKeyTwo = (localStorage.getItem('guest_api_key_two') || '').trim();
+                const prevKeyOne = (guestApiState.keyOne || '').trim();
+                const prevKeyTwo = (guestApiState.keyTwo || '').trim();
                 keyOneChanged = apiKeyOne !== prevKeyOne;
                 keyTwoChanged = apiKeyTwo !== prevKeyTwo;
             } else {
@@ -11097,14 +11150,11 @@ function setupEventListeners() {
             }
 
             if (isGuestUser) {
-                localStorage.setItem('guest_api_key_one', apiKeyOne);
-                localStorage.setItem('guest_api_key_two', apiKeyTwo);
-                localStorage.setItem('guest_api_mode', selectedMode);
+                guestApiState.keyOne = apiKeyOne;
+                guestApiState.keyTwo = apiKeyTwo;
+                guestApiState.mode = selectedMode || 'mixed';
                 showToast(getToastMessage('toast.apiKeyUpdateSuccess'), 'success');
-                try {
-                    updateActiveModel();
-                    renderModelMenu();
-                } catch (_) { }
+                try { updateActiveModel(); renderModelMenu(); } catch (_) { }
             } else {
                 await updateApiKey(combinedApiKey, selectedMode);
                 if (currentUser) {
@@ -11293,13 +11343,11 @@ function setupEventListeners() {
 
                 intentAnalyzer.clearKeywordCache();
 
-                // 立即更新语言设置：
-                // - 登录用户：持久化到 localStorage，并更新缓存的 currentUser
-                // - 访客：仅会话内有效（不写入 localStorage）
+                // 立即更新语言设置
                 if (currentUser) {
                     localStorage.setItem('selectedLanguage', selectedLang);
                     currentUser.language = selectedLang;
-                    localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(currentUser));
+                    localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser)));
                 } else {
                     try { sessionStorage.setItem('guest_selectedLanguage', selectedLang); } catch (_) { }
                 }
@@ -12750,9 +12798,9 @@ function setupLayout() {
                         });
                 }
             } else {
-                // 访客：即时保存并提示
+                // 访客：即时保存（仅内存）并提示
                 const selectedMode = input.value;
-                localStorage.setItem('guest_api_mode', selectedMode);
+                guestApiState.mode = selectedMode || 'mixed';
                 const modeLabel = (selectedMode === 'mixed') ? getToastMessage('ui.mixedMode') : getToastMessage('ui.singleMode');
                 showToast(getToastMessage('status.modeSwitchedTo', { mode: modeLabel }), 'success');
             }
@@ -12832,13 +12880,11 @@ async function initialize() {
 
         try {
             if (!sessionId) {
-                if (!sessionStorage.getItem('guest_session_active')) {
-                    localStorage.removeItem('guest_api_key_one');
-                    localStorage.removeItem('guest_api_key_two');
-                    // 模式可保留或清空，这里选择清空，更安全
-                    localStorage.removeItem('guest_api_mode');
-                }
-                sessionStorage.setItem('guest_session_active', '1');
+                localStorage.removeItem('guest_api_key_one');
+                localStorage.removeItem('guest_api_key_two');
+                localStorage.removeItem('guest_api_mode');
+                localStorage.removeItem('guest_api_key_toggle');
+                guestApiState = { keyOne: '', keyTwo: '', mode: 'mixed', toggle: '0' };
             }
         } catch (_) { }
 
@@ -13006,7 +13052,7 @@ async function initialize() {
                                     : 'zh-CN';
                 localStorage.setItem('selectedLanguage', defaultLang);
                 currentUser.language = defaultLang;
-                try { localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(currentUser)); } catch (_) { }
+                try { localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser))); } catch (_) { }
                 await applyLanguage(defaultLang);
                 try { makeAuthRequest('update-language', { language: defaultLang }); } catch (_) { }
             }
