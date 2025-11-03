@@ -5812,8 +5812,12 @@ async function shareChat(chatId) {
     try {
         showToast(getToastMessage('toast.generatingShareLink'), 'info');
 
+        // 获取用户当前应用显示的语言
+        const currentLang = currentUser ? (currentUser.language || getCurrentLanguage()) : getCurrentLanguage();
+
         const result = await makeApiRequest(`chats/${chatId}/share`, {
-            method: 'POST'
+            method: 'POST',
+            body: JSON.stringify({ language: currentLang })
         });
 
         if (result.success && result.url) {
@@ -5969,12 +5973,11 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 .replace(/\u220B\u0338/g, '\\not\\ni ')
                 // 逻辑符号 - 否定
                 .replace(/\u00AC\s*(\w)/g, '\\neg \\! $1')
-                // 电子排布等紧凑写法: 处理如 1s^22s^22p^6 连写无空格
-                // 在指数后、下一段以“数字+spdfg”的起始之间插入空格并包裹指数
+
                 .replace(/([A-Za-z])\^(\d{1,2})(?=\d[spdfg])/gi, ($0, base, exp) => `${base}^{${exp}} `)
                 // 下划线和上标规范化 - 修正不规范的下标/上标
                 .replace(/_([A-Za-z0-9]+)/g, '_{$1}')
-                // 仅包装简单指数（字母或纯数字），避免吞并后续字母，例如 ^22s
+                // 仅包装简单指数（字母或纯数字）
                 .replace(/\^([A-Za-z]|\d+)/g, '^{$1}');
 
             return start + normalized + end;
@@ -5983,59 +5986,41 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         }
     }
 
-    // 尝试在普通文本中自动包裹常见的 TeX 片段（未写 $...$ 的场景）
-    function autoWrapInlineMath(root) {
+    function promoteStandaloneInlineMathToDisplay(text) {
         try {
-            const IGNORE = new Set(['CODE', 'PRE', 'KBD', 'SAMP', 'VAR', 'SCRIPT', 'STYLE', 'A']);
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
-            const electronSeq = /((?:\d[spdfg]\^\d+)+)/gi;
-            const electronToken = /\d[spdfg]\^\d+/gi;
+            const lines = text.split(/\r?\n/);
+            let fence = null;
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                // 处理代码围栏的进入/退出
+                const m = line.match(/^\s{0,3}([`~]{3,})(.*)$/);
+                if (m) {
+                    const ch = m[1][0];
+                    const len = m[1].length;
+                    if (!fence) {
+                        fence = { ch, len };
+                    } else if (fence && ch === fence.ch && len >= fence.len) {
+                        fence = null;
+                    }
+                    continue;
+                }
 
-            const needsProcess = (node) => {
-                const p = node.parentNode;
-                if (!p || (p.tagName && IGNORE.has(p.tagName.toUpperCase()))) return false;
-                const t = node.nodeValue || '';
-                if (!t.trim()) return false;
-                if (t.includes('$') || t.includes('\\(') || t.includes('\\[')) return false;
-                return /[_^\\]|\d[spdfg]\^\d+/i.test(t);
-            };
+                if (fence) continue;
 
-            const processText = (text) => {
-                let s = text;
-
-                // 电子排布的连续片段整体包裹并规范化 1s^22s^2 -> $1s^{2} 2s^{2}$
-                s = s.replace(electronSeq, (m) => {
-                    const tokens = m.match(electronToken);
-                    if (!tokens) return m;
-                    const fixed = tokens.map(t => t.replace(/\^(\d+)/, '^{$1}'));
-                    return '$' + fixed.join(' ') + '$';
-                });
-
-                // 一般上标：x^2, s^n, 10^3
-                s = s.replace(/(^|[^A-Za-z0-9])([A-Za-z0-9])\^([A-Za-z0-9]+)(?![A-Za-z0-9])/g,
-                    (all, pre, base, exp) => pre + '$' + base + '^{' + exp + '}$');
-
-                // 一般下标：r_k, a_1
-                s = s.replace(/(^|[^A-Za-z0-9])([A-Za-z])_([A-Za-z0-9]+)(?![A-Za-z0-9])/g,
-                    (all, pre, base, sub) => pre + '$' + base + '_{' + sub + '}$');
-
-                // 希腊字母等命令：\alpha, \beta
-                s = s.replace(/(^|\s)(\\[a-zA-Z]+)(?=\s|[\.,;:!?]|$)/g, (all, pre, cmd) => pre + '$' + cmd + '$');
-
-                return s;
-            };
-
-            const nodes = [];
-            let n;
-            while ((n = walker.nextNode())) {
-                if (needsProcess(n)) nodes.push(n);
+                const trimmed = line.trim();
+                const mm = trimmed.match(/^\$([^$\n]+)\$$/);
+                if (mm) {
+                    const before = line.slice(0, line.indexOf(trimmed));
+                    const after = line.slice(line.indexOf(trimmed) + trimmed.length);
+                    lines[i] = `${before}$$${mm[1]}$$${after}`;
+                }
             }
-            nodes.forEach(node => {
-                const replaced = processText(node.nodeValue || '');
-                if (replaced !== node.nodeValue) node.nodeValue = replaced;
-            });
-        } catch (_) { }
+            return lines.join('\n');
+        } catch (_) {
+            return text;
+        }
     }
+
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     let renderTimeout;
     const clearRenderState = () => {
@@ -6147,11 +6132,13 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             (match) => `$$${match}$$`
         );
 
+        // 将独占一行的 `$...$` 自动提升为 `$$...$$`，以便渲染为 display 模式
+        correctedContent = promoteStandaloneInlineMathToDisplay(correctedContent);
+
         const displayMath = [];
         const inlineMath = [];
 
         let protectedContent = correctedContent.replace(/\$\$([\s\S]*?)\$\$/g, (match) => {
-            // 收集前先做一次规范化
             displayMath.push(normalizeTeXDelimited(match));
             return `%%DISPLAY_MATH_${displayMath.length - 1}%%`;
         });
@@ -6306,7 +6293,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             }
         } catch (_) { }
 
-        autoWrapInlineMath(tempContainer);
+        // 不再进行行内自动识别，避免规则膨胀。
 
         const finalSanitizedHtml = tempContainer.innerHTML;
         const renderState = element.__renderState || (element.__renderState = {
@@ -6323,7 +6310,10 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         const lastPreCloseIndex = lowerHtml.lastIndexOf('</pre>');
         const tableLockEnd = lastTableCloseIndex === -1 ? -1 : lastTableCloseIndex + '</table>'.length;
         const codeLockEnd = lastPreCloseIndex === -1 ? -1 : lastPreCloseIndex + '</pre>'.length;
-        const newLockEnd = syntheticFenceAdded ? tableLockEnd : Math.max(tableLockEnd, codeLockEnd);
+
+        const newLockEnd = syntheticFenceAdded
+            ? tableLockEnd
+            : Math.max(tableLockEnd, codeLockEnd);
 
         if (newLockEnd > renderState.lockedLength) {
             renderState.lockedLength = newLockEnd;
