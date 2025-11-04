@@ -14,14 +14,6 @@ import { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLangua
 import { renderMermaidDiagrams } from './mermaid-renderer.js';
 import './style.css';
 
-
-import * as Sentry from "@sentry/browser";
-
-Sentry.init({
-    dsn: "https://3d6d8b2274218b8b423a5ce3b7d40536@o4510203764670464.ingest.us.sentry.io/4510203772207104",
-    sendDefaultPii: true
-});
-
 const ApkInstaller = Capacitor.isNativePlatform()
     ? registerPlugin('ApkInstaller', {
         android: {
