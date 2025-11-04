@@ -28,3 +28,8 @@
 # 5. 对所有其他请求使用默认的验证缓存
 /*
   Cache-Control: no-cache
+
+# 6.防御 SQL 注入攻击
+/*
+X-Frame-Options: DENY
+X-Content-Type-Options: nosniff

@@ -2954,7 +2954,8 @@ function getToastMessage(key, params = {}) {
         const defaultLang = browserLang.startsWith('zh') ? 'zh-CN' :
             browserLang.startsWith('ja') ? 'ja' :
                 browserLang.startsWith('ko') ? 'ko' :
-                    browserLang.startsWith('en') ? 'en' : 'zh-CN';
+                    browserLang.startsWith('es') ? 'es' :
+                        browserLang.startsWith('en') ? 'en' : 'zh-CN';
 
         if (currentLang !== defaultLang) {
             const fallbackTranslated = t(defaultLang, key, params);
@@ -4397,8 +4398,9 @@ async function login(email, password) {
                         : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
                             : (browserLang && browserLang.startsWith('ja')) ? 'ja'
                                 : (browserLang && browserLang.startsWith('ko')) ? 'ko'
-                                    : (browserLang && browserLang.startsWith('en')) ? 'en'
-                                        : 'zh-CN';
+                                    : (browserLang && browserLang.startsWith('es')) ? 'es'
+                                        : (browserLang && browserLang.startsWith('en')) ? 'en'
+                                            : 'zh-CN';
                     localStorage.setItem('selectedLanguage', defaultLang);
                     currentUser.language = defaultLang;
                     try { localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser))); } catch (_) { }
@@ -4530,7 +4532,8 @@ async function logout() {
                 const defaultLang = browserLang.startsWith('zh') ? 'zh-CN' :
                     browserLang.startsWith('ja') ? 'ja' :
                         browserLang.startsWith('ko') ? 'ko' :
-                            browserLang.startsWith('en') ? 'en' : 'zh-CN';
+                            browserLang.startsWith('es') ? 'es' :
+                                browserLang.startsWith('en') ? 'en' : 'zh-CN';
 
                 applyLanguage(defaultLang).then(() => {
                     intentAnalyzer.clearKeywordCache();
@@ -6015,7 +6018,44 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 // 下划线和上标规范化 - 修正不规范的下标/上标
                 .replace(/_([A-Za-z0-9]+)/g, '_{$1}')
                 // 仅包装简单指数（字母或纯数字）
-                .replace(/\^([A-Za-z]|\d+)/g, '^{$1}');
+                .replace(/\^([A-Za-z]|\d+)/g, '^{$1}')
+                .replace(/\\text\{([^{}]*?)_(\{[^{}]*\}|[A-Za-z0-9]+?)(\^(\{[^{}]*\}|[A-Za-z0-9]+))?\}/g, (full, base, rawSub, supGroup, rawSup) => {
+                    const stripBraces = (value) => {
+                        if (!value) return '';
+                        const trimmed = value.trim();
+                        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+                            return trimmed.slice(1, -1);
+                        }
+                        return trimmed;
+                    };
+                    const wrapIfText = (value) => {
+                        const trimmed = value.trim();
+                        if (!trimmed) return '';
+                        if (trimmed.startsWith('\\')) {
+                            return trimmed;
+                        }
+                        if (/^[0-9+\-*/().]+$/.test(trimmed)) {
+                            return trimmed;
+                        }
+                        if (/^[A-Za-z]$/.test(trimmed)) {
+                            return trimmed;
+                        }
+                        return `\\text{${trimmed}}`;
+                    };
+
+                    const baseText = base.trim().replace(/\s+/g, ' ');
+                    const subContent = stripBraces(rawSub);
+                    const supContent = stripBraces(rawSup || '');
+                    let rebuilt = `\\text{${baseText}}`;
+
+                    if (subContent) {
+                        rebuilt += `_{${wrapIfText(subContent)}}`;
+                    }
+                    if (supContent) {
+                        rebuilt += `^{${wrapIfText(supContent)}}`;
+                    }
+                    return rebuilt;
+                });
 
             return start + normalized + end;
         } catch (e) {
@@ -10139,6 +10179,10 @@ function setupEventListeners() {
         const username = document.getElementById('register-username').value;
         const password = document.getElementById('register-password').value;
         const confirmPassword = document.getElementById('register-confirm-password').value;
+        if (password.length < 6) {
+            showToast(getToastMessage('toast.passwordMinLengthRequired'), 'error');
+            return;
+        }
         if (password !== confirmPassword) {
             showToast(getToastMessage('toast.passwordsDoNotMatch'), 'error');
             return;
@@ -12154,13 +12198,14 @@ function setupEventListeners() {
     updateWeeklyTimer();
 
     if (Capacitor.isNativePlatform()) {
-        Keyboard.addListener('keyboardWillShow', (info) => {
-            document.body.classList.add('keyboard-is-open');
-            document.body.style.setProperty('--keyboard-height', `${info.keyboardHeight}px`);
-            document.documentElement.style.setProperty('--native-safe-area-bottom', '0px');
-        });
+        let keyboardHideTimeout = null;
 
-        Keyboard.addListener('keyboardWillHide', () => {
+        const finalizeKeyboardHidden = () => {
+            if (keyboardHideTimeout) {
+                clearTimeout(keyboardHideTimeout);
+                keyboardHideTimeout = null;
+            }
+
             document.body.classList.remove('keyboard-is-open');
             document.body.style.removeProperty('--keyboard-height');
 
@@ -12175,7 +12220,26 @@ function setupEventListeners() {
             if (document.activeElement === elements.messageInput) {
                 elements.messageInput.blur();
             }
+        };
+
+        Keyboard.addListener('keyboardWillShow', (info) => {
+            if (keyboardHideTimeout) {
+                clearTimeout(keyboardHideTimeout);
+                keyboardHideTimeout = null;
+            }
+            document.body.classList.add('keyboard-is-open');
+            document.body.style.setProperty('--keyboard-height', `${info.keyboardHeight}px`);
+            document.documentElement.style.setProperty('--native-safe-area-bottom', '0px');
         });
+
+        Keyboard.addListener('keyboardWillHide', () => {
+            if (keyboardHideTimeout) {
+                clearTimeout(keyboardHideTimeout);
+            }
+            keyboardHideTimeout = setTimeout(finalizeKeyboardHidden, 250);
+        });
+
+        Keyboard.addListener('keyboardDidHide', finalizeKeyboardHidden);
     }
 
     elements.chatHistoryList.addEventListener('contextmenu', (e) => {
@@ -12916,8 +12980,9 @@ async function initialize() {
                     : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
                         : (browserLang && browserLang.startsWith('ja')) ? 'ja'
                             : (browserLang && browserLang.startsWith('ko')) ? 'ko'
-                                : (browserLang && browserLang.startsWith('en')) ? 'en'
-                                    : 'zh-CN';
+                                : (browserLang && browserLang.startsWith('es')) ? 'es'
+                                    : (browserLang && browserLang.startsWith('en')) ? 'en'
+                                        : 'zh-CN';
                 try { await applyLanguage(defaultLang); } catch (_) { }
             }
 
@@ -13048,8 +13113,9 @@ async function initialize() {
                     : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
                         : (browserLang && browserLang.startsWith('ja')) ? 'ja'
                             : (browserLang && browserLang.startsWith('ko')) ? 'ko'
-                                : (browserLang && browserLang.startsWith('en')) ? 'en'
-                                    : 'zh-CN';
+                                : (browserLang && browserLang.startsWith('es')) ? 'es'
+                                    : (browserLang && browserLang.startsWith('en')) ? 'en'
+                                        : 'zh-CN';
                 localStorage.setItem('selectedLanguage', defaultLang);
                 currentUser.language = defaultLang;
                 try { localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser))); } catch (_) { }
@@ -13062,8 +13128,9 @@ async function initialize() {
                 : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
                     : (browserLang && browserLang.startsWith('ja')) ? 'ja'
                         : (browserLang && browserLang.startsWith('ko')) ? 'ko'
-                            : (browserLang && browserLang.startsWith('en')) ? 'en'
-                                : 'zh-CN';
+                            : (browserLang && browserLang.startsWith('es')) ? 'es'
+                                : (browserLang && browserLang.startsWith('en')) ? 'en'
+                                    : 'zh-CN';
             await applyLanguage(defaultLang);
         } else {
             await applyLanguage(savedLanguage);

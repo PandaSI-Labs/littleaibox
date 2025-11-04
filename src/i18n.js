@@ -1,7 +1,7 @@
 const translations = {};
 const translationsLoaded = {};
 let __runtimeLanguage = null;
-const SUPPORTED_LANGUAGES = ['zh-CN', 'en', 'ja', 'ko', 'zh-TW'];
+const SUPPORTED_LANGUAGES = ['en', 'zh-CN', 'zh-TW', 'es', 'ja', 'ko'];
 
 /**
  * 尝试从网络或 SW 缓存中获取指定语言的 JSON。
@@ -99,10 +99,20 @@ async function cacheTranslations(lang, data) {
  */
 async function clearTranslationCache() {
     try {
+        // 清除 localStorage 中的翻译缓存
         for (const lang of SUPPORTED_LANGUAGES) {
             localStorage.removeItem(`translations_${lang}`);
             delete translations[lang];
             translationsLoaded[lang] = false;
+        }
+
+        // 清除 CacheStorage 中的语言文件缓存
+        if ('caches' in window) {
+            try {
+                await caches.delete('locales-cache');
+            } catch (error) {
+                // 如果缓存不存在，忽略错误
+            }
         }
     } catch (error) {
         console.warn('Failed to clear translation cache:', error);
@@ -248,7 +258,8 @@ function getCurrentLanguage() {
         browserLang.startsWith('zh') ? 'zh-CN' :
             browserLang.startsWith('ja') ? 'ja' :
                 browserLang.startsWith('ko') ? 'ko' :
-                    browserLang.startsWith('en') ? 'en' : 'zh-CN';
+                    browserLang.startsWith('es') ? 'es' :
+                        browserLang.startsWith('en') ? 'en' : 'zh-CN';
     return defaultLang;
 }
 
@@ -307,4 +318,5 @@ async function applyLanguage(lang) {
 }
 
 // Export the functions for use in other modules
-export { applyLanguage, clearTranslationCache, getCurrentLanguage, preloadAllTranslations, t, translatePage, onAfterLanguageApplied };
+export { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLanguageApplied, preloadAllTranslations, t, translatePage };
+

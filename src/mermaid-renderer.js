@@ -42,58 +42,42 @@ function normalizeAndCorrectMermaid(definition) {
     }
 
     text = text
-        .replace(/[\u2013\u2014]/g, '-') 
-        .replace(/\u2192/g, '-->')      
+        .replace(/[\u2013\u2014]/g, '-')
+        .replace(/\u2192/g, '-->')
         .replace(/[\u00A0\t]+/g, ' ');
 
-    const rawLines = text.split(/\n/);
-    const lines = [];
-    for (let line of rawLines) {
-        if (/^\s*copy$/i.test(line)) continue;
-        line = line.replace(/[ \t]+$/g, '');
-        lines.push(line);
-    }
+    let lines = text.split(/\n/).map(l => l.replace(/[ \t]+$/g, ''));
+    lines = lines.filter(l => !/^\s*copy\s*$/i.test(l));
 
     const stripInlineComments = (ln) => {
+        const trimmed = ln.trimStart();
+        if (trimmed.startsWith('%%')) return ln;
         const idx = ln.indexOf('%%');
-        if (idx > -1 && ln.trimStart().slice(0, 2) !== '%%') {
+        if (idx > -1) {
             return ln.slice(0, idx).replace(/[ \t]+$/g, '');
         }
         return ln;
     };
 
-    const analysisLines = lines
-        .map(stripInlineComments)
-        .map(l => l)
-        .filter(l => l.trim() !== '' && !/^\s*%%/.test(l));
+    lines = lines.map(stripInlineComments);
 
-    if (analysisLines.length === 0) {
-        return { corrected: '', skippedReason: 'comments-only-or-empty' };
+    while (lines.length && !lines[0].trim()) lines.shift();
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+
+    const normalized = lines.join('\n').trim();
+
+    // 轻量判断
+    const looksLikeMermaid = /(?:graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|journey|pie|mindmap|subgraph\b|-->|==>)/i.test(normalized);
+
+    if (!looksLikeMermaid) {
+        return { corrected: '', skippedReason: 'not-mermaid-like' };
     }
 
-    const directiveRegex = /^(?:graph|flowchart)\s+(?:TB|TD|LR|RL|BT)\b|^(?:sequenceDiagram|classDiagram|stateDiagram-v2|stateDiagram|erDiagram|gantt|journey|pie|mindmap)\b/i;
-    let firstIdx = lines.findIndex(l => l.trim() !== '' && !/^\s*%%/.test(l));
-    if (firstIdx === -1) firstIdx = 0;
-    let header = lines[firstIdx] || '';
-    const hasDirective = directiveRegex.test(header.trim());
-
-    if (!hasDirective) {
-        return { corrected: '', skippedReason: 'missing-directive' };
+    if (!normalized) {
+        return { corrected: '', skippedReason: 'empty-after-normalize' };
     }
 
-    const correctedLines = lines.map((l, i) => {
-        if (/^\s*%%/.test(l)) return l.trimEnd();
-        return stripInlineComments(l);
-    });
-
-    const afterHeader = correctedLines.slice(firstIdx + 1)
-        .filter(l => l.trim() !== '' && !/^\s*%%/.test(l));
-    if (afterHeader.length === 0) {
-        return { corrected: '', skippedReason: 'directive-without-body' };
-    }
-
-    const corrected = correctedLines.join('\n').trim();
-    return { corrected, skippedReason: null };
+    return { corrected: normalized, skippedReason: null };
 }
 
 async function loadMermaidFromSources(loaderFn) {

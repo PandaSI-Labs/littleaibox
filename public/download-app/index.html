@@ -35,6 +35,13 @@
                 </svg>
             </button>
             <div class="lang-menu" id="langMenu" role="menu">
+                <div class="lang-option" role="menuitem" data-lang="en">
+                    <span class="lang-option-flag">🇺🇸</span>
+                    <span class="lang-option-text">English</span>
+                    <svg class="lang-option-check" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                    </svg>
+                </div>
                 <div class="lang-option" role="menuitem" data-lang="zh-CN">
                     <span class="lang-option-flag">🇨🇳</span>
                     <span class="lang-option-text">简体中文</span>
@@ -49,9 +56,9 @@
                         <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
                     </svg>
                 </div>
-                <div class="lang-option" role="menuitem" data-lang="en">
-                    <span class="lang-option-flag">🇺🇸</span>
-                    <span class="lang-option-text">English</span>
+                <div class="lang-option" role="menuitem" data-lang="es">
+                    <span class="lang-option-flag">🇪🇸</span>
+                    <span class="lang-option-text">Español</span>
                     <svg class="lang-option-check" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
                     </svg>
@@ -172,7 +179,7 @@
                                     d="M18.7,14.3c-0.4-0.4-1-0.4-1.4,0l-0.8,0.8c-0.8-0.4-1.8-1.1-2.8-2.1c-1-1-1.7-2-2.1-2.8l0.8-0.8c0.4-0.4,0.4-1,0-1.4 l-2.2-2.2c-0.4-0.4-1-0.4-1.4,0L7.3,6.5c-0.4,0.4-0.5,1-0.2,1.6c0.5,1.1,1.2,2.4,2.1,3.5c1.2,1.5,2.8,2.8,4.5,3.5 c0.5,0.2,1.2,0.1,1.6-0.2L18.7,14.3z M15,3h-1.5V1.5C13.5,0.7,12.8,0,12,0s-1.5,0.7-1.5,1.5V3H9C8.2,3,7.5,3.7,7.5,4.5v0 C7.5,5.3,8.2,6,9,6h1.5v1.5C10.5,8.3,11.2,9,12,9s1.5-0.7,1.5-1.5V6H15c0.8,0,1.5-0.7,1.5-1.5v0C16.5,3.7,15.8,3,15,3z" />
                             </svg>
                             <h3 class="text-lg font-semibold text-zinc-900 dark:text-white mb-2">Android</h3>
-                            <a href="/downloads/LittleAIBox_v2.3.4.apk"
+                            <a href="/downloads/LittleAIBox_v2.3.5.apk"
                                 class="mt-auto w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors"
                                 download data-i18n="downloadApk"></a>
                         </div>
@@ -325,6 +332,24 @@
                 comingSoon: '곧 출시',
                 thankYouTitle: '다운로드 감사합니다!',
                 thankYouDesc: '다운로드가 시작되었습니다. 브라우저의 다운로드 목록을 확인하세요.'
+            },
+            'es': {
+                subtitle: 'Instala ahora para una comunicación y creación sin interrupciones en todos los dispositivos.',
+                recommended: 'Recomendado',
+                pwaTitle: 'Aplicación PWA',
+                pwaDesc: 'No se requiere descarga. Obtén una experiencia nativa al instante y mantente siempre actualizado.',
+                desktopGuide: 'Guía de instalación para escritorio',
+                desktopStep1: 'Abre <a href="https://ai.littletea.xyz" class="text-blue-500 hover:underline font-medium">ai.littletea.xyz</a> en el navegador Chrome o Edge.',
+                desktopStep2: 'Haz clic en el icono <strong class="text-zinc-900 dark:text-white">"Instalar"</strong> o <strong class="text-zinc-900 dark:text-white">"Obtener aplicación"</strong> que aparece en el lado derecho de la barra de direcciones.',
+                desktopStep3: 'Confirma la instalación en la ventana emergente. El icono de la aplicación aparecerá en tu escritorio o dock.',
+                mobileGuide: 'Guía de instalación para móvil',
+                mobileIOS: '<strong class="text-zinc-900 dark:text-white">iOS (Safari):</strong><br>Toca el botón <strong class="text-zinc-900 dark:text-white">"Compartir"</strong> en la parte inferior, desliza el menú hacia arriba, encuentra y toca <strong class="text-zinc-900 dark:text-white">"Añadir a pantalla de inicio"</strong>.',
+                mobileAndroid: '<strong class="text-zinc-900 dark:text-white">Android (Chrome):</strong><br>El navegador generalmente solicita la instalación automáticamente. Si no, toca el <strong class="text-zinc-900 dark:text-white">"Menú"</strong> (tres puntos) en la esquina superior derecha, luego selecciona <strong class="text-zinc-900 dark:text-white">"Añadir a pantalla de inicio"</strong> o <strong class="text-zinc-900 dark:text-white">"Instalar aplicación"</strong>.',
+                nativeTitle: 'O descargar instaladores nativos',
+                downloadApk: 'Descargar APK',
+                comingSoon: 'Próximamente',
+                thankYouTitle: '¡Gracias por descargar!',
+                thankYouDesc: 'Tu descarga ha comenzado. Por favor revisa la lista de descargas de tu navegador.'
             }
         };
 
@@ -343,7 +368,7 @@
         // 检测浏览器语言
         function detectBrowserLanguage() {
             const browserLang = navigator.language || navigator.userLanguage;
-            const supportedLangs = ['zh-CN', 'zh-TW', 'en', 'ja', 'ko'];
+            const supportedLangs = ['en', 'zh-CN', 'zh-TW', 'es', 'ja', 'ko'];
 
             if (supportedLangs.includes(browserLang)) {
                 return browserLang;
@@ -356,6 +381,8 @@
                 return 'ja';
             } else if (langPrefix === 'ko') {
                 return 'ko';
+            } else if (langPrefix === 'es') {
+                return 'es';
             } else if (langPrefix === 'en') {
                 return 'en';
             }
@@ -369,7 +396,8 @@
             'zh-TW': '繁體中文',
             'en': 'English',
             'ja': '日本語',
-            'ko': '한국어'
+            'ko': '한국어',
+            'es': 'Español'
         };
 
         // 应用翻译
@@ -382,7 +410,9 @@
                 lang === 'zh-TW' ? '下載 LittleAIBox' :
                     lang === 'en' ? 'Download LittleAIBox' :
                         lang === 'ja' ? 'LittleAIBox をダウンロード' :
-                            'LittleAIBox 다운로드';
+                            lang === 'ko' ? 'LittleAIBox 다운로드' :
+                                lang === 'es' ? 'Descargar LittleAIBox' :
+                                    '下载 LittleAIBox';
 
             // 应用普通文本翻译
             document.querySelectorAll('[data-i18n]').forEach(el => {

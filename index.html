@@ -112,7 +112,7 @@
                         const cls = Array.from(el.classList || []);
                         const langClass = cls.find(c => c.startsWith('language-'));
                         const lang = langClass ? langClass.slice('language-'.length) : null;
-                
+
                         if (lang === 'mermaid') {
                             el.classList.remove('language-mermaid');
                             el.classList.add('language-plaintext');
@@ -128,7 +128,7 @@
                                     try { originalHighlightElement(el); } catch (_) { }
                                 }
                             });
-                            return; 
+                            return;
                         }
                     } catch (_) { }
                     return originalHighlightElement(el);
@@ -291,9 +291,9 @@
                         </div>
                         <div class="form-group">
                             <label for="register-password" data-i18n-key="passwordLabel">密码</label>
-                            <input type="password" id="register-password" name="registerPassword"
-                                placeholder="请输入密码（至少6位）" data-i18n-placeholder-key="passwordPlaceholderWithRule"
-                                autocomplete="new-password" required minlength="6">
+                            <input type="password" id="register-password" name="registerPassword" placeholder="请输入密码"
+                                data-i18n-placeholder-key="passwordPlaceholder" autocomplete="new-password" required
+                                minlength="6">
                         </div>
                         <div class="form-group">
                             <label for="register-confirm-password" data-i18n-key="confirmPasswordLabel">确认密码</label>
@@ -329,7 +329,8 @@
                     </div>
                     <button type="submit" class="auth-submit" data-i18n-key="sendResetLinkButton">发送重置链接</button>
                     <button type="button" id="back-to-login-btn"
-                        style="background: none; border: 1px solid var(--border-color); color: var(--text-color); width: 100%; padding: 12px; border-radius: 8px; margin-top: 8px;">返回登录</button>
+                        style="background: none; border: 1px solid var(--border-color); color: var(--text-color); width: 100%; padding: 12px; border-radius: 8px; margin-top: 8px;"
+                        data-i18n-key="backToLoginButton">返回登录</button>
                 </form>
 
                 <form id="reset-password-form" class="auth-form">
@@ -453,7 +454,7 @@
                 <div class="input-outer-wrapper">
                     <div class="attachments-preview" id="attachments-preview"></div>
                     <div id="quote-preview-container"></div>
-                    
+
                     <div class="input-wrapper">
                         <div id="upload-menu">
                             <div class="upload-menu-item" id="upload-image-btn">
@@ -773,7 +774,9 @@
                     <a href="#" class="settings-nav-item" data-page="donation">
                         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path>
+                            <path
+                                d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z">
+                            </path>
                         </svg>
                         <span data-i18n-key="ui.donation">捐赠</span>
                     </a>
@@ -955,6 +958,12 @@
                             <div class="language-settings-divider"></div>
                             <div class="language-settings-content">
                                 <div class="language-selector">
+                                    <button id="lang-btn-en" class="language-btn" data-lang="en" aria-label="English">
+                                        <div class="language-content">
+                                            <span class="language-name">English</span>
+                                        </div>
+                                        <div class="language-check"></div>
+                                    </button>
                                     <button id="lang-btn-zh-cn" class="language-btn" data-lang="zh-CN"
                                         aria-label="简体中文">
                                         <div class="language-content">
@@ -969,6 +978,12 @@
                                         </div>
                                         <div class="language-check"></div>
                                     </button>
+                                    <button id="lang-btn-es" class="language-btn" data-lang="es" aria-label="Español">
+                                        <div class="language-content">
+                                            <span class="language-name">Español</span>
+                                        </div>
+                                        <div class="language-check"></div>
+                                    </button>
                                     <button id="lang-btn-ja" class="language-btn" data-lang="ja" aria-label="日本語">
                                         <div class="language-content">
                                             <span class="language-name">日本語</span>
@@ -978,12 +993,6 @@
                                     <button id="lang-btn-ko" class="language-btn" data-lang="ko" aria-label="한국어">
                                         <div class="language-content">
                                             <span class="language-name">한국어</span>
-                                        </div>
-                                        <div class="language-check"></div>
-                                    </button>
-                                    <button id="lang-btn-en" class="language-btn" data-lang="en" aria-label="English">
-                                        <div class="language-content">
-                                            <span class="language-name">English</span>
                                         </div>
                                         <div class="language-check"></div>
                                     </button>
@@ -1324,16 +1333,24 @@
                     <div id="donation-settings-page" class="settings-page">
                         <div class="donation-container">
                             <div class="donation-header">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor" class="donation-icon">
-                                    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24"
+                                    fill="currentColor" class="donation-icon">
+                                    <path
+                                        d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z">
+                                    </path>
                                 </svg>
                                 <h3 data-i18n-key="donation.title">支持 LittleAIBox</h3>
-                                <p data-i18n-key="donation.message">如果您觉得这个应用对您有帮助，可以考虑捐赠一小笔费用来支持开发者的持续维护和服务器开销。感谢您的支持！</p>
+                                <p data-i18n-key="donation.message">如果您觉得这个应用对您有帮助，可以考虑捐赠一小笔费用来支持开发者的持续维护和服务器开销。感谢您的支持！
+                                </p>
                             </div>
 
                             <div class="donation-top-action">
-                                <a class="buymeacoffee-btn" href="https://buymeacoffee.com/diandiancha" target="_blank" rel="noopener noreferrer" title="" data-i18n-title="donation.openLink" data-i18n-aria-label="donation.openLink" aria-label="">
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                <a class="buymeacoffee-btn" href="https://buymeacoffee.com/diandiancha" target="_blank"
+                                    rel="noopener noreferrer" title="" data-i18n-title="donation.openLink"
+                                    data-i18n-aria-label="donation.openLink" aria-label="">
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                        aria-hidden="true" focusable="false">
                                         <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
                                         <path d="M2 8h16v7a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4Z" />
                                         <line x1="6" y1="1" x2="6" y2="4" />
@@ -1345,49 +1362,47 @@
                             </div>
                             <div class="donation-methods">
                                 <div class="donation-method">
-                                    <img src="/DonateMe/Wechatpay.jpg" alt="" id="wechat-qr-code" title="" data-i18n-title="donation.wechatPayTitle" data-i18n-alt="donation.wechatQrAlt">
+                                    <img src="/DonateMe/Wechatpay.jpg" alt="" id="wechat-qr-code" title=""
+                                        data-i18n-title="donation.wechatPayTitle" data-i18n-alt="donation.wechatQrAlt">
                                     <div class="donation-caption">
                                         <span data-i18n-key="donation.wechatPay">微信支付</span>
-                                        <button type="button"
-                                                class="donation-save-btn"
-                                                data-action="download-image"
-                                                data-image-url="/DonateMe/Wechatpay.jpg"
-                                                data-description-key="donation.wechatPay"
-                                                title=""
-                                                data-i18n-title="image.downloadImage"
-                                                data-i18n-aria-label="image.downloadImage"
-                                                aria-label="">
-                                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M12 3v9"></path>
-                                            <polyline points="8.5 9.5 12 13 15.5 9.5"></polyline>
-                                            <path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"></path>
-                                        </svg>
+                                        <button type="button" class="donation-save-btn" data-action="download-image"
+                                            data-image-url="/DonateMe/Wechatpay.jpg"
+                                            data-description-key="donation.wechatPay" title=""
+                                            data-i18n-title="image.downloadImage"
+                                            data-i18n-aria-label="image.downloadImage" aria-label="">
+                                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none"
+                                                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                                stroke-linejoin="round">
+                                                <path d="M12 3v9"></path>
+                                                <polyline points="8.5 9.5 12 13 15.5 9.5"></polyline>
+                                                <path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"></path>
+                                            </svg>
                                         </button>
                                     </div>
                                 </div>
                                 <div class="donation-method">
-                                    <img src="/DonateMe/Alipay.jpg" alt="" id="alipay-qr-code" title="" data-i18n-title="donation.alipayPayTitle" data-i18n-alt="donation.alipayQrAlt">
+                                    <img src="/DonateMe/Alipay.jpg" alt="" id="alipay-qr-code" title=""
+                                        data-i18n-title="donation.alipayPayTitle" data-i18n-alt="donation.alipayQrAlt">
                                     <div class="donation-caption">
                                         <span data-i18n-key="donation.alipayPay">支付宝</span>
-                                        <button type="button"
-                                                class="donation-save-btn"
-                                                data-action="download-image"
-                                                data-image-url="/DonateMe/Alipay.jpg"
-                                                data-description-key="donation.alipayPay"
-                                                title=""
-                                                data-i18n-title="image.downloadImage"
-                                                data-i18n-aria-label="image.downloadImage"
-                                                aria-label="">
-                                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M12 3v9"></path>
-                                            <polyline points="8.5 9.5 12 13 15.5 9.5"></polyline>
-                                            <path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"></path>
-                                        </svg>
+                                        <button type="button" class="donation-save-btn" data-action="download-image"
+                                            data-image-url="/DonateMe/Alipay.jpg"
+                                            data-description-key="donation.alipayPay" title=""
+                                            data-i18n-title="image.downloadImage"
+                                            data-i18n-aria-label="image.downloadImage" aria-label="">
+                                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none"
+                                                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                                stroke-linejoin="round">
+                                                <path d="M12 3v9"></path>
+                                                <polyline points="8.5 9.5 12 13 15.5 9.5"></polyline>
+                                                <path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"></path>
+                                            </svg>
                                         </button>
                                     </div>
                                 </div>
                             </div>
-                            
+
                         </div>
                     </div>
                 </main>
