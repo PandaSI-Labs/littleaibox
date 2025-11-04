@@ -14,6 +14,8 @@ import { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLangua
 import { renderMermaidDiagrams } from './mermaid-renderer.js';
 import './style.css';
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 const ApkInstaller = Capacitor.isNativePlatform()
     ? registerPlugin('ApkInstaller', {
         android: {
@@ -9109,7 +9111,7 @@ async function processInBatches(items, processFn, batchSize, delay) {
         results.push(...batchResults);
 
         if (i + batchSize < items.length && delay > 0) {
-            await new Promise(resolve => setTimeout(resolve, delay));
+            await sleep(delay);
         }
     }
     return results;
@@ -9197,6 +9199,10 @@ async function handleLargeTextAnalysis(userContent, originalQuery) {
 
             const chunkSummary = await callAISynchronously(prompt);
             cumulativeSummary = chunkSummary;
+
+            if (i < chunks.length - 1) {
+                await sleep(1500);
+            }
         }
 
         contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.allPartsAnalyzed')}</div>`;
@@ -9204,6 +9210,7 @@ async function handleLargeTextAnalysis(userContent, originalQuery) {
         const finalPromptForUserChoiceModel = `Based on this summary, answer: "${originalQuery}"\n\nSummary: ${cumulativeSummary}`;
         const finalUserContent = [{ type: 'text', text: finalPromptForUserChoiceModel }];
 
+        await sleep(2000);
         return await handleChatMessage(finalUserContent, { existingAssistantElement: assistantMessageElement });
 
     } catch (error) {
@@ -9222,8 +9229,6 @@ async function handleDeepAnalysis(userContent, originalQuery) {
 
     const assistantMessageElement = appendMessage('assistant', '');
     const contentDiv = assistantMessageElement.querySelector('.content');
-
-    const delay = ms => new Promise(res => setTimeout(res, ms));
 
     try {
         contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step1Chunking')}</div>`;
@@ -9287,7 +9292,7 @@ async function handleDeepAnalysis(userContent, originalQuery) {
                 });
         };
 
-        const results = await processInBatches(chunks, processChunkForIndex, 3, 1000);
+        const results = await processInBatches(chunks, processChunkForIndex, 1, 1500);
         const documentIndex = results.filter(item => item !== null);
 
         if (documentIndex.length < chunks.length) {
@@ -9343,6 +9348,7 @@ async function handleDeepAnalysis(userContent, originalQuery) {
         const finalPromptForUserChoiceModel = `Answer: "${originalQuery}"\n\nRelevant content:\n${relevantChunks.map(c => `[${c.chunkId} from ${c.sourceFile}]:\n${c.content}`).join('\n\n')}`;
         const finalUserContent = [{ type: 'text', text: finalPromptForUserChoiceModel }];
 
+        await sleep(2000);
         return await handleChatMessage(finalUserContent, { existingAssistantElement: assistantMessageElement });
 
     } catch (error) {
@@ -9380,7 +9386,7 @@ function safeJsonParse(text, fallback = null) {
             // 尝试修复常见的JSON错误
             const repairedText = text.trim()
                 .replace(/,\s*([\}\]])/g, '$1')
-                .replace(/([^\\])\\([^"\\\/bfnrt])/g, '$1\\\\$2'); // 修复转义字符
+                .replace(/([^\\])\\([^"\\\/bfnrt])/g, '$1\\\\$2');
 
             return JSON.parse(repairedText);
         } catch (repairError) {
