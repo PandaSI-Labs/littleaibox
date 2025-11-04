@@ -6,7 +6,7 @@
 
 모든 버그 리포트、아이디어、코드 한 줄이 이 프로젝트를 더 좋게 만듭니다。🌱
 
-[中文](CONTRIBUTING.zh-CN.md) | [English](../CONTRIBUTING.md) | [日本語](CONTRIBUTING.ja.md) | [한국어](CONTRIBUTING.ko.md)
+[中文](CONTRIBUTING.zh-CN.md) | [English](../CONTRIBUTING.md) | [日本語](CONTRIBUTING.ja.md) | [한국어](CONTRIBUTING.ko.md) | [Español](CONTRIBUTING.es.md)
 
 </div>
 

@@ -6,7 +6,7 @@
 
 Every bug report, idea, or line of code makes this project better. 🌱
 
-[English](CONTRIBUTING.md) | [中文](docs/CONTRIBUTING.zh-CN.md) | [日本語](docs/CONTRIBUTING.ja.md) | [한국어](docs/CONTRIBUTING.ko.md)
+[English](CONTRIBUTING.md) | [中文](docs/CONTRIBUTING.zh-CN.md) | [日本語](docs/CONTRIBUTING.ja.md) | [한국어](docs/CONTRIBUTING.ko.md) | [Español](docs/CONTRIBUTING.es.md)
 
 </div>
 
