@@ -322,7 +322,7 @@ class NavigationEngine {
     async closeModal() {
         // 关闭设置模态框
         if (elements.settingsModal?.classList.contains('visible')) {
-            const canClose = await handleCloseSettingsModal();
+            const canClose = await closeModalAndResetState(handleCloseSettingsModalByPage);
             if (canClose) {
                 navigationEngine.suppressNextPop = false;
             }
@@ -1210,6 +1210,7 @@ const appReadyPromise = new Promise(resolve => {
     appReadyResolver = resolve;
 });
 let pendingMessage = null;
+let lastSettingsPage = null;
 let weeklyTimerInterval = null;
 let weeklyFeatureStatus = { can_use: true, expires_at: null, loaded: false };
 
@@ -1407,11 +1408,24 @@ const MERMAID_SYSTEM_HINT = [
 ].join(' ');
 
 function composeSystemPrompt(userPrompt = '') {
+    const parts = [];
     const trimmed = (userPrompt || '').trim();
-    if (!trimmed) {
-        return MERMAID_SYSTEM_HINT;
+    if (trimmed) {
+        parts.push(trimmed);
     }
-    return `${trimmed}\n\n${MERMAID_SYSTEM_HINT}`;
+
+    const roleInstruction = getToastMessage('ui.aiRoleInstruction');
+    const formatInstruction = getToastMessage('ui.formatInstructionWithOutput');
+
+    if (roleInstruction) {
+        parts.push(roleInstruction);
+    }
+    if (formatInstruction) {
+        parts.push(formatInstruction);
+    }
+    parts.push(MERMAID_SYSTEM_HINT);
+
+    return parts.filter(Boolean).join('\n\n');
 }
 
 // DOM元素引用
@@ -3562,14 +3576,13 @@ function showKeyValidationNotification(validationStatus) {
     });
 }
 
-// 打开设置页面到密钥配置
 function openSettingsForKeys() {
     if (elements.settingsBtn) {
         elements.settingsBtn.click();
-        // 确保密钥配置页面被选中
         setTimeout(() => {
-            const keySettingsTab = document.querySelector('[data-page="api-keys"]');
+            const keySettingsTab = document.querySelector('[data-page="api"]');
             if (keySettingsTab) {
+                lastSettingsPage = 'api';
                 keySettingsTab.click();
             }
         }, 100);
@@ -3579,7 +3592,6 @@ function openSettingsForKeys() {
 
 function setupSettingsModalUI() {
     const activeNavItem = document.querySelector('.settings-nav-item.active');
-    const currentPage = activeNavItem ? activeNavItem.dataset.page : 'profile';
 
     requestAnimationFrame(() => {
         const guestProfileSection = document.getElementById('guest-profile-section');
@@ -3672,11 +3684,6 @@ function setupSettingsModalUI() {
             apiNavItem.style.display = 'flex';
             securityNavItem.style.display = 'none';
 
-            navItems.forEach(item => item.classList.remove('active'));
-            pages.forEach(page => page.classList.remove('active'));
-            profileNavItem.classList.add('active');
-            document.getElementById('profile-settings-page').classList.add('active');
-
             elements.themePresetSelector.querySelectorAll('.theme-preset-btn').forEach(btn => btn.disabled = false);
 
             try {
@@ -3719,6 +3726,36 @@ function setupSettingsModalUI() {
                 }
             }
         }
+
+        try {
+            const persisted = lastSettingsPage;
+            const isVisible = (el) => el && getComputedStyle(el).display !== 'none';
+            const setActivePage = (pageName) => {
+                navItems.forEach(i => i.classList.remove('active'));
+                pages.forEach(p => p.classList.remove('active'));
+                const nav = document.querySelector(`.settings-nav-item[data-page="${pageName}"]`);
+                const page = document.getElementById(`${pageName}-settings-page`);
+                if (nav) nav.classList.add('active');
+                if (page) page.classList.add('active');
+            };
+
+            let desired = null;
+            if (persisted) {
+                const n = document.querySelector(`.settings-nav-item[data-page="${persisted}"]`);
+                if (isVisible(n)) desired = persisted;
+            }
+            if (!desired && activeNavItem && isVisible(activeNavItem)) {
+                desired = activeNavItem.dataset.page;
+            }
+            if (!desired) {
+                if (isVisible(profileNavItem)) desired = 'profile';
+            }
+            if (!desired) {
+                const firstVisible = Array.from(navItems).find(i => isVisible(i));
+                if (firstVisible) desired = firstVisible.dataset.page;
+            }
+            if (desired) setActivePage(desired);
+        } catch (_) { }
     });
 }
 
@@ -3731,15 +3768,15 @@ function resetBackPressExitState() {
     isHandlingBackNavigation = false;
 }
 
-function closeModalAndResetState(closeAction) {
-    closeAction();
+async function closeModalAndResetState(closeAction) {
+    const result = await closeAction();
     resetBackPressExitState();
+    return result;
 }
 
 async function closeSettingsModalFromUI() {
-    if (!elements.settingsModal) return;
+    if (!elements.settingsModal) return false;
 
-    // 检查API密钥是否有未保存的更改
     if (apiKeysChanged) {
         const confirmed = await showCustomConfirm(
             getToastMessage('dialog.discardChanges'),
@@ -3747,16 +3784,103 @@ async function closeSettingsModalFromUI() {
             ICONS.HELP,
             { manageHistory: false }
         );
+        if (!confirmed) return false;
 
-        if (!confirmed) {
-            return false;
-        }
+        try {
+            if (currentUser) {
+                if (elements.apiKeyOneInput) elements.apiKeyOneInput.value = originalApiKeys.keyOne || '';
+                if (elements.apiKeyTwoInput) elements.apiKeyTwoInput.value = originalApiKeys.keyTwo || '';
+                const savedMode = (originalApiKeys.mode === 'server_fallback') ? 'mixed' : (originalApiKeys.mode || 'mixed');
+                const modeInput = document.querySelector(`input[name="api-mode"][value="${savedMode}"]`) || document.querySelector(`input[name="api-mode"][value="mixed"]`);
+                if (modeInput) modeInput.checked = true;
+            } else {
+                const { keyOne, keyTwo, mode } = getGuestKeySettings();
+                if (elements.apiKeyOneInput) elements.apiKeyOneInput.value = keyOne || '';
+                if (elements.apiKeyTwoInput) elements.apiKeyTwoInput.value = keyTwo || '';
+                const modeInput = document.querySelector(`input[name="api-mode"][value="${mode || 'mixed'}"]`) || document.querySelector(`input[name="api-mode"][value="mixed"]`);
+                if (modeInput) modeInput.checked = true;
+            }
+            clearApiKeyErrorStates();
+            apiKeysChanged = false;
+            keyOneTouched = false;
+            keyTwoTouched = false;
+            try { refreshSettingsI18nTexts(); } catch (_) { }
+        } catch (_) { }
     }
 
     elements.settingsModal.classList.remove('visible');
     if (document.body.classList.contains('sidebar-open')) {
         try { closeSidebar(true); } catch (_) { }
     }
+    return true;
+}
+
+async function closeProfileSettingsModal() {
+    if (!elements.settingsModal) return false;
+    const currentUsername = elements.editUsernameInput.value.trim();
+    const profileChanged = (currentUser) && (currentUsername !== originalUsername || newAvatarFile !== null);
+    if (profileChanged) {
+        const confirmed = await showCustomConfirm(
+            getToastMessage('dialog.discardChanges'),
+            getToastMessage('dialog.discardChangesMessage'),
+            ICONS.HELP,
+            { manageHistory: false }
+        );
+        if (!confirmed) return false;
+        try {
+            if (elements.editUsernameInput) {
+                elements.editUsernameInput.value = originalUsername || '';
+            }
+        } catch (_) { }
+
+        try {
+            const avatarPreview = document.getElementById('avatar-preview');
+            const avatarWrapper = document.getElementById('avatar-preview-wrapper');
+            const existingInitial = avatarWrapper ? avatarWrapper.querySelector('.avatar-initial-text') : null;
+            if (existingInitial) existingInitial.remove();
+
+            if (avatarPreview) {
+                if (originalAvatarUrl) {
+                    avatarPreview.style.display = 'block';
+                    avatarPreview.src = originalAvatarUrl;
+                } else {
+                    // 无原头像：隐藏预览，显示首字母
+                    avatarPreview.style.display = 'none';
+                    if (avatarWrapper) {
+                        const name = (originalUsername || (currentUser ? currentUser.email : ''));
+                        const initial = name ? name.charAt(0).toUpperCase() : 'U';
+                        const initialDiv = document.createElement('div');
+                        initialDiv.className = 'avatar-initial-text';
+                        initialDiv.textContent = initial;
+                        initialDiv.style.cssText = `
+                            width: 100%; height: 100%; display: flex; align-items: center;
+                            justify-content: center; background-color: #1a73e8; color: white;
+                            font-size: 48px; font-weight: bold; border-radius: 50%;
+                        `;
+                        avatarWrapper.appendChild(initialDiv);
+                    }
+                }
+            }
+        } catch (_) { }
+
+        // 清理本地未保存头像引用
+        newAvatarFile = null;
+        newAvatarUrl = null;
+    }
+    elements.settingsModal.classList.remove('visible');
+    return true;
+}
+
+async function handleCloseSettingsModalByPage() {
+    const activeNavItem = document.querySelector('.settings-nav-item.active');
+    const activePage = activeNavItem ? activeNavItem.dataset.page : 'profile';
+    if (activePage === 'api') {
+        return await closeSettingsModalFromUI();
+    }
+    if (activePage === 'profile') {
+        return await closeProfileSettingsModal();
+    }
+    elements.settingsModal.classList.remove('visible');
     return true;
 }
 
@@ -4558,20 +4682,6 @@ async function logout() {
         const settingsModal = document.getElementById('settings-modal-overlay');
         if (settingsModal.classList.contains('visible')) {
             settingsModal.classList.remove('visible');
-
-            settingsModal.querySelectorAll('.settings-nav-item').forEach(item => {
-                item.classList.remove('active');
-                if (item.dataset.page === 'profile') {
-                    item.classList.add('active');
-                }
-            });
-
-            settingsModal.querySelectorAll('.settings-page').forEach(page => {
-                page.classList.remove('active');
-                if (page.id === 'profile-settings-page') {
-                    page.classList.add('active');
-                }
-            });
         }
 
         // 关闭右侧抽屉
@@ -5972,6 +6082,133 @@ const KATEX_CONFIG = {
     }
 };
 
+const STREAMING_HORIZONTAL_RULE_TAIL_RE = /(?:^|\r?\n)[ \t]{0,3}([\*\-_])(?:[ \t]*\1){2,}[ \t]*$/;
+const IMPLICIT_MATH_COMMAND_PATTERN = '(?:frac|sqrt|sum|int|prod|lim|log|ln|sin|cos|tan|cot|sec|csc|sinh|cosh|tanh|arcsin|arccos|arctan|pi|mu|nu|alpha|beta|gamma|delta|epsilon|lambda|theta|phi|psi|omega|chi|eta|zeta|xi|rho|sigma|tau|upsilon|kappa|varphi|varpi|varsigma|vartheta|Phi|Psi|Omega|Delta|Gamma|Lambda|Sigma|Pi|Theta|Chi|cdot|times|neq|leq|geq|approx|sim|infty|partial|nabla|mathbb|mathrm|mathbf|mathcal|boldsymbol|operatorname|overline|underline|widehat|widetilde|binom)';
+const IMPLICIT_MATH_INLINE_RE = new RegExp('([A-Za-z0-9\\s+\\-*/^_=()\\\\.,·:;]*\\\\' + IMPLICIT_MATH_COMMAND_PATTERN + '[A-Za-z0-9\\s+\\-*/^_=()\\\\.,{}·:;]*)', 'g');
+const IMPLICIT_MATH_DISPLAY_ASCII_RE = /^[\s0-9A-Za-z\\{}^_*+\-=/().,:;·]+$/;
+const IMPLICIT_MATH_HAS_COMMAND_RE = new RegExp('\\\\' + IMPLICIT_MATH_COMMAND_PATTERN);
+const EXPLICIT_HORIZONTAL_RULE_RE = /(?:^|\r?\n)[ \t]{0,3}([*\-_])(?:[ \t]*\1){2,}[ \t]*(?:\r?\n|$)/;
+
+function stripStreamingHorizontalRuleTail(text) {
+    if (!text) return text;
+    let end = text.length;
+    while (end > 0) {
+        const code = text.charCodeAt(end - 1);
+        if (code === 10 || code === 13) {
+            end--;
+        } else {
+            break;
+        }
+    }
+    const withoutTrailingNewlines = text.slice(0, end);
+    const match = withoutTrailingNewlines.match(STREAMING_HORIZONTAL_RULE_TAIL_RE);
+    if (!match) {
+        return text;
+    }
+    const removalStart = withoutTrailingNewlines.length - match[0].length;
+    const trimmed = withoutTrailingNewlines.slice(0, removalStart);
+    return trimmed + text.slice(end);
+}
+
+function autoWrapImplicitMath(content) {
+    try {
+        const lines = content.split(/\r?\n/);
+        let fence = null;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const fenceMatch = line.match(/^\s{0,3}([`~]{3,})(.*)$/);
+            if (fenceMatch) {
+                const fenceChars = fenceMatch[1];
+                const ch = fenceChars[0];
+                const len = fenceChars.length;
+                if (!fence) {
+                    fence = { ch, len };
+                } else if (fence && ch === fence.ch && len >= fence.len) {
+                    fence = null;
+                }
+                continue;
+            }
+            if (fence) continue;
+            if (line.indexOf('\\') === -1) continue;
+            if (line.indexOf('$') !== -1 || line.indexOf('\\(') !== -1 || line.indexOf('\\[') !== -1) continue;
+
+            let remainder = line;
+            let prefix = '';
+            let changedPrefix = true;
+            while (changedPrefix) {
+                changedPrefix = false;
+                let m = remainder.match(/^(\s*>+\s?)/);
+                if (m) {
+                    prefix += m[1];
+                    remainder = remainder.slice(m[1].length);
+                    changedPrefix = true;
+                    continue;
+                }
+                m = remainder.match(/^(\s*\d+\.\s+)/);
+                if (m) {
+                    prefix += m[1];
+                    remainder = remainder.slice(m[1].length);
+                    changedPrefix = true;
+                    continue;
+                }
+                m = remainder.match(/^(\s*[-*+]\s+)/);
+                if (m) {
+                    prefix += m[1];
+                    remainder = remainder.slice(m[1].length);
+                    changedPrefix = true;
+                    continue;
+                }
+                m = remainder.match(/^(\s*#{1,6}\s+)/);
+                if (m) {
+                    prefix += m[1];
+                    remainder = remainder.slice(m[1].length);
+                    changedPrefix = true;
+                    continue;
+                }
+            }
+
+            const processed = processImplicitMathBody(remainder);
+            if (processed !== remainder) {
+                lines[i] = prefix + processed;
+            }
+        }
+        return lines.join('\n');
+    } catch (_) {
+        return content;
+    }
+}
+
+function processImplicitMathBody(body) {
+    if (!body) return body;
+    if (body.indexOf('\\') === -1) return body;
+    if (body.indexOf('$') !== -1 || body.indexOf('\\(') !== -1 || body.indexOf('\\[') !== -1) return body;
+    const trimmed = body.trim();
+    if (!trimmed) return body;
+
+    if (IMPLICIT_MATH_DISPLAY_ASCII_RE.test(trimmed) && IMPLICIT_MATH_HAS_COMMAND_RE.test(trimmed)) {
+        const leading = body.match(/^\s*/)?.[0] || '';
+        const trailing = body.match(/\s*$/)?.[0] || '';
+        return `${leading}$$${trimmed}$$${trailing}`;
+    }
+
+    let changed = false;
+    const replaced = body.replace(IMPLICIT_MATH_INLINE_RE, (match) => {
+        if (!IMPLICIT_MATH_HAS_COMMAND_RE.test(match)) {
+            return match;
+        }
+        const trimmedSegment = match.trim();
+        if (!trimmedSegment) {
+            return match;
+        }
+        changed = true;
+        const leading = match.match(/^\s*/)?.[0] || '';
+        const trailing = match.match(/\s*$/)?.[0] || '';
+        return `${leading}$${trimmedSegment}$${trailing}`;
+    });
+
+    return changed ? replaced : body;
+}
+
 function renderMessageContent(element, content, citations = null, isFinalRender = false) {
     function normalizeTeXDelimited(texWithDelimiters) {
         try {
@@ -6203,8 +6440,8 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             (match) => `$$${match}$$`
         );
 
-        // 将独占一行的 `$...$` 自动提升为 `$$...$$`，以便渲染为 display 模式
         correctedContent = promoteStandaloneInlineMathToDisplay(correctedContent);
+        correctedContent = autoWrapImplicitMath(correctedContent);
 
         const displayMath = [];
         const inlineMath = [];
@@ -6246,7 +6483,13 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 contentToParse = contentToParse + fenceLine;
                 syntheticFenceAdded = true;
             }
+
+            if (!syntheticFenceAdded) {
+                contentToParse = stripStreamingHorizontalRuleTail(contentToParse);
+            }
         }
+
+        const containsExplicitHorizontalRule = EXPLICIT_HORIZONTAL_RULE_RE.test(contentToParse) || /<\s*hr\b/i.test(contentToParse);
 
         const previousScrollState = {
             codeBlocks: Array.from(element.querySelectorAll('pre')).map(block => ({
@@ -6295,6 +6538,11 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
 
         const tempContainer = document.createElement('div');
         tempContainer.innerHTML = sanitizedHtml;
+        if (!containsExplicitHorizontalRule) {
+            try {
+                tempContainer.querySelectorAll('hr').forEach(hr => hr.remove());
+            } catch (_) { }
+        }
 
         tempContainer.querySelectorAll('table').forEach(table => {
             const rows = table.querySelectorAll('tr');
@@ -6363,8 +6611,6 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 }
             }
         } catch (_) { }
-
-        // 不再进行行内自动识别，避免规则膨胀。
 
         const finalSanitizedHtml = tempContainer.innerHTML;
         const renderState = element.__renderState || (element.__renderState = {
@@ -6440,27 +6686,41 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         }
 
         if (renderState.lastLockedHtml !== renderState.lockedHtml) {
+            let contentChanged = false;
             if (renderState.lockedHtml.startsWith(renderState.lastLockedHtml)) {
                 const delta = renderState.lockedHtml.slice(renderState.lastLockedHtml.length);
                 if (delta) {
                     renderState.lockedContainer.insertAdjacentHTML('beforeend', delta);
+                    contentChanged = true;
                 }
             } else {
                 renderState.lockedContainer.innerHTML = renderState.lockedHtml;
+                contentChanged = true;
             }
             renderState.lastLockedHtml = renderState.lockedHtml;
+
+            if (contentChanged && !userHasScrolledUp && elements?.chatContainer) {
+                elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+            }
         }
 
         if (renderState.streamingHtml !== streamingHtml) {
+            let contentChanged = false;
             if (streamingHtml.startsWith(renderState.streamingHtml)) {
                 const delta = streamingHtml.slice(renderState.streamingHtml.length);
                 if (delta) {
                     renderState.streamingContainer.insertAdjacentHTML('beforeend', delta);
+                    contentChanged = true;
                 }
             } else {
                 renderState.streamingContainer.innerHTML = streamingHtml;
+                contentChanged = true;
             }
             renderState.streamingHtml = streamingHtml;
+
+            if (contentChanged && !userHasScrolledUp && elements?.chatContainer) {
+                elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+            }
         }
         const mermaidRenderPromise = renderMermaidDiagrams(element, { loadScript, isFinalRender });
         if (mermaidRenderPromise) {
@@ -8376,7 +8636,8 @@ async function handleChatMessage(userContent, options = {}) {
 
     for (let i = fullHistory.length - 1; i >= 0; i--) {
         const message = fullHistory[i];
-        const messageTokens = estimateTokens(message.content);
+        const contentForEstimation = message.aiOptimizedContent || message.content;
+        const messageTokens = estimateTokens(contentForEstimation);
 
         if (currentTokenCount + messageTokens > MAX_CONTEXT_TOKENS) {
             console.warn(`Context limit reached. Truncating history. Model: ${currentModelId}, Limit: ${MAX_CONTEXT_TOKENS} tokens.`);
@@ -8388,13 +8649,16 @@ async function handleChatMessage(userContent, options = {}) {
     }
 
     const messagesForAI = historyToSend.map((msg, index) => {
-        if (msg.role === 'user' && Array.isArray(msg.content)) {
+        const hasOptimizedContent = Array.isArray(msg.aiOptimizedContent) || typeof msg.aiOptimizedContent === 'string';
+        const sourceContent = hasOptimizedContent ? msg.aiOptimizedContent : msg.content;
+
+        if (msg.role === 'user' && Array.isArray(sourceContent)) {
             const fileContentParts = [];
             const otherContentParts = [];
             let quoteText = '';
             let replyText = '';
 
-            msg.content.forEach(part => {
+            sourceContent.forEach(part => {
                 if (part.type === 'quote') {
                     quoteText = part.text;
                 } else if (part.type === 'text') {
@@ -8406,8 +8670,11 @@ async function handleChatMessage(userContent, options = {}) {
                         type: 'text',
                         text: `${getToastMessage('ui.focusOnFileContent')}：\n\n--- ${getToastMessage('ui.filename')}: ${filename} ---\n\`\`\`${fileExtension}\n${content}\n\`\`\`\n--- ${getToastMessage('ui.fileEnd')} ---\n\n`
                     });
-                } else {
-                    otherContentParts.push(part);
+                } else if (part) {
+                    const clonedPart = cloneMessageParts([part])[0];
+                    if (clonedPart) {
+                        otherContentParts.push(clonedPart);
+                    }
                 }
             });
 
@@ -8418,20 +8685,34 @@ async function handleChatMessage(userContent, options = {}) {
                 combinedText = replyText;
             }
 
-            if (index === historyToSend.length - 1) {
-                const roleInstruction = getToastMessage('ui.aiRoleInstruction');
-                const formatInstruction = getToastMessage('ui.formatInstructionWithOutput');
-                const instructionHeader = `${roleInstruction}\n${formatInstruction}\n\n---\n\n`;
-
-                combinedText = instructionHeader + combinedText;
-            }
-
             const finalContent = [];
             if (combinedText.trim()) {
                 finalContent.push({ type: 'text', text: combinedText });
             }
-            return { ...msg, content: [...fileContentParts, ...finalContent, ...otherContentParts] };
+            const messageForAI = {
+                ...msg,
+                content: [...fileContentParts, ...finalContent, ...otherContentParts]
+            };
+            delete messageForAI.aiOptimizedContent;
+            if ('originalContent' in messageForAI) delete messageForAI.originalContent;
+            return messageForAI;
         }
+
+        if (msg.role === 'user' && typeof sourceContent === 'string') {
+            const messageForAI = { ...msg, content: sourceContent };
+            delete messageForAI.aiOptimizedContent;
+            if ('originalContent' in messageForAI) delete messageForAI.originalContent;
+            return messageForAI;
+        }
+
+        if (hasOptimizedContent) {
+            const normalizedContent = Array.isArray(sourceContent) ? cloneMessageParts(sourceContent) : sourceContent;
+            const messageForAI = { ...msg, content: normalizedContent };
+            delete messageForAI.aiOptimizedContent;
+            if ('originalContent' in messageForAI) delete messageForAI.originalContent;
+            return messageForAI;
+        }
+
         return msg;
     });
 
@@ -8484,7 +8765,7 @@ async function handleChatMessage(userContent, options = {}) {
             intent_analysis: intentAnalysis.intentResult
         };
 
-        // 访客用户：如配置了本地自定义 Key，则随请求携带
+        // 访客用户
         if (!currentUser) {
             const guestKey = selectGuestApiKeyForRequest();
             if (guestKey) body.apiKey = guestKey;
@@ -8762,10 +9043,18 @@ async function _processAndSendMessage(userContent, userMessageText) {
                     break;
                 case 'ANALYSIS_QA':
                     assistantMessageToSave = await handleDeepAnalysis(userContent, userMessageText);
+                    userMessageToSave = {
+                        role: 'user',
+                        content: getAiOptimizedContentForLastUserMessage(chatIdForRequest) || cloneMessageParts(userContent)
+                    };
                     break;
                 case 'SUMMARIZATION':
                 default:
                     assistantMessageToSave = await handleLargeTextAnalysis(userContent, userMessageText);
+                    userMessageToSave = {
+                        role: 'user',
+                        content: getAiOptimizedContentForLastUserMessage(chatIdForRequest) || cloneMessageParts(userContent)
+                    };
                     break;
             }
         } else if (historyLength > 60000) {
@@ -8803,12 +9092,6 @@ async function _processAndSendMessage(userContent, userMessageText) {
             };
             assistantMessageToSave = await handleContinuationTask(continuationContentForAI, userContent);
         } else {
-            // 执行统一的意图分析
-            const intentAnalysis = await performUnifiedIntentAnalysis(userMessageText, conversationHistory, {
-                checkImageGeneration: true,
-                isImageModeActive
-            });
-
             const assistantPlaceholderElement = appendMessage('assistant', '');
             const contentDiv = assistantPlaceholderElement.querySelector('.content');
             contentDiv.innerHTML = `
@@ -8819,6 +9102,12 @@ async function _processAndSendMessage(userContent, userMessageText) {
                     <span>${getToastMessage('ui.thinking')}</span>
                 </div>
             `;
+
+            // 执行统一的意图分析
+            const intentAnalysis = await performUnifiedIntentAnalysis(userMessageText, conversationHistory, {
+                checkImageGeneration: true,
+                isImageModeActive
+            });
 
             if (!hasFileAttachments && isImageModeActive) {
                 contentDiv.querySelector('span').textContent = getToastMessage('status.understandingYourNeeds');
@@ -9150,6 +9439,47 @@ function smartChunking(text, maxChunkSize = 8000, overlap = 200) {
     }
     return chunks;
 }
+
+function cloneMessageParts(parts) {
+    if (!Array.isArray(parts)) return null;
+    return parts.map(part => {
+        if (part && typeof part === 'object') {
+            const cloned = { ...part };
+            if (part.image_url && typeof part.image_url === 'object') {
+                cloned.image_url = { ...part.image_url };
+            }
+            return cloned;
+        }
+        return part;
+    });
+}
+
+function getLastUserMessage(chatId) {
+    const chat = chats[chatId];
+    if (!chat || !Array.isArray(chat.messages)) return null;
+    for (let i = chat.messages.length - 1; i >= 0; i--) {
+        const message = chat.messages[i];
+        if (message && message.role === 'user') {
+            return message;
+        }
+    }
+    return null;
+}
+
+function setAiOptimizedContentForLastUserMessage(chatId, optimizedParts) {
+    if (!chatId || !Array.isArray(optimizedParts)) return;
+    const lastUserMessage = getLastUserMessage(chatId);
+    if (!lastUserMessage) return;
+    lastUserMessage.aiOptimizedContent = cloneMessageParts(optimizedParts) || [];
+}
+
+function getAiOptimizedContentForLastUserMessage(chatId) {
+    const lastUserMessage = getLastUserMessage(chatId);
+    if (!lastUserMessage || !Array.isArray(lastUserMessage.aiOptimizedContent)) {
+        return null;
+    }
+    return cloneMessageParts(lastUserMessage.aiOptimizedContent);
+}
 async function handleLargeTextAnalysis(userContent, originalQuery) {
     if (!currentChatId) await startNewChat(true);
     const chatIdForRequest = currentChatId;
@@ -9209,6 +9539,7 @@ async function handleLargeTextAnalysis(userContent, originalQuery) {
 
         const finalPromptForUserChoiceModel = `Based on this summary, answer: "${originalQuery}"\n\nSummary: ${cumulativeSummary}`;
         const finalUserContent = [{ type: 'text', text: finalPromptForUserChoiceModel }];
+        setAiOptimizedContentForLastUserMessage(chatIdForRequest, finalUserContent);
 
         await sleep(2000);
         return await handleChatMessage(finalUserContent, { existingAssistantElement: assistantMessageElement });
@@ -9347,6 +9678,7 @@ async function handleDeepAnalysis(userContent, originalQuery) {
 
         const finalPromptForUserChoiceModel = `Answer: "${originalQuery}"\n\nRelevant content:\n${relevantChunks.map(c => `[${c.chunkId} from ${c.sourceFile}]:\n${c.content}`).join('\n\n')}`;
         const finalUserContent = [{ type: 'text', text: finalPromptForUserChoiceModel }];
+        setAiOptimizedContentForLastUserMessage(chatIdForRequest, finalUserContent);
 
         await sleep(2000);
         return await handleChatMessage(finalUserContent, { existingAssistantElement: assistantMessageElement });
@@ -9707,52 +10039,6 @@ function setupInputPanelObserver() {
         }
     });
     observer.observe(inputOuterWrapper);
-}
-
-async function handleCloseSettingsModal() {
-    const currentUsername = elements.editUsernameInput.value.trim();
-    const profileChanged = (currentUser) && (currentUsername !== originalUsername || newAvatarFile !== null);
-    checkApiKeysChanged();
-
-    if (profileChanged || apiKeysChanged) {
-        const confirmed = await showCustomConfirm(
-            getToastMessage('dialog.discardChanges'),
-            getToastMessage('dialog.discardChangesMessage'),
-            ICONS.HELP,
-            { manageHistory: false }
-        );
-
-        if (!confirmed) {
-            return false;
-        }
-
-        // 重置个人资料相关的状态
-        newAvatarFile = null;
-
-        // 重置 API 密钥相关的状态
-        apiKeysChanged = false;
-        keyOneTouched = false;
-        keyTwoTouched = false;
-
-        // 将 API 密钥UI恢复到原始值
-        if (currentUser) {
-            elements.apiKeyOneInput.value = originalApiKeys.keyOne || '';
-            elements.apiKeyTwoInput.value = originalApiKeys.keyTwo || '';
-            const savedMode = (originalApiKeys.mode === 'server_fallback') ? 'mixed' : (originalApiKeys.mode || 'mixed');
-            const modeInput = document.querySelector(`input[name="api-mode"][value="${savedMode}"]`);
-            if (modeInput) modeInput.checked = true;
-        } else {
-            const { keyOne, keyTwo, mode } = getGuestKeySettings();
-            elements.apiKeyOneInput.value = keyOne || '';
-            elements.apiKeyTwoInput.value = keyTwo || '';
-            const modeInput = document.querySelector(`input[name="api-mode"][value="${mode || 'mixed'}"]`);
-            if (modeInput) modeInput.checked = true;
-        }
-        clearApiKeyErrorStates();
-    }
-
-    elements.settingsModal.classList.remove('visible');
-    return true;
 }
 
 // 事件监听器设置
@@ -10998,11 +11284,7 @@ function setupEventListeners() {
         safeNavigationCall('pushUiState', {
             name: 'settingsModal',
             close: async () => {
-                const canClose = await handleCloseSettingsModal();
-                if (canClose) {
-                    elements.settingsModal.classList.remove('visible');
-                }
-                return canClose;
+                return await closeModalAndResetState(handleCloseSettingsModalByPage);
             }
         });
 
@@ -11218,44 +11500,7 @@ function setupEventListeners() {
         }
     });
 
-    elements.settingsModal.addEventListener('transitionend', () => {
-        if (!elements.settingsModal.classList.contains('visible')) {
-            // 个人资料UI重置
-            if (currentUser) {
-                elements.editUsernameInput.value = originalUsername || '';
-                document.getElementById('avatar-preview').src = originalAvatarUrl || '/images/favicon.ico';
-
-                const avatarWrapper = document.getElementById('avatar-preview-wrapper');
-                const initialDiv = avatarWrapper.querySelector('.avatar-initial-text');
-                if (initialDiv) initialDiv.remove();
-                if (originalAvatarUrl) {
-                    document.getElementById('avatar-preview').style.display = 'block';
-                } else {
-                    document.getElementById('avatar-preview').style.display = 'none';
-                    const name = currentUser.username || currentUser.email;
-                    const initial = name ? name.charAt(0).toUpperCase() : 'U';
-                    const newInitialDiv = document.createElement('div');
-                    newInitialDiv.className = 'avatar-initial-text';
-                    newInitialDiv.textContent = initial;
-                    avatarWrapper.appendChild(newInitialDiv);
-                }
-            }
-
-            try {
-                const settingsModalEl = document.getElementById('settings-modal');
-                if (settingsModalEl) {
-                    const navItems = settingsModalEl.querySelectorAll('.settings-nav-item');
-                    const pages = settingsModalEl.querySelectorAll('.settings-page');
-                    navItems.forEach(i => i.classList.remove('active'));
-                    pages.forEach(p => p.classList.remove('active'));
-                    const profileNavItem = settingsModalEl.querySelector('.settings-nav-item[data-page="profile"]');
-                    const profilePage = document.getElementById('profile-settings-page');
-                    if (profileNavItem) profileNavItem.classList.add('active');
-                    if (profilePage) profilePage.classList.add('active');
-                }
-            } catch (_) { }
-        }
-    });
+    
 
 
     elements.logoutBtn.addEventListener('click', logout);
@@ -11300,6 +11545,7 @@ function setupEventListeners() {
             const targetPage = document.getElementById(`${pageId}-settings-page`);
             if (targetPage) {
                 targetPage.classList.add('active');
+                lastSettingsPage = pageId;
 
                 if (pageId === 'language') {
                     const languageSelector = targetPage.querySelector('.language-selector');
@@ -12196,12 +12442,12 @@ function setupEventListeners() {
     updateWeeklyTimer();
 
     if (Capacitor.isNativePlatform()) {
-        let keyboardHideTimeout = null;
+        let keyboardHideRaf = null;
 
         const finalizeKeyboardHidden = () => {
-            if (keyboardHideTimeout) {
-                clearTimeout(keyboardHideTimeout);
-                keyboardHideTimeout = null;
+            if (keyboardHideRaf !== null) {
+                cancelAnimationFrame(keyboardHideRaf);
+                keyboardHideRaf = null;
             }
 
             document.body.classList.remove('keyboard-is-open');
@@ -12221,9 +12467,9 @@ function setupEventListeners() {
         };
 
         Keyboard.addListener('keyboardWillShow', (info) => {
-            if (keyboardHideTimeout) {
-                clearTimeout(keyboardHideTimeout);
-                keyboardHideTimeout = null;
+            if (keyboardHideRaf !== null) {
+                cancelAnimationFrame(keyboardHideRaf);
+                keyboardHideRaf = null;
             }
             document.body.classList.add('keyboard-is-open');
             document.body.style.setProperty('--keyboard-height', `${info.keyboardHeight}px`);
@@ -12231,10 +12477,12 @@ function setupEventListeners() {
         });
 
         Keyboard.addListener('keyboardWillHide', () => {
-            if (keyboardHideTimeout) {
-                clearTimeout(keyboardHideTimeout);
+            if (keyboardHideRaf !== null) {
+                cancelAnimationFrame(keyboardHideRaf);
             }
-            keyboardHideTimeout = setTimeout(finalizeKeyboardHidden, 250);
+            keyboardHideRaf = requestAnimationFrame(() => {
+                finalizeKeyboardHidden();
+            });
         });
 
         Keyboard.addListener('keyboardDidHide', finalizeKeyboardHidden);

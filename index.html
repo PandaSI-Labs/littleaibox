@@ -8,23 +8,40 @@
     <script>
         (function () {
             try {
-                let theme = 'light';
-                const userPreset = localStorage.getItem('userThemePreset');
+                var theme = 'light';
+                var userPreset = localStorage.getItem('userThemePreset');
 
                 if (userPreset) {
                     theme = userPreset;
                 } else {
-                    const guestSettingsRaw = localStorage.getItem('guestThemeSettings');
+                    var guestSettingsRaw = localStorage.getItem('guestThemeSettings');
                     if (guestSettingsRaw) {
-                        const guestSettings = JSON.parse(guestSettingsRaw);
-                        if (guestSettings.preset === 'dark') {
-                            theme = 'dark';
-                        }
+                        try {
+                            var guestSettings = JSON.parse(guestSettingsRaw);
+                            if (guestSettings && guestSettings.preset === 'dark') {
+                                theme = 'dark';
+                            }
+                        } catch (_) { }
                     }
                 }
+
                 document.documentElement.setAttribute('data-theme', theme);
+
+                // Reduce first-paint flash by pre-applying base colors
+                var style = document.createElement('style');
+                style.id = 'pre-theme-style';
+                var bg = theme === 'dark' ? '#1e1e1e' : '#ffffff';
+                var colorScheme = theme === 'dark' ? 'dark' : 'light';
+                style.textContent = 'html,body{background-color:' + bg + ';}';
+                document.head.appendChild(style);
+                try { document.documentElement.style.setProperty('color-scheme', colorScheme); } catch (_) { }
             } catch (e) {
                 document.documentElement.setAttribute('data-theme', 'light');
+                try {
+                    var style = document.createElement('style');
+                    style.textContent = 'html,body{background-color:#ffffff;}';
+                    document.head.appendChild(style);
+                } catch (_) {}
                 console.error('Error applying pre-load theme:', e);
             }
         })();
@@ -195,16 +212,30 @@
             }
         }
 
+        function updatePreThemeBaseBg() {
+            try {
+                const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+                const bg = currentTheme === 'dark' ? '#1e1e1e' : '#ffffff';
+                const colorScheme = currentTheme === 'dark' ? 'dark' : 'light';
+                const styleEl = document.getElementById('pre-theme-style');
+                if (styleEl) styleEl.textContent = 'html,body{background-color:' + bg + ';}';
+                document.documentElement.style.setProperty('color-scheme', colorScheme);
+            } catch (e) {
+                // no-op
+            }
+        }
+
         function watchThemeChanges() {
-            // 首次应用
             updateNativeStatusBar();
             updatePwaThemeColor();
+            updatePreThemeBaseBg();
 
             const observer = new MutationObserver((mutations) => {
                 mutations.forEach((mutation) => {
                     if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
                         updateNativeStatusBar();
                         updatePwaThemeColor();
+                        updatePreThemeBaseBg();
                     }
                 });
             });

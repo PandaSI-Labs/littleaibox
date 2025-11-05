@@ -250,6 +250,15 @@ function shouldRenderMermaid(codeElement, { isFinalRender, rootElement }) {
         return false;
     }
 
+    if (codeElement.dataset.mermaidSource === 'true') {
+        return false;
+    }
+
+    const sourceWrapper = codeElement.closest('.mermaid-source');
+    if (sourceWrapper) {
+        return false;
+    }
+
     const className = codeElement.className || '';
     const declaredLang = (codeElement.getAttribute('data-lang') || codeElement.getAttribute('class') || '').toLowerCase();
     const isMermaidLang = /\bmermaid\b/.test(className) || /\bmermaid\b/.test(declaredLang);
@@ -337,6 +346,9 @@ export function renderMermaidDiagrams(rootElement, { loadScript, isFinalRender }
                 summary.textContent = 'Mermaid source';
                 const preClone = parentPre.cloneNode(true);
                 preClone.classList.add('mermaid-source');
+                preClone.querySelectorAll('code').forEach(code => {
+                    code.dataset.mermaidSource = 'true';
+                });
                 preClone.querySelectorAll('.copy-btn-wrapper').forEach(wrapper => wrapper.remove());
                 if (typeof window.addCopyButtonToCodeBlock === 'function') {
                     try {
