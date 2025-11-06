@@ -1551,7 +1551,6 @@ if (SpeechRecognition) {
 }
 
 // 工具函数
-
 const FONT_MAP = {
     system: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI", "Segoe UI Symbol"',
     serif: 'Georgia, "Times New Roman", Times, serif',
@@ -2314,7 +2313,7 @@ async function clearCacheAndReload() {
     hideUpdateNowButton();
     hideVersionUpdateNotification();
 
-    showToast(getToastMessage('version.updating'), 'success');
+    const toastCtrl = showToast(getToastMessage('version.updating'), 'success');
 
     await Promise.all([
         clearCachesAndSettings(),
@@ -2369,9 +2368,12 @@ async function clearCacheAndReload() {
         localStorage.setItem('forceReloadLanguage', 'true');
     }
 
-    setTimeout(() => {
-        try { location.reload(true); } catch (_) { location.reload(); }
-    }, 500);
+    try {
+        await toastCtrl.whenShown;
+    } catch (_) { }
+    // Give a brief moment for the toast to be fully visible
+    await new Promise(r => setTimeout(r, 300));
+    try { location.reload(true); } catch (_) { location.reload(); }
 }
 
 async function downloadAndInstallApk(version) {
@@ -2975,16 +2977,18 @@ function getToastMessage(key, params = {}) {
     return translated;
 }
 
-function showToast(message, type = 'info', error = null) {
+function showToast(message, type = 'info', error = null, options = {}) {
+    const duration = typeof options.duration === 'number' ? options.duration : 2000;
+
     const wrapper = document.createElement('div');
     wrapper.className = 'message-toast-wrapper';
 
     const toast = document.createElement('div');
     toast.className = `message-toast ${type}`;
 
-    if (message.includes('\n')) {
+    if (message && typeof message === 'string' && message.includes('\n')) {
         const lines = message.split('\n');
-        lines.forEach((line, index) => {
+        lines.forEach((line) => {
             if (line.trim()) {
                 const lineElement = document.createElement('div');
                 lineElement.textContent = line;
@@ -2992,24 +2996,45 @@ function showToast(message, type = 'info', error = null) {
             }
         });
     } else {
-        toast.textContent = message;
+        toast.textContent = message ?? '';
     }
 
     wrapper.appendChild(toast);
     document.body.appendChild(wrapper);
 
+    let shownResolve;
+    const whenShown = new Promise((resolve) => { shownResolve = resolve; });
+
+    let shownFallbackTimer = null;
+    const onShown = (e) => {
+        if (!e || e.propertyName === 'transform') {
+            toast.removeEventListener('transitionend', onShown);
+            if (shownFallbackTimer) clearTimeout(shownFallbackTimer);
+            shownResolve();
+        }
+    };
+    toast.addEventListener('transitionend', onShown);
+
     setTimeout(() => {
+        shownFallbackTimer = setTimeout(() => {
+            toast.removeEventListener('transitionend', onShown);
+            shownResolve();
+        }, 500);
         toast.classList.add('show');
     }, 50);
 
-    setTimeout(() => {
-        toast.classList.remove('show');
+    const whenHidden = new Promise((resolve) => {
         setTimeout(() => {
-            if (wrapper.parentNode) {
-                wrapper.parentNode.removeChild(wrapper);
-            }
-        }, 400);
-    }, 2000);
+            toast.classList.remove('show');
+            setTimeout(() => {
+                if (wrapper.parentNode) {
+                    wrapper.parentNode.removeChild(wrapper);
+                }
+                resolve();
+            }, 400);
+        }, duration);
+    });
+    return { whenShown, whenHidden, element: toast, wrapper };
 }
 
 function renderQuotePreview() {
@@ -4752,8 +4777,6 @@ async function checkSession() {
             asyncStorage.setItem('selectedLanguage', currentUser.language);
         }
 
-        // 快速新鲜度检查：即使有缓存，也发起一次网络校验；
-        // 首次页面会话需等待该请求完成，避免跨设备设置显示为旧值。
         sessionValidationPromise = makeAuthRequest('me').then(result => {
             if (result.success && result.user) {
                 simpleCache.set(`user_session_${sessionId}`, result.user, 60000);
@@ -4770,6 +4793,9 @@ async function checkSession() {
                     if (localThemeStr !== serverThemeStr) {
                         currentUser.theme_settings = result.user.theme_settings;
                         asyncStorage.setItem('userThemeSettings', serverThemeStr);
+                        if (result.user.theme_settings && result.user.theme_settings.preset) {
+                            asyncStorage.setItem('userThemePreset', result.user.theme_settings.preset);
+                        }
                         applyTheme(result.user.theme_settings).catch(err =>
                             console.warn('Failed to apply updated theme:', err)
                         );
@@ -10149,7 +10175,7 @@ async function forceClearCacheAndReload() {
             }
         } catch (_) { }
 
-        showToast(getToastMessage('toast.clearingCache'), 'info');
+        const toastCtrl = showToast(getToastMessage('toast.clearingCache'), 'info');
 
         try {
             localStorage.setItem('clearCacheCooldownUntil', String(Date.now() + 6000));
@@ -10184,15 +10210,17 @@ async function forceClearCacheAndReload() {
             localStorage.setItem('forceReloadLanguage', 'true');
         }
 
-        setTimeout(() => {
-            try {
-                const url = new URL(window.location.href);
-                url.searchParams.set('_', Date.now().toString());
-                window.location.replace(url.toString());
-            } catch (_) {
-                try { location.reload(true); } catch (_) { location.reload(); }
-            }
-        }, 60);
+        try {
+            await toastCtrl.whenShown;
+        } catch (_) { }
+        await new Promise(r => setTimeout(r, 300));
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('_', Date.now().toString());
+            window.location.replace(url.toString());
+        } catch (_) {
+            try { location.reload(true); } catch (_) { location.reload(); }
+        }
 
     } catch (error) {
         console.error(`${getToastMessage('console.clearCacheFailed')}:`, error);
@@ -13325,11 +13353,20 @@ async function initialize() {
                         } catch (_) {
                             await applyTheme(serverTheme);
                             localStorage.setItem('userThemeSettings', serverThemeStr);
+                            if (serverTheme && serverTheme.preset) {
+                                localStorage.setItem('userThemePreset', serverTheme.preset);
+                            }
+                            if (serverTheme && serverTheme.preset) {
+                                localStorage.setItem('userThemePreset', serverTheme.preset);
+                            }
                             appliedTheme = true;
                         }
                     } else {
                         await applyTheme(serverTheme);
                         localStorage.setItem('userThemeSettings', serverThemeStr);
+                        if (serverTheme && serverTheme.preset) {
+                            localStorage.setItem('userThemePreset', serverTheme.preset);
+                        }
                         appliedTheme = true;
                     }
                 } else {

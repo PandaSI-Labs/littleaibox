@@ -8,30 +8,37 @@
     <script>
         (function () {
             try {
-                var theme = 'light';
-                var userPreset = localStorage.getItem('userThemePreset');
+                var preset = 'light';
 
-                if (userPreset) {
-                    theme = userPreset;
+                var utsRaw = localStorage.getItem('userThemeSettings');
+                if (utsRaw) {
+                    try {
+                        var uts = JSON.parse(utsRaw);
+                        if (uts && typeof uts === 'object') {
+                            if (uts.preset) preset = uts.preset;
+                        }
+                    } catch (_) { /* ignore parse error */ }
                 } else {
-                    var guestSettingsRaw = localStorage.getItem('guestThemeSettings');
-                    if (guestSettingsRaw) {
+                    var gtsRaw = localStorage.getItem('guestThemeSettings');
+                    if (gtsRaw) {
                         try {
-                            var guestSettings = JSON.parse(guestSettingsRaw);
-                            if (guestSettings && guestSettings.preset === 'dark') {
-                                theme = 'dark';
+                            var gts = JSON.parse(gtsRaw);
+                            if (gts && typeof gts === 'object') {
+                                if (gts.preset) preset = gts.preset;
                             }
-                        } catch (_) { }
+                        } catch (_) { /* ignore parse error */ }
+                    } else {
+                        var userPreset = localStorage.getItem('userThemePreset');
+                        if (userPreset) preset = userPreset;
                     }
                 }
 
-                document.documentElement.setAttribute('data-theme', theme);
+                document.documentElement.setAttribute('data-theme', preset);
 
-                // Reduce first-paint flash by pre-applying base colors
                 var style = document.createElement('style');
                 style.id = 'pre-theme-style';
-                var bg = theme === 'dark' ? '#1e1e1e' : '#ffffff';
-                var colorScheme = theme === 'dark' ? 'dark' : 'light';
+                var bg = preset === 'dark' ? '#1e1e1e' : '#ffffff';
+                var colorScheme = preset === 'dark' ? 'dark' : 'light';
                 style.textContent = 'html,body{background-color:' + bg + ';}';
                 document.head.appendChild(style);
                 try { document.documentElement.style.setProperty('color-scheme', colorScheme); } catch (_) { }
@@ -42,7 +49,6 @@
                     style.textContent = 'html,body{background-color:#ffffff;}';
                     document.head.appendChild(style);
                 } catch (_) {}
-                console.error('Error applying pre-load theme:', e);
             }
         })();
     </script>
