@@ -17,7 +17,8 @@ function sanitizeMermaidDefinition(definition) {
     const replacements = [
         { regex: /\r\n?/g, replacement: '\n' },
         { regex: /<br\s*\/?>/gi, replacement: '\n' },
-        { regex: /<\/?(div|p|span|strong|em|code|pre)>/gi, replacement: '' },
+        { regex: /<\/?(?:div|p|section|article|pre|blockquote|ul|ol|li|table|tr|td|th)[^>]*>/gi, replacement: '\n' },
+        { regex: /<\/?(?:span|strong|em|code|b|i)[^>]*>/gi, replacement: '' },
         { regex: /&nbsp;/gi, replacement: ' ' }
     ];
 
@@ -28,6 +29,7 @@ function sanitizeMermaidDefinition(definition) {
 
     sanitized = sanitized.replace(/\u00A0/g, ' ');
     sanitized = sanitized.replace(/[ \t]+$/gm, '');
+    sanitized = sanitized.replace(/\n{3,}/g, '\n\n');
 
     return sanitized.trim();
 }

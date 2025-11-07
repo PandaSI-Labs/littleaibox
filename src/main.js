@@ -14,6 +14,12 @@ import { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLangua
 import { renderMermaidDiagrams } from './mermaid-renderer.js';
 import './style.css';
 
+// ==================== AI System Prompts ====================
+const ROLE_INSTRUCTION = `Please always act as a professional, comprehensive, and helpful AI assistant.`;
+const FORMAT_INSTRUCTION = `Use Markdown. Code\`\`\`lang. Math:$inline$/$$display$$. Chem **MUST**$\\ce{}$:$\\ce{H2O}$/$\\ce{A+B->C}$/$\\ce{A<=>B}$. Mermaid: (1)ALL labels/text MUST use double quotes"" (2)BAN fullwidth chars()（）①② (3)arrows ONLY --> or == (4)comments ONLY start-of-line %% (5)first line MUST be flowchart/graph directive (6)if uncertain, skip Mermaid.`;
+const SEARCH_CONTEXT_INSTRUCTION = `Answer based on the web search results below. Synthesize the information and cite sources as [1], [2] at sentence ends. Respond in user's language.`;
+// ===========================================================
+
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const ApkInstaller = Capacitor.isNativePlatform()
@@ -1370,12 +1376,6 @@ const modelRenderSpeeds = {
     'gemini-2.0-flash': 3
 };
 
-const MERMAID_SYSTEM_HINT = [
-    '**Prefer text.** Use Mermaid only when clearly helpful.',
-    'If you use Mermaid: **output exactly one** ```mermaid``` block; the first line is a **directive** (flowchart TD / graph LR / sequenceDiagram / ...).',
-    '**Mermaid-only content.** Comments must be **line-leading %%**. **If unsure it parses, do not use Mermaid.**'
-].join(' ');
-
 function composeSystemPrompt(userPrompt = '') {
     const parts = [];
     const trimmed = (userPrompt || '').trim();
@@ -1383,17 +1383,8 @@ function composeSystemPrompt(userPrompt = '') {
         parts.push(trimmed);
     }
 
-    const roleInstruction = getToastMessage('ui.aiRoleInstruction');
-    const formatInstruction = getToastMessage('ui.formatInstruction');
-
-    if (roleInstruction) {
-        parts.push(roleInstruction);
-    }
-    if (formatInstruction) {
-        parts.push(formatInstruction);
-    }
-    parts.push(MERMAID_SYSTEM_HINT);
-
+    parts.push(ROLE_INSTRUCTION);
+    parts.push(FORMAT_INSTRUCTION);
     return parts.filter(Boolean).join('\n\n');
 }
 
@@ -6541,7 +6532,6 @@ class MathRenderer {
 }
 
 const mathRenderer = new MathRenderer(KATEX_CONFIG);
-
 const STREAMING_HORIZONTAL_RULE_TAIL_RE = /(?:^|\r?\n)[ \t]{0,3}([\*\-_])(?:[ \t]*\1){2,}[ \t]*$/;
 const EXPLICIT_HORIZONTAL_RULE_RE = /(?:^|\r?\n)[ \t]{0,3}([*\-_])(?:[ \t]*\1){2,}[ \t]*(?:\r?\n|$)/;
 
@@ -8601,12 +8591,9 @@ async function handleSearchAndChat(userMessageText) {
                 <span>${getToastMessage('ui.integratingWebInfo')}</span>
             </div>`;
 
-        const roleInstruction = getToastMessage('ui.aiRoleInstruction');
-        const formatInstruction = getToastMessage('ui.formatInstruction');
+        const instructionHeader = `${ROLE_INSTRUCTION}\n${FORMAT_INSTRUCTION}\n\n---\n\n`;
 
-        const instructionHeader = `${roleInstruction}\n${formatInstruction}\n\n---\n\n`;
-
-        let searchContext = instructionHeader + getToastMessage('ui.searchContextInstruction') + "\n\n【" + getToastMessage('ui.networkSearchResults') + "】:\n\n"; // <-- 修改点: 加上 instructionHeader
+        let searchContext = instructionHeader + SEARCH_CONTEXT_INSTRUCTION + "\n\n【" + getToastMessage('ui.networkSearchResults') + "】:\n\n";
         searchResults.results.forEach((result, index) => {
             searchContext += `[${index + 1}] ${getToastMessage('ui.title')}: ${result.title}\n${getToastMessage('ui.url')}: ${result.url}\n${getToastMessage('ui.summary')}: ${result.content}\n\n`;
         });
@@ -13958,8 +13945,5 @@ async function commitInlineEditMode() {
         await _processAndSendMessage(newParts, newText);
     } finally {
         // 状态在下游复位
-
-
-
     }
 }
