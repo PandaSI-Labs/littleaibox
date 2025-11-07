@@ -131,7 +131,13 @@
         "aiToolCallReturnedFailureStatus": "AI tool call returned a failure status",
         "aiReturnedEmptyContent": "AI returned empty content",
         "saveFailed": "Save failed",
-        "maxActivationReached": "Maximum of 3 activations reached"
+        "maxActivationReached": "Maximum of 3 activations reached",
+        "httpStatus": {
+            "400": "Request failed, please try again later",
+            "429": "Request failed, please try again later",
+            "403": "Request was denied, please check your API key",
+            "503": "Model overloaded, please try again later"
+        }
     },
     "models": {
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -249,6 +255,8 @@
         "deletingInBackground": "Deleting {count} records in the background...",
         "allRecordsDeletedSuccess": "All chat records have been successfully deleted",
         "backgroundDeleteError": "An error occurred during background deletion. Some records may not have been deleted. Please refresh the page to check.",
+        "multiDeleteFailed": "Multi-select delete failed",
+        "deleteAllFailed": "Delete all failed",
         "searchModeOn": "Search mode is on",
         "searchModeOff": "Search mode is off",
         "imageModeOn": "Image mode is on",
@@ -573,7 +581,7 @@
         "cannotLoadChatRecord": "Cannot load this chat record",
         "error": "Error",
         "retry": "Retry",
-        "formatInstruction": "Your response must be formatted using Markdown. Pay special attention to: (1) For any code snippets, they must be wrapped in code blocks (```) and correctly labeled with the language type (e.g., ```javascript). (2) If the output contains mathematical formulas, please follow the correct rendering logic for math formulas. **You do not need to constantly emphasize your identity in your replies**.",
+        "formatInstruction": "Use Markdown. Code in ``` with language. Math in KaTeX: inline $formula$, display $$formula$$. **NEVER** use **bold** or *italic* for math (d**B**❌, must be $d\\vec{B}$✓).",
         "title": "Title",
         "url": "URL",
         "summary": "Summary",
@@ -585,7 +593,6 @@
         "respondToUserReply": "Please respond to the user's reply based on the following quoted content",
         "quoteContent": "Quoted Content",
         "userReply": "User's Reply",
-        "formatInstructionWithOutput": "Your response must be formatted using Markdown. Pay special attention to: (1) For any code snippets, they must be wrapped in code blocks (```) and correctly labeled with the language type (e.g., ```javascript). (2) If the output contains mathematical formulas, please follow the correct rendering logic for math formulas. **You do not need to constantly emphasize your identity and output format in your replies**.",
         "userSupplement": "User Supplement/Correction",
         "file": "File",
         "summarizedLongText": "I have summarized a long text",

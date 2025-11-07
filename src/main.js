@@ -488,7 +488,6 @@ class NavigationEngine {
 
     // 返回到主页面
     async returnToMainPage() {
-        // Ensure edit mode is cleared when leaving chat
         try {
             if (typeof isEditModeActive !== 'undefined' && isEditModeActive) {
                 cancelInlineEditMode();
@@ -607,38 +606,8 @@ function ensurePlaintextHighlightLanguage() {
 function rerenderDynamicContent(root) {
     try {
         const container = root || elements.chatContainer || document;
-
-        if (window.renderMathInElement) {
-            const contents = container.querySelectorAll('.message .content');
-            contents.forEach(el => {
-                try {
-                    const hasMath = el.textContent.includes('$') || el.textContent.includes('\\(') || el.textContent.includes('\\[');
-                    if (!hasMath) return;
-
-                    const hasRendered = el.querySelector('.katex') !== null;
-                    if (!hasRendered) {
-                        renderMathInElement(el, KATEX_CONFIG);
-                    } else {
-                        const nodes = el.querySelectorAll('*');
-                        nodes.forEach(node => {
-                            try {
-                                if (!node.querySelector || node.querySelector('.katex')) return;
-                                const t = node.textContent || '';
-                                if (t.includes('$') || t.includes('\\(') || t.includes('\\[')) {
-                                    renderMathInElement(node, {
-                                        delimiters: KATEX_CONFIG.delimiters,
-                                        throwOnError: false,
-                                        strict: false,
-                                        trust: true,
-                                        macros: KATEX_CONFIG.macros
-                                    });
-                                }
-                            } catch (_) { }
-                        });
-                    }
-                } catch (_) { }
-            });
-        }
+        const contents = container.querySelectorAll('.message .content');
+        contents.forEach(el => mathRenderer.renderMath(el, { isFinalRender: true }));
 
         try {
             renderMermaidDiagrams(container, { loadScript, isFinalRender: true });
@@ -811,7 +780,6 @@ function createDialog(title, contentHtml, iconSvg, onConfirm, onCancel, options 
         overlay.classList.add('visible');
     }, 10);
 
-    // 独立的 ESC 关闭：不通过 NavigationManager，避免和其他 UI 状态互相影响
     const onKeyDown = (e) => {
         if (e.key === 'Escape') {
             e.preventDefault();
@@ -1033,6 +1001,7 @@ async function ensureStoragePermission() {
         }
     }
 }
+
 async function downloadImage(imageUrl, description) {
     const safeFilename = description.substring(0, 20).replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_') || 'image';
     const filename = `generated_${safeFilename}_${Date.now()}.png`;
@@ -1415,7 +1384,7 @@ function composeSystemPrompt(userPrompt = '') {
     }
 
     const roleInstruction = getToastMessage('ui.aiRoleInstruction');
-    const formatInstruction = getToastMessage('ui.formatInstructionWithOutput');
+    const formatInstruction = getToastMessage('ui.formatInstruction');
 
     if (roleInstruction) {
         parts.push(roleInstruction);
@@ -1545,9 +1514,6 @@ if (SpeechRecognition) {
         }
         cleanupRecognition();
     };
-
-} else {
-    // 语音按钮在非原生应用中隐藏，将在 initialize() 中处理
 }
 
 // 工具函数
@@ -1584,6 +1550,62 @@ async function applyTheme(themeSettings) {
     }
 }
 
+const LOCAL_THEME_OVERRIDE_WINDOW = 90 * 1000;
+
+async function applyUserPreferencesFromProfile(user, options = {}) {
+    if (!user || typeof user !== 'object') {
+        return;
+    }
+
+    const {
+        forceApplyTheme = false,
+        forceApplyLanguage = false,
+        respectRecentLocalTheme = true
+    } = options;
+
+    const themeSettings = user.theme_settings;
+    if (themeSettings) {
+        try {
+            const serverThemeStr = JSON.stringify(themeSettings);
+            const localThemeStr = localStorage.getItem('userThemeSettings');
+            const updatedAtRaw = localStorage.getItem('userThemeSettingsUpdatedAt');
+            const updatedAt = updatedAtRaw ? Number(updatedAtRaw) : 0;
+
+            const withinLocalWindow = respectRecentLocalTheme && updatedAt > 0
+                && (Date.now() - updatedAt) < LOCAL_THEME_OVERRIDE_WINDOW;
+
+            const shouldApply = forceApplyTheme ||
+                (withinLocalWindow && localThemeStr !== serverThemeStr) ||
+                (!withinLocalWindow && localThemeStr !== serverThemeStr);
+
+            if (shouldApply) {
+                await applyTheme(themeSettings);
+                localStorage.setItem('userThemeSettings', serverThemeStr);
+                if (themeSettings.preset) {
+                    localStorage.setItem('userThemePreset', themeSettings.preset);
+                }
+                localStorage.removeItem('userThemeSettingsUpdatedAt');
+            } else if (localThemeStr === serverThemeStr) {
+                localStorage.removeItem('userThemeSettingsUpdatedAt');
+            }
+        } catch (error) {
+            console.warn('Failed to apply user theme settings:', error);
+        }
+    }
+
+    if (user.language) {
+        try {
+            const currentLang = getCurrentLanguage();
+            if (forceApplyLanguage || currentLang !== user.language) {
+                await applyLanguage(user.language);
+            }
+            localStorage.setItem('selectedLanguage', user.language);
+        } catch (error) {
+            console.warn('Failed to apply user language setting:', error);
+        }
+    }
+}
+
 function estimateTokens(content) {
     if (!content) return 0;
 
@@ -1593,7 +1615,7 @@ function estimateTokens(content) {
     } else if (Array.isArray(content)) {
         text = content.map(p => {
             if (p.type === 'text') return p.text || '';
-            if (p.type === 'file') return p.content || ''; // 假设文件内容是文本
+            if (p.type === 'file') return p.content || '';
             return '';
         }).join(' ');
     }
@@ -1622,30 +1644,6 @@ function debounce(func, wait) {
         };
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
-    };
-}
-
-function throttle(func, limit) {
-    let inThrottle;
-    let lastRan;
-    let lastFunc;
-
-    return function executedFunction(...args) {
-        const context = this;
-
-        if (!inThrottle) {
-            func.apply(context, args);
-            lastRan = Date.now();
-            inThrottle = true;
-        } else {
-            clearTimeout(lastFunc);
-            lastFunc = setTimeout(() => {
-                if ((Date.now() - lastRan) >= limit) {
-                    func.apply(context, args);
-                    lastRan = Date.now();
-                }
-            }, Math.max(limit - (Date.now() - lastRan), 0));
-        }
     };
 }
 
@@ -1828,8 +1826,6 @@ function exitMultiSelectMode() {
         checkbox.checked = false;
     });
     selectedChatIds.clear();
-
-    // 确保退出多选模式时重置后退导航状态，防止卡住
     resetBackPressExitState();
 }
 
@@ -1872,6 +1868,7 @@ async function getGuestVisitorId() {
 
     return 'fingerprint_unavailable';
 }
+
 async function updateAboutPageUI() {
     const currentVersionEl = document.getElementById('current-version');
     if (currentVersionEl) {
@@ -2024,27 +2021,6 @@ function markVersionUpdateAsSeen() {
     }
 }
 
-async function requestNotificationPermission() {
-    if (!isNativeApp) return false;
-
-    try {
-        const permStatus = await LocalNotifications.checkPermissions();
-
-        if (permStatus.display === 'granted') {
-            return true;
-        }
-
-        if (permStatus.display === 'prompt' || permStatus.display === 'prompt-with-rationale') {
-            const result = await LocalNotifications.requestPermissions();
-            return result.display === 'granted';
-        }
-
-        return false;
-    } catch (error) {
-        return false;
-    }
-}
-
 async function checkApkUpdate() {
     if (!isNativeApp) return;
 
@@ -2175,7 +2151,6 @@ function showUpdateNowButton(version) {
     if (updateNowBtn) {
         updateNowBtn.style.display = 'inline-flex';
         updateNowBtn.dataset.version = version;
-        // 确保i18n文本正确显示
         const span = updateNowBtn.querySelector('span[data-i18n-key="version.updateNow"]');
         if (span) {
             span.textContent = getToastMessage('version.updateNow');
@@ -2317,7 +2292,6 @@ async function clearCacheAndReload() {
 
     await Promise.all([
         clearCachesAndSettings(),
-
         (async () => {
             if (currentUser) {
                 await deleteChatsFromDB(currentUser.id);
@@ -2371,7 +2345,7 @@ async function clearCacheAndReload() {
     try {
         await toastCtrl.whenShown;
     } catch (_) { }
-    // Give a brief moment for the toast to be fully visible
+
     await new Promise(r => setTimeout(r, 300));
     try { location.reload(true); } catch (_) { location.reload(); }
 }
@@ -2477,6 +2451,7 @@ async function readDocxFile(file) {
         reader.readAsArrayBuffer(file);
     });
 }
+
 async function readPdfFile(file) {
     await loadScript('/libs/pdf.min.js', 'pdfjsLib');
     pdfjsLib.GlobalWorkerOptions.workerSrc = '/libs/pdf.worker.min.js';
@@ -2540,6 +2515,7 @@ async function readPdfFile(file) {
         reader.readAsArrayBuffer(file);
     });
 }
+
 async function readExcelFile(file) {
     await loadScript('/libs/xlsx.full.min.js', 'XLSX');
 
@@ -2977,6 +2953,12 @@ function getToastMessage(key, params = {}) {
     return translated;
 }
 
+function getModelErrorMessage(status) {
+    const statusKey = `errors.httpStatus.${status}`;
+    const message = getToastMessage(statusKey);
+    return message !== statusKey ? message : null;
+}
+
 function showToast(message, type = 'info', error = null, options = {}) {
     const duration = typeof options.duration === 'number' ? options.duration : 2000;
 
@@ -3356,7 +3338,6 @@ const asyncStorage = {
 };
 
 function getGuestKeySettings() {
-    // Only use in-memory guest key state; never read from local storage
     return {
         keyOne: (guestApiState.keyOne || '').trim(),
         keyTwo: (guestApiState.keyTwo || '').trim(),
@@ -3368,7 +3349,6 @@ function selectGuestApiKeyForRequest() {
     const { keyOne, keyTwo, mode } = getGuestKeySettings();
     if (!keyOne && !keyTwo) return null;
     if (mode === 'single') return keyOne || keyTwo || null;
-    // mixed mode: alternate when both available, otherwise fallback to existing
     if (keyOne && keyTwo) {
         guestApiState.toggle = guestApiState.toggle === '1' ? '0' : '1';
         return guestApiState.toggle === '1' ? keyTwo : keyOne;
@@ -3377,7 +3357,6 @@ function selectGuestApiKeyForRequest() {
 }
 
 function getCustomApiKey() {
-    // Logged-in user keys from profile
     if (currentUser) {
         let keyOne = '';
         let keyTwo = '';
@@ -3396,7 +3375,6 @@ function getCustomApiKey() {
         return combined || null;
     }
 
-    // Guest keys (memory only)
     const { keyOne, keyTwo } = getGuestKeySettings();
     const combinedGuest = [keyOne, keyTwo].filter(Boolean).join(',');
     return combinedGuest || null;
@@ -3418,7 +3396,6 @@ function highlightApiKeyError(inputId) {
     const input = document.getElementById(inputId);
     if (input) {
         input.classList.add('error');
-        // 聚焦到错误的输入框
         input.focus();
     }
 }
@@ -4192,7 +4169,7 @@ async function uploadImage(file) {
 
 // 认证相关函数
 async function _makeRequest(prefix, endpoint, options = {}) {
-    const { isSessionCheck = false } = options;
+    const { isSessionCheck = false, isBackgroundSync = false } = options;
 
     const headers = {
         'Content-Type': 'application/json',
@@ -4210,7 +4187,7 @@ async function _makeRequest(prefix, endpoint, options = {}) {
         const response = await fetch(`${prefix}${endpoint}`, { ...options, headers });
 
         if (response.status === 401 && (currentUser || sessionId)) {
-            if (!isSessionCheck) {
+            if (!isSessionCheck && !isBackgroundSync) {
                 showToast(getToastMessage('toast.sessionExpired'), 'error');
 
                 const expiredSessionId = sessionId;
@@ -4598,7 +4575,6 @@ async function logout() {
         if (!confirmed) {
             return;
         }
-        // 用户确认放弃，停止当前AI生成
         stopGeneration();
     }
 
@@ -4620,12 +4596,16 @@ async function logout() {
         if (sessionIdToClean) {
             localStorage.removeItem(`user_cache_${sessionIdToClean}`);
         }
-        // 清理访客数据 - 使用 IndexedDB 而不是 localStorage
+
+        // 清理用户和访客数据
         try {
+            if (currentUser?.id) {
+                await deleteChatsFromDB(currentUser.id);
+            }
             await deleteChatsFromDB('guest');
             localStorage.removeItem('usage_stats_guest');
         } catch (dbError) {
-            console.error('Failed to clear guest data from IndexedDB during logout:', dbError);
+            console.error('Failed to clear data from IndexedDB during logout:', dbError);
         }
 
         if (window.requestIdleCallback) {
@@ -4777,30 +4757,27 @@ async function checkSession() {
             asyncStorage.setItem('selectedLanguage', currentUser.language);
         }
 
-        sessionValidationPromise = makeAuthRequest('me').then(result => {
+        sessionValidationPromise = makeAuthRequest('me').then(async result => {
             if (result.success && result.user) {
-                simpleCache.set(`user_session_${sessionId}`, result.user, 60000);
+                const previousLanguage = currentUser?.language || null;
+                currentUser = { ...(currentUser || {}), ...result.user };
+                simpleCache.set(`user_session_${sessionId}`, currentUser, 60000);
 
-                if (result.user.language && result.user.language !== currentUser.language) {
-                    currentUser.language = result.user.language;
+                if (result.user.language) {
                     asyncStorage.setItem('selectedLanguage', result.user.language);
-                    intentAnalyzer.clearKeywordCache();
+                    if (previousLanguage && previousLanguage !== result.user.language) {
+                        intentAnalyzer.clearKeywordCache();
+                    }
                 }
 
                 if (result.user.theme_settings) {
-                    const serverThemeStr = JSON.stringify(result.user.theme_settings);
-                    const localThemeStr = localStorage.getItem('userThemeSettings');
-                    if (localThemeStr !== serverThemeStr) {
-                        currentUser.theme_settings = result.user.theme_settings;
-                        asyncStorage.setItem('userThemeSettings', serverThemeStr);
-                        if (result.user.theme_settings && result.user.theme_settings.preset) {
-                            asyncStorage.setItem('userThemePreset', result.user.theme_settings.preset);
-                        }
-                        applyTheme(result.user.theme_settings).catch(err =>
-                            console.warn('Failed to apply updated theme:', err)
-                        );
+                    asyncStorage.setItem('userThemeSettings', JSON.stringify(result.user.theme_settings));
+                    if (result.user.theme_settings.preset) {
+                        asyncStorage.setItem('userThemePreset', result.user.theme_settings.preset);
                     }
                 }
+
+                await applyUserPreferencesFromProfile(currentUser);
             }
         }).catch((error) => {
             console.warn(getToastMessage('console.backgroundUserInfoUpdateFailed'), error);
@@ -4833,6 +4810,7 @@ async function checkSession() {
             const result = await makeAuthRequest('me', {});
 
             if (result.success && result.user) {
+                const previousLanguage = currentUser?.language || null;
                 currentUser = result.user;
                 simpleCache.set(`user_session_${sessionId}`, result.user, 60000);
 
@@ -4845,6 +4823,11 @@ async function checkSession() {
 
                 if (currentUser.language) {
                     asyncStorage.setItem('selectedLanguage', currentUser.language);
+                }
+
+                await applyUserPreferencesFromProfile(currentUser);
+                if (previousLanguage && currentUser.language && previousLanguage !== currentUser.language) {
+                    intentAnalyzer.clearKeywordCache();
                 }
 
                 asyncStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser)));
@@ -5041,7 +5024,6 @@ function updateUI(showLoginPage = true) {
     updateLoginButtonVisibility();
 
     const apiNavItem = document.querySelector('.settings-nav-item[data-page="api"]');
-    // 对访客用户也展示“API & 用量”页面
     if (apiNavItem) apiNavItem.style.display = '';
 
     if (currentUser) {
@@ -5241,7 +5223,7 @@ async function loadChat(chatId) {
         let didFetchFromServer = false;
         if (!chats[chatId].messages || chats[chatId].messages.length === 0) {
             if (currentUser) {
-                // 登录用户：仅当 chatId 不是临时 id 时才请求服务器消息
+                // 登录用户
                 if (!String(chatId).startsWith('temp_')) {
                     const result = await makeApiRequest(`chats/messages?conversationId=${chatId}`);
                     if (result.success) {
@@ -5251,7 +5233,7 @@ async function loadChat(chatId) {
                         throw new Error(result.error || getToastMessage('errors.cannotLoadMessage'));
                     }
                 } else {
-                    // 临时聊天：在本地渲染空消息列表，等待首条消息后再转正
+                    // 临时聊天
                     if (!chats[chatId].messages) {
                         chats[chatId].messages = [];
                     }
@@ -5467,7 +5449,6 @@ async function startNewChat(skipProcessingCheck = false) {
 }
 
 async function handleLeaveTemporaryChat(skipProcessingCheck = false) {
-    // 如果AI正在生成回复，先确认用户是否要放弃
     if (!skipProcessingCheck && isProcessing) {
         const confirmed = await showCustomConfirm(
             getToastMessage('dialog.confirmLeave'),
@@ -5563,7 +5544,6 @@ function cleanupActiveResponses() {
 
 const cleanupInterval = setInterval(cleanupActiveResponses, 60000);
 addGlobalCleanup(() => clearInterval(cleanupInterval));
-
 
 function resetSendButtonState() {
     isProcessing = false;
@@ -5728,6 +5708,10 @@ function renderSidebar() {
                 titleEl.textContent = chatData.title;
             }
             existingEl.classList.toggle('active', id === currentChatId);
+            const checkbox = existingEl.querySelector('.history-item-checkbox');
+            if (checkbox) {
+                checkbox.checked = selectedChatIds.has(id);
+            }
         } else {
             const li = createHistoryItem(id, chatData, currentChatId);
             sidebarElementsCache.set(id, li);
@@ -5812,6 +5796,7 @@ function createHistoryItem(id, chatData, currentChatId) {
     checkbox.className = 'history-item-checkbox';
     checkbox.name = 'history-select';
     checkbox.dataset.chatId = id;
+    checkbox.checked = selectedChatIds.has(id);
     const checkmark = document.createElement('span');
     checkmark.className = 'checkmark';
     checkboxLabel.appendChild(checkbox);
@@ -5920,6 +5905,7 @@ function scheduleRenderSidebar() {
         }
     }, 50);
 }
+
 async function renameChat(chatId) {
     const oldTitle = chats[chatId].title;
     const newTitle = await showCustomPrompt(getToastMessage('dialog.renameConversation'), getToastMessage('dialog.enterNewChatTitle'), oldTitle);
@@ -6108,135 +6094,307 @@ const KATEX_CONFIG = {
     }
 };
 
-const STREAMING_HORIZONTAL_RULE_TAIL_RE = /(?:^|\r?\n)[ \t]{0,3}([\*\-_])(?:[ \t]*\1){2,}[ \t]*$/;
-const IMPLICIT_MATH_COMMAND_PATTERN = '(?:frac|sqrt|sum|int|prod|lim|log|ln|sin|cos|tan|cot|sec|csc|sinh|cosh|tanh|arcsin|arccos|arctan|pi|mu|nu|alpha|beta|gamma|delta|epsilon|lambda|theta|phi|psi|omega|chi|eta|zeta|xi|rho|sigma|tau|upsilon|kappa|varphi|varpi|varsigma|vartheta|Phi|Psi|Omega|Delta|Gamma|Lambda|Sigma|Pi|Theta|Chi|cdot|times|neq|leq|geq|approx|sim|infty|partial|nabla|mathbb|mathrm|mathbf|mathcal|boldsymbol|operatorname|overline|underline|widehat|widetilde|binom)';
-const IMPLICIT_MATH_INLINE_RE = new RegExp('([A-Za-z0-9\\s+\\-*/^_=()\\\\.,·:;]*\\\\' + IMPLICIT_MATH_COMMAND_PATTERN + '[A-Za-z0-9\\s+\\-*/^_=()\\\\.,{}·:;]*)', 'g');
-const IMPLICIT_MATH_DISPLAY_ASCII_RE = /^[\s0-9A-Za-z\\{}^_*+\-=/().,:;·]+$/;
-const IMPLICIT_MATH_HAS_COMMAND_RE = new RegExp('\\\\' + IMPLICIT_MATH_COMMAND_PATTERN);
-const EXPLICIT_HORIZONTAL_RULE_RE = /(?:^|\r?\n)[ \t]{0,3}([*\-_])(?:[ \t]*\1){2,}[ \t]*(?:\r?\n|$)/;
+class MathRenderer {
+    constructor(katexConfig) {
+        this.katexConfig = katexConfig;
+        this.partialConfig = {
+            delimiters: katexConfig.delimiters,
+            throwOnError: false,
+            strict: false,
+            trust: true,
+            macros: katexConfig.macros
+        };
 
-function stripStreamingHorizontalRuleTail(text) {
-    if (!text) return text;
-    let end = text.length;
-    while (end > 0) {
-        const code = text.charCodeAt(end - 1);
-        if (code === 10 || code === 13) {
-            end--;
-        } else {
-            break;
+        this.inlinePatternSource = MathRenderer.buildInlinePatternSource();
+        this.displayLineRegex = MathRenderer.buildDisplayLineRegex();
+    }
+
+    static get COMMAND_PATTERN() {
+        return '(?:frac|sqrt|sum|int|prod|lim|log|ln|sin|cos|tan|cot|sec|csc|sinh|cosh|tanh|arcsin|arccos|arctan|pi|mu|nu|alpha|beta|gamma|delta|epsilon|lambda|theta|phi|psi|omega|chi|eta|zeta|xi|rho|sigma|tau|upsilon|kappa|varphi|varpi|varsigma|vartheta|Phi|Psi|Omega|Delta|Gamma|Lambda|Sigma|Pi|Theta|Chi|cdot|times|neq|leq|geq|approx|sim|infty|partial|nabla|mathbb|mathrm|mathbf|mathcal|boldsymbol|operatorname|overline|underline|widehat|widetilde|hat|vec|bar|tilde|dot|ddot|ce|binom|left|right|text|displaystyle|mathsf|mathtt|mathfrak|mathit)';
+    }
+
+    static get UNICODE_TEXT_CLASS() {
+        return '\\p{L}\\p{N}\\p{M}\\p{P}\\p{S}\\p{Zs}';
+    }
+
+    static buildInlinePatternSource() {
+        const chars = `${MathRenderer.UNICODE_TEXT_CLASS}0-9\\s+\\-*/^_=()\\\\.,·:;`;
+        return `([${chars}]*\\\\${MathRenderer.COMMAND_PATTERN}[${chars}{}]*)`;
+    }
+
+    static buildDisplayLineRegex() {
+        const chars = `${MathRenderer.UNICODE_TEXT_CLASS}0-9\\s\\\\{}^_*+\\-=/().,:;·`;
+        return new RegExp(`^[${chars}]+$`, 'u');
+    }
+
+    preprocessMarkdown(text) {
+        let result = this.normalizeLatexEnvironments(text);
+        result = this.promoteStandaloneInlineMath(result);
+        return result;
+    }
+
+    normalizeLatexEnvironments(text) {
+        let result = text;
+        const protectedRanges = [];
+        const dollarBlockRegex = /\$\$([\s\S]*?)\$\$/g;
+        let match;
+        while ((match = dollarBlockRegex.exec(text)) !== null) {
+            protectedRanges.push({
+                start: match.index,
+                end: match.index + match[0].length
+            });
         }
-    }
-    const withoutTrailingNewlines = text.slice(0, end);
-    const match = withoutTrailingNewlines.match(STREAMING_HORIZONTAL_RULE_TAIL_RE);
-    if (!match) {
-        return text;
-    }
-    const removalStart = withoutTrailingNewlines.length - match[0].length;
-    const trimmed = withoutTrailingNewlines.slice(0, removalStart);
-    return trimmed + text.slice(end);
-}
 
-function autoWrapImplicitMath(content) {
-    try {
-        const lines = content.split(/\r?\n/);
-        let fence = null;
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const fenceMatch = line.match(/^\s{0,3}([`~]{3,})(.*)$/);
-            if (fenceMatch) {
-                const fenceChars = fenceMatch[1];
-                const ch = fenceChars[0];
-                const len = fenceChars.length;
-                if (!fence) {
-                    fence = { ch, len };
-                } else if (fence && ch === fence.ch && len >= fence.len) {
-                    fence = null;
-                }
-                continue;
+        result = result.replace(/\\begin\s*\{([A-Za-z0-9*]+)\}([\s\S]*?)\\end\s*\{\1\}/gmi, (match, envName, content, offset) => {
+            const isProtected = protectedRanges.some(range =>
+                offset >= range.start && offset < range.end
+            );
+
+            if (isProtected) {
+                return match;
             }
-            if (fence) continue;
-            if (line.indexOf('\\') === -1) continue;
-            if (line.indexOf('$') !== -1 || line.indexOf('\\(') !== -1 || line.indexOf('\\[') !== -1) continue;
+            let fixedContent = content.replace(/([^\\]|^)\\(\s)/g, '$1\\\\$2');
+            return `$$\\begin{${envName}}${fixedContent}\\end{${envName}}$$`;
+        });
 
-            let remainder = line;
-            let prefix = '';
-            let changedPrefix = true;
-            while (changedPrefix) {
-                changedPrefix = false;
-                let m = remainder.match(/^(\s*>+\s?)/);
-                if (m) {
-                    prefix += m[1];
-                    remainder = remainder.slice(m[1].length);
-                    changedPrefix = true;
-                    continue;
-                }
-                m = remainder.match(/^(\s*\d+\.\s+)/);
-                if (m) {
-                    prefix += m[1];
-                    remainder = remainder.slice(m[1].length);
-                    changedPrefix = true;
-                    continue;
-                }
-                m = remainder.match(/^(\s*[-*+]\s+)/);
-                if (m) {
-                    prefix += m[1];
-                    remainder = remainder.slice(m[1].length);
-                    changedPrefix = true;
-                    continue;
-                }
-                m = remainder.match(/^(\s*#{1,6}\s+)/);
-                if (m) {
-                    prefix += m[1];
-                    remainder = remainder.slice(m[1].length);
-                    changedPrefix = true;
-                    continue;
-                }
-            }
-
-            const processed = processImplicitMathBody(remainder);
-            if (processed !== remainder) {
-                lines[i] = prefix + processed;
-            }
-        }
-        return lines.join('\n');
-    } catch (_) {
-        return content;
-    }
-}
-
-function processImplicitMathBody(body) {
-    if (!body) return body;
-    if (body.indexOf('\\') === -1) return body;
-    if (body.indexOf('$') !== -1 || body.indexOf('\\(') !== -1 || body.indexOf('\\[') !== -1) return body;
-    const trimmed = body.trim();
-    if (!trimmed) return body;
-
-    if (IMPLICIT_MATH_DISPLAY_ASCII_RE.test(trimmed) && IMPLICIT_MATH_HAS_COMMAND_RE.test(trimmed)) {
-        const leading = body.match(/^\s*/)?.[0] || '';
-        const trailing = body.match(/\s*$/)?.[0] || '';
-        return `${leading}$$${trimmed}$$${trailing}`;
+        return result;
     }
 
-    let changed = false;
-    const replaced = body.replace(IMPLICIT_MATH_INLINE_RE, (match) => {
-        if (!IMPLICIT_MATH_HAS_COMMAND_RE.test(match)) {
-            return match;
-        }
-        const trimmedSegment = match.trim();
-        if (!trimmedSegment) {
-            return match;
-        }
-        changed = true;
-        const leading = match.match(/^\s*/)?.[0] || '';
-        const trailing = match.match(/\s*$/)?.[0] || '';
-        return `${leading}$${trimmedSegment}$${trailing}`;
-    });
+    promoteStandaloneInlineMath(text) {
+        try {
+            const lines = text.split(/\r?\n/);
+            let fence = null;
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const fenceMatch = line.match(/^\s{0,3}([`~]{3,})(.*)$/);
+                if (fenceMatch) {
+                    const ch = fenceMatch[1][0];
+                    const len = fenceMatch[1].length;
+                    if (!fence) {
+                        fence = { ch, len };
+                    } else if (fence && ch === fence.ch && len >= fence.len) {
+                        fence = null;
+                    }
+                    continue;
+                }
 
-    return changed ? replaced : body;
-}
+                if (fence) continue;
 
-function renderMessageContent(element, content, citations = null, isFinalRender = false) {
-    function normalizeTeXDelimited(texWithDelimiters) {
+                const trimmed = line.trim();
+                const match = trimmed.match(/^\$([^$\n]+)\$/);
+                if (match) {
+                    const before = line.slice(0, line.indexOf(trimmed));
+                    const after = line.slice(line.indexOf(trimmed) + trimmed.length);
+                    lines[i] = `${before}$$${match[1]}$$${after}`;
+                }
+            }
+            return lines.join('\n');
+        } catch (_) {
+            return text;
+        }
+    }
+
+    classifyMathLikeContent(trimmed) {
+        if (!trimmed) {
+            return { shouldWrap: false, mathBody: trimmed };
+        }
+
+        const commandRegex = this.commandRegex();
+        commandRegex.lastIndex = 0;
+
+        let looksLikeMath = trimmed.includes('\\') || commandRegex.test(trimmed);
+
+        if (!looksLikeMath) {
+            const superscriptPattern = /(?:^|[^A-Za-z0-9])([A-Za-z0-9])\s*\^\s*(?:\{?[A-Za-z0-9+\-*/]+\}?|[A-Za-z0-9])/u;
+            const subscriptPattern = /(?:^|[^A-Za-z0-9])([A-Za-z0-9])\s*_\s*(?:\{?[A-Za-z0-9]+\}?)/u;
+            const operatorPattern = /[=+\-*/]/u;
+            const fractionPattern = /[A-Za-z0-9]\s*\/\s*[A-Za-z0-9]/u;
+            const greekPattern = /[α-ωΑ-ΩπμθσρλντφψΩΦΛΣΠΘΧβγδεζηξρ]/u;
+            const symbolPattern = /[∑∏√∞≈≠≤≥±÷×⋅·]/u;
+
+            looksLikeMath =
+                superscriptPattern.test(trimmed) ||
+                subscriptPattern.test(trimmed) ||
+                (operatorPattern.test(trimmed) && this.isAsciiMathContent(trimmed)) ||
+                fractionPattern.test(trimmed) ||
+                greekPattern.test(trimmed) ||
+                symbolPattern.test(trimmed);
+        }
+
+        if (looksLikeMath) {
+            return { shouldWrap: true, mathBody: this.normalizeMathBody(trimmed) };
+        }
+
+        if (this.isLikelyShortMathToken(trimmed)) {
+            return { shouldWrap: true, mathBody: this.normalizeMathBody(trimmed) };
+        }
+
+        if (this.looksLikeChemicalEquation(trimmed)) {
+            const needsCeWrap = !/^\\ce\{.*\}$/u.test(trimmed);
+            const chemicalBody = this.normalizeChemicalBody(trimmed);
+            return {
+                shouldWrap: true,
+                mathBody: needsCeWrap ? `\\ce{${chemicalBody}}` : chemicalBody
+            };
+        }
+
+        return { shouldWrap: false, mathBody: trimmed };
+    }
+
+    isAsciiMathContent(text) {
+        if (!text) return false;
+        const asciiMathPattern = /^[A-Za-z0-9\\^_{}+\-*/().,:;= ]+$/u;
+        return asciiMathPattern.test(text);
+    }
+
+    isLikelyShortMathToken(text) {
+        if (!text) return false;
+        const trimmed = text.trim();
+        if (trimmed.length === 0 || trimmed.length > 2) return false;
+
+        if (/^[A-Za-z0-9]$/u.test(trimmed) || /^[A-Za-z0-9][0-9]$/u.test(trimmed)) {
+            return true;
+        }
+
+        const normalized = trimmed.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (normalized.length === 1 && /^[A-Za-z]$/u.test(normalized)) {
+            return true;
+        }
+
+        if (/^[\u2070-\u209F]$/u.test(trimmed)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    normalizeMathBody(body) {
+        if (!body) return body;
+
+        let result = body;
+
+        const accentTransforms = [
+            { regex: /([A-Za-z0-9])\u0302/gu, replacement: '\\hat{$1}' },
+            { regex: /([A-Za-z0-9])\u0303/gu, replacement: '\\tilde{$1}' },
+            { regex: /([A-Za-z0-9])\u0304/gu, replacement: '\\bar{$1}' },
+            { regex: /([A-Za-z0-9])\u0307/gu, replacement: '\\dot{$1}' },
+            { regex: /([A-Za-z0-9])\u0308/gu, replacement: '\\ddot{$1}' },
+            { regex: /([A-Za-z0-9])\u20d7/gu, replacement: '\\vec{$1}' }
+        ];
+        accentTransforms.forEach(({ regex, replacement }) => {
+            result = result.replace(regex, replacement);
+        });
+
+        const greekMap = {
+            'π': '\\pi ',
+            'Π': '\\Pi ',
+            'θ': '\\theta ',
+            'Θ': '\\Theta ',
+            'λ': '\\lambda ',
+            'Λ': '\\Lambda ',
+            'σ': '\\sigma ',
+            'Σ': '\\Sigma ',
+            'μ': '\\mu ',
+            'µ': '\\mu ',
+            'φ': '\\phi ',
+            'Φ': '\\Phi ',
+            'ω': '\\omega ',
+            'Ω': '\\Omega ',
+            'α': '\\alpha ',
+            'β': '\\beta ',
+            'γ': '\\gamma ',
+            'Γ': '\\Gamma ',
+            'δ': '\\delta ',
+            'Δ': '\\Delta ',
+            'η': '\\eta ',
+            'ρ': '\\rho ',
+            'χ': '\\chi ',
+            'ζ': '\\zeta ',
+            'ξ': '\\xi ',
+            'ν': '\\nu ',
+            'τ': '\\tau ',
+            'ψ': '\\psi ',
+            'Ψ': '\\Psi ',
+            'κ': '\\kappa '
+        };
+        result = result.replace(/[\u03B1-\u03C9\u0391-\u03A9\u00B5]/gu, ch => greekMap[ch] || ch);
+
+        const subscriptDigits = {
+            '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4',
+            '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9'
+        };
+        result = result.replace(/([\u2080-\u2089]+)/gu, match => `_{${[...match].map(ch => subscriptDigits[ch] || '').join('')}}`);
+
+        const superscriptDigits = {
+            '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4',
+            '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9',
+            '⁺': '+', '⁻': '-', '⁼': '=', '⁽': '(', '⁾': ')'
+        };
+        result = result.replace(/([\u2070-\u2079\u207A-\u207E]+)/gu, match => `^{${[...match].map(ch => superscriptDigits[ch] || '').join('')}}`);
+
+        result = result.replace(/[\u00B7\u22C5\u2022]/gu, ' \\cdot ');
+        result = result.replace(/×/gu, ' \\times ');
+        result = result.replace(/÷/gu, ' \\div ');
+
+        result = result.replace(/\s{2,}/g, ' ');
+
+        const slashCount = (result.match(/\//g) || []).length;
+        if (slashCount === 1) {
+            const fractionMatch = result.match(/^\s*([^/]+?)\s*\/\s*([^/]+?)\s*$/u);
+            if (fractionMatch) {
+                const numerator = fractionMatch[1].trim();
+                const denominator = fractionMatch[2].trim();
+                if (numerator && denominator) {
+                    result = `\\frac{${numerator}}{${denominator}}`;
+                }
+            }
+        }
+
+        return result.trim();
+    }
+
+    normalizeChemicalBody(body) {
+        if (!body) return body;
+        return body.replace(/[\u00B7\u22C5\u2022]/gu, '\\cdot ');
+    }
+
+    looksLikeChemicalEquation(text) {
+        if (!text) return false;
+        if (text.length < 3) return false;
+
+        const arrowPattern = /(<?[-=]+>|⇌|⇄|↔|→|←|⟶|⟵|⟷|⇆|⇋|⇅)/u;
+        const hasConnector = arrowPattern.test(text) || text.includes('+') || /(^|[^A-Za-z])=[^=]/u.test(text);
+        if (!hasConnector) return false;
+
+        const compoundPattern = /\b[A-Z][a-z]?(?:\d+(?:\.\d+)?)?(?:_\{[0-9+\-]+\}|_\d+)?(?:\([a-z]{1,3}\))?/gu;
+        let compoundCount = 0;
+        let match;
+        while ((match = compoundPattern.exec(text)) !== null) {
+            const fragment = match[0];
+            if (!fragment) continue;
+            compoundCount++;
+            if (compoundCount >= 2) break;
+        }
+
+        if (compoundCount < 2) {
+            return false;
+        }
+
+        const disqualifierPattern = /[`$]/u;
+        if (disqualifierPattern.test(text)) return false;
+
+        return true;
+    }
+
+    inlineRegex() {
+        return new RegExp(this.inlinePatternSource, 'gu');
+    }
+
+    commandRegex() {
+        return new RegExp(`\\${MathRenderer.COMMAND_PATTERN}`, 'u');
+    }
+
+    normalizeDelimited(texWithDelimiters) {
         try {
             let body = texWithDelimiters;
             let start = '', end = '';
@@ -6251,33 +6409,25 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             }
 
             let normalized = body
-                // 集合符号 - 不属于
                 .replace(/\u2208\s*\/\s*/g, '\\notin ')
                 .replace(/\u2208\u0338/g, '\\notin ')
                 .replace(/\u2209/g, '\\notin ')
-                // 集合符号 - 子集
                 .replace(/\u2282\s*\/\s*/g, '\\not\\subset ')
                 .replace(/\u2282\u0338/g, '\\not\\subset ')
                 .replace(/\u2286\s*\/\s*/g, '\\not\\subseteq ')
                 .replace(/\u2286\u0338/g, '\\not\\subseteq ')
-                // 集合符号 - 超集
                 .replace(/\u2283\s*\/\s*/g, '\\not\\supset ')
                 .replace(/\u2283\u0338/g, '\\not\\supset ')
                 .replace(/\u2287\s*\/\s*/g, '\\not\\supseteq ')
                 .replace(/\u2287\u0338/g, '\\not\\supseteq ')
-                // 集合符号 - 不包含
                 .replace(/\u220B\s*\/\s*/g, '\\not\\ni ')
                 .replace(/\u220B\u0338/g, '\\not\\ni ')
-                // 逻辑符号 - 否定
                 .replace(/\u00AC\s*(\w)/g, '\\neg \\! $1')
-
                 .replace(/([A-Za-z])\^(\d{1,2})(?=\d[spdfg])/gi, ($0, base, exp) => `${base}^{${exp}} `)
-                // 下划线和上标规范化 - 修正不规范的下标/上标
                 .replace(/_([A-Za-z0-9]+)/g, '_{$1}')
-                // 仅包装简单指数（字母或纯数字）
                 .replace(/\^([A-Za-z]|\d+)/g, '^{$1}')
-                .replace(/\\text\{([^{}]*?)_(\{[^{}]*\}|[A-Za-z0-9]+?)(\^(\{[^{}]*\}|[A-Za-z0-9]+))?\}/g, (full, base, rawSub, supGroup, rawSup) => {
-                    const stripBraces = (value) => {
+                .replace(/\text\{([^{}]*?)_(\{[^{}]*\}|[A-Za-z0-9]+?)(\^(\{[^{}]*\}|[A-Za-z0-9]+))?\}/g, (full, base, rawSub, supGroup, rawSup) => {
+                    const stripBraces = value => {
                         if (!value) return '';
                         const trimmed = value.trim();
                         if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
@@ -6285,7 +6435,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                         }
                         return trimmed;
                     };
-                    const wrapIfText = (value) => {
+                    const wrapIfText = value => {
                         const trimmed = value.trim();
                         if (!trimmed) return '';
                         if (trimmed.startsWith('\\')) {
@@ -6320,41 +6470,103 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         }
     }
 
-    function promoteStandaloneInlineMathToDisplay(text) {
-        try {
-            const lines = text.split(/\r?\n/);
-            let fence = null;
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                // 处理代码围栏的进入/退出
-                const m = line.match(/^\s{0,3}([`~]{3,})(.*)$/);
-                if (m) {
-                    const ch = m[1][0];
-                    const len = m[1].length;
-                    if (!fence) {
-                        fence = { ch, len };
-                    } else if (fence && ch === fence.ch && len >= fence.len) {
-                        fence = null;
-                    }
-                    continue;
-                }
-
-                if (fence) continue;
-
-                const trimmed = line.trim();
-                const mm = trimmed.match(/^\$([^$\n]+)\$$/);
-                if (mm) {
-                    const before = line.slice(0, line.indexOf(trimmed));
-                    const after = line.slice(line.indexOf(trimmed) + trimmed.length);
-                    lines[i] = `${before}$$${mm[1]}$$${after}`;
-                }
-            }
-            return lines.join('\n');
-        } catch (_) {
-            return text;
-        }
+    static containsMath(text) {
+        if (!text) return false;
+        return text.includes('$') ||
+            text.includes('\\(') ||
+            text.includes('\\[') ||
+            /\\begin\s*\{[A-Za-z0-9*]+\}/u.test(text);
     }
 
+    renderMath(element, { isFinalRender } = {}) {
+        if (!window.renderMathInElement) {
+            return;
+        }
+
+        try {
+            const textContent = element.textContent;
+            const hasMath = MathRenderer.containsMath(textContent);
+
+            if (!hasMath) {
+                return;
+            }
+
+            const hasRendered = element.querySelector('.katex') !== null;
+
+            if (isFinalRender || !hasRendered) {
+                if (!hasRendered) {
+                    renderMathInElement(element, this.katexConfig);
+                } else {
+                    const textNodes = [];
+                    const walk = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
+                    let node;
+                    while ((node = walk.nextNode())) {
+                        if (MathRenderer.containsMath(node.textContent || '')) {
+                            textNodes.push(node);
+                        }
+                    }
+
+                    textNodes.forEach(node => {
+                        try {
+                            const span = document.createElement('span');
+                            span.textContent = node.textContent;
+                            node.parentNode.insertBefore(span, node);
+                            node.parentNode.removeChild(node);
+                            renderMathInElement(span, this.partialConfig);
+                        } catch (_) { }
+                    });
+                }
+            } else {
+                const textNodes = [];
+                const walk = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
+                let node;
+                while ((node = walk.nextNode())) {
+                    if (MathRenderer.containsMath(node.textContent || '')) {
+                        textNodes.push(node);
+                    }
+                }
+
+                textNodes.forEach(node => {
+                    try {
+                        const span = document.createElement('span');
+                        span.textContent = node.textContent;
+                        node.parentNode.insertBefore(span, node);
+                        node.parentNode.removeChild(node);
+                        renderMathInElement(span, this.partialConfig);
+                    } catch (_) { }
+                });
+            }
+        } catch (_) { }
+    }
+}
+
+const mathRenderer = new MathRenderer(KATEX_CONFIG);
+
+const STREAMING_HORIZONTAL_RULE_TAIL_RE = /(?:^|\r?\n)[ \t]{0,3}([\*\-_])(?:[ \t]*\1){2,}[ \t]*$/;
+const EXPLICIT_HORIZONTAL_RULE_RE = /(?:^|\r?\n)[ \t]{0,3}([*\-_])(?:[ \t]*\1){2,}[ \t]*(?:\r?\n|$)/;
+
+function stripStreamingHorizontalRuleTail(text) {
+    if (!text) return text;
+    let end = text.length;
+    while (end > 0) {
+        const code = text.charCodeAt(end - 1);
+        if (code === 10 || code === 13) {
+            end--;
+        } else {
+            break;
+        }
+    }
+    const withoutTrailingNewlines = text.slice(0, end);
+    const match = withoutTrailingNewlines.match(STREAMING_HORIZONTAL_RULE_TAIL_RE);
+    if (!match) {
+        return text;
+    }
+    const removalStart = withoutTrailingNewlines.length - match[0].length;
+    const trimmed = withoutTrailingNewlines.slice(0, removalStart);
+    return trimmed + text.slice(end);
+}
+
+function renderMessageContent(element, content, citations = null, isFinalRender = false) {
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     let renderTimeout;
     const clearRenderState = () => {
@@ -6461,24 +6673,17 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             return null;
         }
 
-        let correctedContent = messageText.replace(
-            /\\begin\{([a-z*]+)\}([\sS]+?)\\end\{\1\}/gmi,
-            (match) => `$$${match}$$`
-        );
-
-        correctedContent = promoteStandaloneInlineMathToDisplay(correctedContent);
-        correctedContent = autoWrapImplicitMath(correctedContent);
-
+        let correctedContent = mathRenderer.preprocessMarkdown(messageText);
         const displayMath = [];
         const inlineMath = [];
 
         let protectedContent = correctedContent.replace(/\$\$([\s\S]*?)\$\$/g, (match) => {
-            displayMath.push(normalizeTeXDelimited(match));
+            displayMath.push(mathRenderer.normalizeDelimited(match));
             return `%%DISPLAY_MATH_${displayMath.length - 1}%%`;
         });
 
         protectedContent = protectedContent.replace(/\$([^$\n]+?)\$/g, (match) => {
-            inlineMath.push(normalizeTeXDelimited(match));
+            inlineMath.push(mathRenderer.normalizeDelimited(match));
             return `%%INLINE_MATH_${inlineMath.length - 1}%%`;
         });
 
@@ -6753,44 +6958,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             element.__mermaidRenderPromise = mermaidRenderPromise;
         }
 
-        if (window.renderMathInElement) {
-            try {
-                if (isFinalRender) {
-                    const hasMath = element.textContent.includes('$') || element.textContent.includes('\\(') || element.textContent.includes('\\[');
-                    const renderedMathCount = element.querySelectorAll('.katex').length;
-                    const potentialMathCount = (element.textContent.match(/\$\$/g) || []).length / 2 +
-                        (element.textContent.match(/\$[^$\n]+\$/g) || []).length +
-                        (element.textContent.match(/\\\(|\\\[/g) || []).length;
-
-                    if (hasMath && renderedMathCount < potentialMathCount) {
-                        renderMathInElement(element, KATEX_CONFIG);
-                    }
-                } else {
-                    const hasRenderedMath = element.querySelectorAll('.katex').length > 0;
-                    const hasMath = element.textContent.includes('$') || element.textContent.includes('\\(') || element.textContent.includes('\\[');
-
-                    if (hasMath && !hasRenderedMath) {
-                        renderMathInElement(element, KATEX_CONFIG);
-                    } else if (hasMath && hasRenderedMath) {
-                        const allNodes = element.querySelectorAll('*');
-                        allNodes.forEach(node => {
-                            if (!node.querySelector('.katex') && (node.textContent.includes('$') || node.textContent.includes('\\('))) {
-                                try {
-                                    renderMathInElement(node, {
-                                        delimiters: KATEX_CONFIG.delimiters,
-                                        throwOnError: false,
-                                        strict: false,
-                                        trust: true,
-                                        macros: KATEX_CONFIG.macros
-                                    });
-                                } catch (e) { }
-                            }
-                        });
-                    }
-                }
-            } catch (e) { }
-        }
-
+        mathRenderer.renderMath(element, { isFinalRender });
         if (window.hljs) {
             ensurePlaintextHighlightLanguage();
             if (isFinalRender) {
@@ -7155,12 +7323,12 @@ function showEditBar() {
         }
     });
 
-    editModeState.ui = { container: containerInMsg, textarea, cancelBtn, updateBtn };
+    editModeState.ui = {
+        container: containerInMsg, textarea, cancelBtn, updateBtn
+    };
 
-    // Enter global inline-editing mode: hide bottom composer, focus editor
     try {
         document.body.classList.add('editing-inline-mode');
-        // Focus the textarea and move caret to end for convenience
         requestAnimationFrame(() => {
             try {
                 textarea.focus();
@@ -7184,7 +7352,6 @@ function hideEditBar() {
         const contentDiv = messageEl.querySelector('.content');
         if (contentDiv) contentDiv.style.display = '';
     }
-    // Leave global inline-editing mode
     try { document.body.classList.remove('editing-inline-mode'); } catch (_) { }
 }
 
@@ -8115,7 +8282,8 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
                         showUsageLimitModal();
                         throw new Error('API usage limit reached');
                     }
-                    throw new Error(`Server error: ${response.status}`);
+                    const mappedMessage = getModelErrorMessage(response.status);
+                    throw new Error(mappedMessage || `${getToastMessage('errors.serverError')}: ${response.status}`);
                 }
                 const contentType = response.headers.get('content-type');
                 if (!contentType || !contentType.startsWith('image/')) {
@@ -8486,7 +8654,11 @@ async function handleSearchAndChat(userMessageText) {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`${getToastMessage('errors.aiRequestFailed')}: ${response.status} ${errorText}`);
+            const mappedMessage = getModelErrorMessage(response.status);
+            if (mappedMessage) {
+                throw new Error(mappedMessage);
+            }
+            throw new Error(errorText || `${getToastMessage('errors.aiRequestFailed')}: ${response.status}`);
         }
 
         try {
@@ -8808,7 +8980,9 @@ async function handleChatMessage(userContent, options = {}) {
             const errorText = await response.text();
             try {
                 const errorData = JSON.parse(errorText);
-                const errorMessage = errorData.error || `${getToastMessage('errors.requestFailed')}: ${response.status}`;
+                const rawErrorMessage = errorData.error || `${getToastMessage('errors.requestFailed')}: ${response.status}`;
+                const mappedMessage = getModelErrorMessage(response.status);
+                const displayErrorMessage = mappedMessage || rawErrorMessage;
 
                 const cleanUpFailedRequest = () => {
                     if (typeof progressTimer === 'number') {
@@ -8878,7 +9052,7 @@ async function handleChatMessage(userContent, options = {}) {
                     'usage', 'limit', 'quota', 'daily', 'limit reached'
                 ];
                 const isUsageLimitError = usageLimitKeywords.some(keyword =>
-                    errorMessage.toLowerCase().includes(keyword.toLowerCase())
+                    rawErrorMessage.toLowerCase().includes(keyword.toLowerCase())
                 );
 
                 if (isUsageLimitError) {
@@ -8887,13 +9061,16 @@ async function handleChatMessage(userContent, options = {}) {
                     showUsageLimitModal();
                     return;
                 }
-
-                throw new Error(errorMessage);
+                throw new Error(displayErrorMessage);
             } catch (parseError) {
                 if (parseError.message && parseError.message.includes(getToastMessage('errors.usageLimitReached'))) {
                     return;
                 }
-                throw new Error(errorText || `${getToastMessage('errors.requestFailed')}: ${response.status}`);
+                const fallbackMappedMessage = getModelErrorMessage(response.status);
+                if (fallbackMappedMessage) {
+                    console.warn('Model request failed (unparsed error):', response.status, errorText);
+                }
+                throw new Error(fallbackMappedMessage || errorText || `${getToastMessage('errors.requestFailed')}: ${response.status}`);
             }
         }
 
@@ -10105,14 +10282,14 @@ function resetCharCountTimer() {
         counterElement.classList.remove('visible');
     }, 5000);
 }
-async function savePresetAndFont(type) {
+
+async function savePresetAndFont(type, isBackgroundSync = false) {
     if (!currentUser) return;
 
     const toastMessage = type === 'preset' ? getToastMessage('toast.themeSettingsAutoSaved') : getToastMessage('toast.fontSettingsAutoSaved');
 
     try {
-        const newPreset = elements.themePresetSelector.querySelector('.theme-preset-btn.active')?.dataset.theme || 'light'; // 安全获取
-        // 从自定义下拉框获取选中的字体
+        const newPreset = elements.themePresetSelector.querySelector('.theme-preset-btn.active')?.dataset.theme || 'light';
         const activeFontItem = elements.fontMenu?.querySelector('.dropdown-item.active');
         const newFont = activeFontItem?.dataset.value || 'system';
 
@@ -10122,21 +10299,25 @@ async function savePresetAndFont(type) {
             background_url: null
         };
 
+        const updateTimestamp = Date.now();
+        localStorage.setItem('userThemeSettingsUpdatedAt', String(updateTimestamp));
+        localStorage.setItem('userThemeSettings', JSON.stringify(newThemeSettings));
+        localStorage.setItem('userThemePreset', newThemeSettings.preset);
+
+        if (!isBackgroundSync) {
+            showToast(toastMessage, 'success');
+        }
+
+        // 后台同步到服务器
         const result = await makeAuthRequest('update-profile', {
             theme_settings: newThemeSettings
-        });
+        }, { isBackgroundSync });
 
         if (result.success) {
             currentUser.theme_settings = newThemeSettings;
             originalThemeSettings = { ...newThemeSettings };
 
-            if (currentUser) {
-                localStorage.setItem('userThemeSettings', JSON.stringify(newThemeSettings));
-                localStorage.setItem('userThemePreset', newThemeSettings.preset);
-                localStorage.setItem('userThemeSettingsUpdatedAt', String(Date.now()));
-            }
-            showToast(toastMessage, 'success');
-
+            localStorage.removeItem('userThemeSettingsUpdatedAt');
             backupImportantSettings().catch(error => {
                 console.error('Failed to backup settings after save:', error);
             });
@@ -10144,8 +10325,12 @@ async function savePresetAndFont(type) {
             throw new Error(result.error || getToastMessage('errors.saveSettingsFailed'));
         }
     } catch (error) {
-        showToast(`${getToastMessage('toast.autoSaveFailed')}: ${error.message}`, 'error');
-        await applyTheme(originalThemeSettings);
+        // 后台同步失败时静默处理
+        if (isBackgroundSync) {
+            console.warn('Background theme sync failed, will retry later:', error);
+        } else {
+            console.error('Theme save failed, will retry on next launch:', error);
+        }
     }
 }
 
@@ -10308,6 +10493,43 @@ function setupEventListeners() {
         App.addListener('appStateChange', async ({ isActive }) => {
             if (!isActive) {
                 isPageVisible = false;
+
+                // 应用后台化时保存所有待同步数据
+                try {
+                    const syncTasks = [];
+
+                    if (currentUser && localStorage.getItem('userThemeSettingsUpdatedAt')) {
+                        syncTasks.push(
+                            savePresetAndFont('preset', true).catch(err =>
+                                console.error('Background theme sync failed:', err)
+                            )
+                        );
+                    }
+
+                    if (currentChatId && chats[currentChatId]) {
+                        const userId = currentUser?.id || 'guest';
+                        syncTasks.push(
+                            saveChatsToDB(userId, chats).catch(err =>
+                                console.error('Background chat sync failed:', err)
+                            )
+                        );
+                    }
+
+                    syncTasks.push(
+                        backupImportantSettings().catch(err =>
+                            console.error('Background settings backup failed:', err)
+                        )
+                    );
+
+                    if (syncTasks.length > 0) {
+                        await Promise.race([
+                            Promise.allSettled(syncTasks),
+                            new Promise(r => setTimeout(r, 3000))
+                        ]);
+                    }
+                } catch (error) {
+                    console.error('Background sync error:', error);
+                }
 
                 if (isProcessing && !backgroundNotificationShown) {
                     try {
@@ -10797,49 +11019,115 @@ function setupEventListeners() {
 
     const handleDeleteClick = async () => {
         if (isMultiSelectMode) {
-            if (selectedChatIds.size > 0) {
-                const confirmed = await showCustomConfirm(getToastMessage('dialog.deleteConfirmation'), getToastMessage('dialog.deleteSelectedChats', { count: selectedChatIds.size }), ICONS.DELETE);
-                if (confirmed) {
-                    const idsToDelete = [...selectedChatIds];
-                    const currentChatWasDeleted = idsToDelete.includes(currentChatId);
+            if (selectedChatIds.size === 0) {
+                showToast(getToastMessage('toast.pleaseSelectRecords'), 'info');
+                return;
+            }
 
-                    idsToDelete.forEach(id => {
-                        delete chats[id];
-                        localStorage.removeItem(`pending_chat_${id}`);
-                        if (activeResponses.has(id)) {
-                            activeResponses.get(id).controller.abort();
-                            activeResponses.delete(id);
-                        }
-                    });
+            const confirmed = await showCustomConfirm(
+                getToastMessage('dialog.deleteConfirmation'),
+                getToastMessage('dialog.deleteSelectedChats', { count: selectedChatIds.size }),
+                ICONS.DELETE
+            );
+            if (!confirmed) {
+                return;
+            }
 
-                    scheduleRenderSidebar();
-                    showToast(getToastMessage('toast.selectedRecordsDeleted'), 'success');
+            const idsToDelete = [...selectedChatIds];
+            const currentChatWasDeleted = idsToDelete.includes(currentChatId);
+            const previousCurrentChatId = currentChatId;
+            const previousWelcomePageShown = welcomePageShown;
+            const deletedChatsBackup = new Map();
+            const pendingChatBackup = new Map();
 
-                    if (currentChatWasDeleted) {
-                        currentChatId = null;
-                        welcomePageShown = false;
-                        showEmptyState();
-                    }
+            idsToDelete.forEach(id => {
+                if (chats[id]) {
+                    deletedChatsBackup.set(id, chats[id]);
+                }
+                const pendingKey = `pending_chat_${id}`;
+                const pendingValue = localStorage.getItem(pendingKey);
+                if (pendingValue !== null) {
+                    pendingChatBackup.set(id, pendingValue);
+                }
+                delete chats[id];
+                localStorage.removeItem(pendingKey);
+                if (activeResponses.has(id)) {
+                    activeResponses.get(id).controller.abort();
+                    activeResponses.delete(id);
+                }
+            });
 
-                    exitMultiSelectMode();
+            scheduleRenderSidebar();
 
-                    if (currentUser) {
-                        const deletionPromises = idsToDelete.map(id =>
-                            makeApiRequest(`chats/${id}`, { method: 'DELETE' })
-                                .catch(error => {
-                                    console.warn(`Failed to delete chat ${id} from server: ${error.message}`);
-                                })
-                        );
-                        Promise.all(deletionPromises).then(async () => {
-                            await saveChatsToDB(currentUser.id, chats);
-                        });
-                    } else {
-                        await saveChatsToDB('guest', chats);
+            if (currentChatWasDeleted) {
+                currentChatId = null;
+                welcomePageShown = false;
+                showEmptyState();
+            }
+
+            let deletionFailed = false;
+            let failureReason = null;
+
+            if (currentUser) {
+                const deletionResults = await Promise.allSettled(
+                    idsToDelete.map(id => makeApiRequest(`chats/${id}`, { method: 'DELETE' }))
+                );
+                const failedResults = deletionResults.filter(result => result.status === 'rejected');
+                if (failedResults.length > 0) {
+                    deletionFailed = true;
+                    failureReason = failedResults[0].reason;
+                } else {
+                    try {
+                        await saveChatsToDB(currentUser.id, chats);
+                    } catch (dbError) {
+                        deletionFailed = true;
+                        failureReason = dbError;
                     }
                 }
             } else {
-                showToast(getToastMessage('toast.pleaseSelectRecords'), 'info');
+                try {
+                    await saveChatsToDB('guest', chats);
+                } catch (dbError) {
+                    deletionFailed = true;
+                    failureReason = dbError;
+                }
             }
+
+            if (deletionFailed) {
+                for (const [id, chatData] of deletedChatsBackup.entries()) {
+                    chats[id] = chatData;
+                }
+                for (const [id, pendingValue] of pendingChatBackup.entries()) {
+                    localStorage.setItem(`pending_chat_${id}`, pendingValue);
+                }
+                if (currentChatWasDeleted) {
+                    currentChatId = previousCurrentChatId;
+                    welcomePageShown = previousWelcomePageShown;
+                    if (currentChatId && chats[currentChatId]) {
+                        await loadChat(currentChatId);
+                    } else {
+                        showEmptyState();
+                    }
+                }
+                scheduleRenderSidebar();
+                try {
+                    if (currentUser) {
+                        await saveChatsToDB(currentUser.id, chats);
+                    } else {
+                        await saveChatsToDB('guest', chats);
+                    }
+                } catch (_) { }
+                const deleteSelectedBtn = document.getElementById('delete-selected-btn');
+                if (deleteSelectedBtn) {
+                    deleteSelectedBtn.textContent = `${getToastMessage('ui.deleteSelected')} (${selectedChatIds.size})`;
+                }
+                showToast(getToastMessage('toast.multiDeleteFailed'), 'error');
+                return;
+            }
+
+            showToast(getToastMessage('toast.selectedRecordsDeleted'), 'success');
+            exitMultiSelectMode();
+            return;
         } else {
             const chatIdsToDelete = Object.keys(chats);
             if (chatIdsToDelete.length === 0) {
@@ -10851,18 +11139,43 @@ function setupEventListeners() {
                 welcomePageShown = false;
 
                 if (!currentUser) {
+                    const previousChats = { ...chats };
+                    const previousCurrentChatId = currentChatId;
+                    const previousWelcomePageShown = welcomePageShown;
+
                     chats = {};
                     currentChatId = null;
-                    await deleteChatsFromDB('guest');
                     showEmptyState();
                     scheduleRenderSidebar();
                     closeSidebarOnInteraction();
-                    showToast(getToastMessage('toast.allRecordsDeleted'), 'success');
-                    notifyBackendCacheInvalidation('guest_all_chats_deleted', { deletedCount: Object.keys(chats).length });
+                    try {
+                        await deleteChatsFromDB('guest');
+                        showToast(getToastMessage('toast.allRecordsDeleted'), 'success');
+                        notifyBackendCacheInvalidation('guest_all_chats_deleted', { deletedCount: Object.keys(chats).length });
+                    } catch (error) {
+                        chats = previousChats;
+                        currentChatId = previousCurrentChatId;
+                        welcomePageShown = previousWelcomePageShown;
+                        scheduleRenderSidebar();
+                        if (currentChatId && chats[currentChatId]) {
+                            await loadChat(currentChatId);
+                        } else {
+                            showEmptyState();
+                        }
+                        console.warn('Delete all (guest) failed:', error);
+                        showToast(getToastMessage('toast.deleteAllFailed'), 'error');
+                        try {
+                            await saveChatsToDB('guest', chats);
+                        } catch (_) { }
+                    }
                     return;
                 }
 
                 const idsToDelete = Object.keys(chats);
+                const previousChats = { ...chats };
+                const previousCurrentChatId = currentChatId;
+                const previousWelcomePageShown = welcomePageShown;
+
                 chats = {};
                 currentChatId = null;
                 showEmptyState();
@@ -10870,17 +11183,45 @@ function setupEventListeners() {
                 closeSidebarOnInteraction();
                 showToast(getToastMessage('toast.deletingInBackground', { count: idsToDelete.length }), 'info');
 
-                try {
-                    const deletionPromises = idsToDelete.map(id => makeApiRequest(`chats/${id}`, { method: 'DELETE' }));
-                    await Promise.all(deletionPromises);
+                const deletionResults = await Promise.allSettled(
+                    idsToDelete.map(id => makeApiRequest(`chats/${id}`, { method: 'DELETE' }))
+                );
+                const failedResults = deletionResults.filter(result => result.status === 'rejected');
 
-                    await saveChatsToDB(currentUser.id, chats);
+                let deletionFailed = failedResults.length > 0;
+                let failureReason = failedResults[0]?.reason || null;
 
-                    showToast(getToastMessage('toast.allRecordsDeletedSuccess'), 'success');
-                    notifyBackendCacheInvalidation('all_chats_deleted', { userId: currentUser.id, deletedCount: idsToDelete.length });
-                } catch (error) {
-                    showToast(getToastMessage('toast.backgroundDeleteError'), 'error');
+                if (!deletionFailed) {
+                    try {
+                        await saveChatsToDB(currentUser.id, chats);
+                    } catch (dbError) {
+                        deletionFailed = true;
+                        failureReason = dbError;
+                    }
                 }
+
+                if (deletionFailed) {
+                    chats = previousChats;
+                    currentChatId = previousCurrentChatId;
+                    welcomePageShown = previousWelcomePageShown;
+                    scheduleRenderSidebar();
+                    if (currentChatId && chats[currentChatId]) {
+                        await loadChat(currentChatId);
+                    } else {
+                        showEmptyState();
+                    }
+                    if (failureReason) {
+                        console.warn('Delete all failed:', failureReason);
+                    }
+                    try {
+                        await saveChatsToDB(currentUser.id, chats);
+                    } catch (_) { }
+                    showToast(getToastMessage('toast.deleteAllFailed'), 'error');
+                    return;
+                }
+
+                showToast(getToastMessage('toast.allRecordsDeletedSuccess'), 'success');
+                notifyBackendCacheInvalidation('all_chats_deleted', { userId: currentUser.id, deletedCount: idsToDelete.length });
             }
         }
     };
@@ -11528,7 +11869,7 @@ function setupEventListeners() {
         }
     });
 
-    
+
 
 
     elements.logoutBtn.addEventListener('click', logout);
@@ -11688,33 +12029,20 @@ function setupEventListeners() {
             scheduleRenderSidebar();
 
             await new Promise(resolve => setTimeout(resolve, 100));
+            showToast(getToastMessage('toast.languageSettingsSaved'), 'success');
 
             if (currentUser) {
-                // 注册用户：保存到服务器并立即通知后台清理缓存
-                try {
-                    makeAuthRequest('update-language', { language: selectedLang }).then(() => {
-                        setTimeout(() => {
-                            showToast(getToastMessage('toast.languageSettingsSaved'), 'success');
-                            notifyBackendCacheInvalidation('language_changed', { language: selectedLang });
-                            refreshSettingsI18nTexts();
-                        }, 50);
-                    }).catch(error => {
-                        setTimeout(() => {
-                            showToast(getToastMessage('toast.languageSettingsSaveFailed'), 'error');
-                        }, 50);
-                    });
-                } catch (error) {
-                    setTimeout(() => {
-                        showToast(getToastMessage('toast.languageSettingsSaveFailed'), 'error');
-                    }, 50);
-                }
-            } else {
-                // 访客：只保存到本地存储
-                setTimeout(() => {
-                    showToast(getToastMessage('toast.languageSettingsSaved'), 'success');
-                    notifyBackendCacheInvalidation('guest_language_updated', { language: selectedLang });
+                // 注册用户
+                makeAuthRequest('update-language', { language: selectedLang }).then(() => {
+                    notifyBackendCacheInvalidation('language_changed', { language: selectedLang });
                     refreshSettingsI18nTexts();
-                }, 50);
+                }).catch(error => {
+                    console.error('Language sync to server failed:', error);
+                });
+            } else {
+                // 访客
+                notifyBackendCacheInvalidation('guest_language_updated', { language: selectedLang });
+                refreshSettingsI18nTexts();
             }
 
             if (currentUser) {
@@ -12151,7 +12479,7 @@ function setupEventListeners() {
 
         if (currentUser) {
             notifyBackendCacheInvalidation('theme_updated', { preset: selectedTheme });
-            savePresetAndFont('preset');
+            await savePresetAndFont('preset');
         } else {
             guestThemeSettings.preset = selectedTheme;
             guestThemeSettings.background_url = null;
@@ -12211,7 +12539,7 @@ function setupEventListeners() {
 
             if (currentUser) {
                 notifyBackendCacheInvalidation('theme_updated', { font: value });
-                savePresetAndFont('font');
+                await savePresetAndFont('font');
             } else {
                 guestThemeSettings.font = value;
                 localStorage.setItem('guestThemeSettings', JSON.stringify(guestThemeSettings));
@@ -13350,45 +13678,76 @@ async function initialize() {
                             const localTheme = JSON.parse(localThemeStr);
                             await applyTheme(localTheme);
                             appliedTheme = true;
+
+                            makeAuthRequest('update-profile', {
+                                theme_settings: localTheme
+                            }).then(() => {
+                                localStorage.removeItem('userThemeSettingsUpdatedAt');
+                            }).catch(err =>
+                                console.error('Failed to sync local theme on startup:', err)
+                            );
                         } catch (_) {
                             await applyTheme(serverTheme);
                             localStorage.setItem('userThemeSettings', serverThemeStr);
                             if (serverTheme && serverTheme.preset) {
                                 localStorage.setItem('userThemePreset', serverTheme.preset);
                             }
-                            if (serverTheme && serverTheme.preset) {
-                                localStorage.setItem('userThemePreset', serverTheme.preset);
-                            }
+                            localStorage.removeItem('userThemeSettingsUpdatedAt');
                             appliedTheme = true;
                         }
+                    } else if (localThemeStr !== serverThemeStr && !preferLocalShortWindow) {
+                        // 本地设置过期，使用服务端设置
+                        await applyTheme(serverTheme);
+                        localStorage.setItem('userThemeSettings', serverThemeStr);
+                        if (serverTheme && serverTheme.preset) {
+                            localStorage.setItem('userThemePreset', serverTheme.preset);
+                        }
+                        localStorage.removeItem('userThemeSettingsUpdatedAt');
+                        appliedTheme = true;
                     } else {
                         await applyTheme(serverTheme);
                         localStorage.setItem('userThemeSettings', serverThemeStr);
                         if (serverTheme && serverTheme.preset) {
                             localStorage.setItem('userThemePreset', serverTheme.preset);
                         }
+                        localStorage.removeItem('userThemeSettingsUpdatedAt');
                         appliedTheme = true;
                     }
                 } else {
                     if (localThemeStr !== serverThemeStr) {
                         if (preferLocalShortWindow && localThemeStr) {
-                            // 保持本地设置，不被旧服务端值覆盖
-                        } else {
-                            await applyTheme(serverTheme);
+                            try {
+                                const localTheme = JSON.parse(localThemeStr);
+                                makeAuthRequest('update-profile', {
+                                    theme_settings: localTheme
+                                }).then(() => {
+                                    localStorage.removeItem('userThemeSettingsUpdatedAt');
+                                }).catch(err =>
+                                    console.error('Failed to sync local theme on startup:', err)
+                                );
+                            } catch (_) {
+                                localStorage.removeItem('userThemeSettingsUpdatedAt');
+                            }
+                        } else if (!preferLocalShortWindow) {
                             localStorage.setItem('userThemeSettings', serverThemeStr);
-                            // 清除更新时间戳，表示已与服务端对齐
+                            if (serverTheme && serverTheme.preset) {
+                                localStorage.setItem('userThemePreset', serverTheme.preset);
+                            }
                             localStorage.removeItem('userThemeSettingsUpdatedAt');
                         }
                     } else {
-                        // 一致则清除标记
                         localStorage.removeItem('userThemeSettingsUpdatedAt');
                     }
                 }
             }
 
             if (serverLang) {
+                const currentLang = getCurrentLanguage();
                 localStorage.setItem('selectedLanguage', serverLang);
-                await applyLanguage(serverLang);
+
+                if (currentLang !== serverLang) {
+                    await applyLanguage(serverLang);
+                }
             } else {
                 // 登录用户未设置语言：按系统/浏览器语言显示并保存到服务器
                 const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'zh-CN';
@@ -13599,5 +13958,8 @@ async function commitInlineEditMode() {
         await _processAndSendMessage(newParts, newText);
     } finally {
         // 状态在下游复位
+
+
+
     }
 }

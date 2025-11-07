@@ -131,7 +131,13 @@
         "aiToolCallReturnedFailureStatus": "AI工具呼叫傳回失敗狀態",
         "aiReturnedEmptyContent": "AI傳回了空內容",
         "saveFailed": "儲存失敗",
-        "maxActivationReached": "最多可啟用3次"
+        "maxActivationReached": "最多可啟用3次",
+        "httpStatus": {
+            "400": "請求失敗，請稍後重試",
+            "403": "請求被拒絕，請檢查金鑰有效性",
+            "429": "請求失敗，請稍後重試",
+            "503": "模型過載，請稍後重試"
+        }
     },
     "models": {
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -249,6 +255,8 @@
         "deletingInBackground": "正在背景刪除 {count} 筆記錄...",
         "allRecordsDeletedSuccess": "所有聊天記錄已成功刪除",
         "backgroundDeleteError": "背景刪除時發生錯誤，部分記錄可能未刪除。請重新整理頁面查看。",
+        "multiDeleteFailed": "多選刪除失敗",
+        "deleteAllFailed": "一鍵刪除失敗",
         "searchModeOn": "搜尋模式已開啟",
         "searchModeOff": "搜尋模式已關閉",
         "imageModeOn": "圖片模式已開啟",
@@ -573,7 +581,7 @@
         "cannotLoadChatRecord": "無法載入此聊天記錄",
         "error": "錯誤",
         "retry": "重試",
-        "formatInstruction": "您的回答必須使用Markdown格式進行排版，尤其注意：(1)、對於任何程式碼片段，都必須使用程式碼區塊（```）包裹並正確地標記語言類型（如 ```javascript）；(2)、若輸出有數學公式，請務必遵循數學公式的正確渲染邏輯。**您不需要時刻在回覆中強調您的身份**。",
+        "formatInstruction": "用Markdown回答。程式碼用```標註語言。數學用KaTeX：行內$公式$、區塊$$公式$$。**嚴禁**用**粗體**或*斜體*表示數學（如d**B**❌，必須$d\\vec{B}$✓）。",
         "title": "標題",
         "url": "網址",
         "summary": "摘要",
@@ -585,7 +593,6 @@
         "respondToUserReply": "請根據以下引用內容來回應使用者的回覆",
         "quoteContent": "引用內容",
         "userReply": "使用者的回覆",
-        "formatInstructionWithOutput": "您的回答必須使用Markdown格式進行排版，尤其注意：(1)、對於任何程式碼片段，都必須使用程式碼區塊（```）包裹並正確地標記語言類型（如 ```javascript）；(2)、若輸出有數學公式，請務必遵循數學公式的正確渲染邏輯。**您不需要時刻在回覆中強調您的身份和輸出格式**。",
         "userSupplement": "使用者補充/修正",
         "file": "檔案",
         "summarizedLongText": "我已經將一份長文本進行了總結",

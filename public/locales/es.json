@@ -131,7 +131,13 @@
         "aiToolCallReturnedFailureStatus": "La llamada de herramienta de IA devolvió un estado de fallo",
         "aiReturnedEmptyContent": "La IA devolvió contenido vacío",
         "saveFailed": "Error al guardar",
-        "maxActivationReached": "Se alcanzó el máximo de 3 activaciones"
+        "maxActivationReached": "Se alcanzó el máximo de 3 activaciones",
+        "httpStatus": {
+            "400": "La solicitud falló, inténtalo de nuevo más tarde",
+            "403": "Solicitud denegada, verifica la validez de tu clave API",
+            "429": "La solicitud falló, inténtalo de nuevo más tarde",
+            "503": "Modelo sobrecargado, inténtalo de nuevo más tarde"
+        }
     },
     "models": {
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -249,6 +255,8 @@
         "deletingInBackground": "Eliminando {count} registros en segundo plano...",
         "allRecordsDeletedSuccess": "Todos los registros de chat han sido eliminados exitosamente",
         "backgroundDeleteError": "Ocurrió un error durante la eliminación en segundo plano. Algunos registros pueden no haber sido eliminados. Por favor actualice la página para verificar.",
+        "multiDeleteFailed": "Error al eliminar selección múltiple",
+        "deleteAllFailed": "Error al eliminar todos",
         "searchModeOn": "Modo de búsqueda activado",
         "searchModeOff": "Modo de búsqueda desactivado",
         "imageModeOn": "Modo de imagen activado",
@@ -573,7 +581,7 @@
         "cannotLoadChatRecord": "No se puede cargar este registro de chat",
         "error": "Error",
         "retry": "Reintentar",
-        "formatInstruction": "Su respuesta debe estar formateada usando Markdown. Preste especial atención a: (1) Para cualquier fragmento de código, deben estar envueltos en bloques de código (```) y etiquetados correctamente con el tipo de lenguaje (por ejemplo, ```javascript). (2) Si la salida contiene fórmulas matemáticas, siga la lógica de renderizado correcta para fórmulas matemáticas. **No necesita enfatizar constantemente su identidad en sus respuestas**.",
+        "formatInstruction": "Use Markdown. Código en ``` con lenguaje. Matemáticas en KaTeX: inline $fórmula$, display $$fórmula$$. **NUNCA** use **negrita** o *cursiva* para matemáticas (d**B**❌, debe ser $d\\vec{B}$✓).",
         "title": "Título",
         "url": "URL",
         "summary": "Resumen",
@@ -585,7 +593,6 @@
         "respondToUserReply": "Por favor responda a la respuesta del usuario basándose en el siguiente contenido citado",
         "quoteContent": "Contenido citado",
         "userReply": "Respuesta del usuario",
-        "formatInstructionWithOutput": "Su respuesta debe estar formateada usando Markdown. Preste especial atención a: (1) Para cualquier fragmento de código, deben estar envueltos en bloques de código (```) y etiquetados correctamente con el tipo de lenguaje (por ejemplo, ```javascript). (2) Si la salida contiene fórmulas matemáticas, siga la lógica de renderizado correcta para fórmulas matemáticas. **No necesita enfatizar constantemente su identidad y formato de salida en sus respuestas**.",
         "userSupplement": "Complemento/Corrección del usuario",
         "file": "Archivo",
         "summarizedLongText": "He resumido un texto largo",

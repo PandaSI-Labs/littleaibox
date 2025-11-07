@@ -1,4 +1,4 @@
-{
+﻿{
     "appSubtitle": "智能AI对话助手",
     "loading": "正在加载核心资源...",
     "login": "登录",
@@ -131,7 +131,16 @@
         "aiToolCallReturnedFailureStatus": "AI工具调用返回失败状态",
         "aiReturnedEmptyContent": "AI返回了空内容",
         "saveFailed": "保存失败",
-        "maxActivationReached": "最多可激活3次"
+        "maxActivationReached": "最多可激活3次",
+        "httpStatus": {
+            "400": "请求参数错误(400)",
+            "401": "未授权，请重新登录(401)",
+            "403": "访问被拒绝(403)",
+            "404": "请求的资源不存在(404)",
+            "500": "服务器内部错误(500)",
+            "502": "网关错误(502)",
+            "503": "服务暂时不可用(503)"
+        }
     },
     "models": {
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -249,6 +258,8 @@
         "deletingInBackground": "正在后台删除 {count} 条记录...",
         "allRecordsDeletedSuccess": "所有聊天记录已成功删除",
         "backgroundDeleteError": "后台删除时发生错误，部分记录可能未删除。请刷新页面查看。",
+        "multiDeleteFailed": "多选删除失败",
+        "deleteAllFailed": "一键删除失败",
         "searchModeOn": "搜索模式已开启",
         "searchModeOff": "搜索模式已关闭",
         "imageModeOn": "图片模式已开启",
@@ -575,7 +586,7 @@
         "cannotLoadChatRecord": "无法加载该聊天记录",
         "error": "错误",
         "retry": "重试",
-        "formatInstruction": "你的回答必须使用Markdown格式进行排版,尤其注意:(1)、对于任何代码片段，都必须使用代码块（```）包裹并正确地标记语言类型（如 ```javascript);(2)、如若输出有数学公式，请务必遵循数学公式的正确渲染逻辑。**你不需要时刻在回复中强调你的身份**。",
+        "formatInstruction": "用Markdown回答。代码用```标注语言。数学用KaTeX：行内$公式$、块级$$公式$$。**严禁**用**粗体**或*斜体*表示数学（如d**B**❌，必须$d\\vec{B}$✓）。",
         "title": "标题",
         "url": "网址",
         "summary": "摘要",
@@ -587,7 +598,6 @@
         "respondToUserReply": "请根据以下引用内容来回应用户的回复",
         "quoteContent": "引用内容",
         "userReply": "用户的回复",
-        "formatInstructionWithOutput": "你的回答必须使用Markdown格式进行排版,尤其注意:(1)、对于任何代码片段，都必须使用代码块（```）包裹并正确地标记语言类型（如 ```javascript);(2)、如若输出有数学公式，请务必遵循数学公式的正确渲染逻辑。**你不需要时刻在回复中强调你的身份和输出格式**。",
         "userSupplement": "用户补充/修正",
         "file": "文件",
         "summarizedLongText": "我已经将一份长文本进行了总结",

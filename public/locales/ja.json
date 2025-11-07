@@ -131,7 +131,13 @@
         "aiToolCallReturnedFailureStatus": "AIツールの呼び出しが失敗ステータスを返しました",
         "aiReturnedEmptyContent": "AIが空のコンテンツを返しました",
         "saveFailed": "保存に失敗しました",
-        "maxActivationReached": "最大3回までアクティベートできます"
+        "maxActivationReached": "最大3回までアクティベートできます",
+        "httpStatus": {
+            "400": "リクエストに失敗しました。しばらくしてから再試行してください",
+            "403": "リクエストが拒否されました。APIキーの有効性を確認してください",
+            "429": "リクエストに失敗しました。しばらくしてから再試行してください",
+            "503": "モデルが過負荷です。しばらくしてから再試行してください"
+        }
     },
     "models": {
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -249,6 +255,8 @@
         "deletingInBackground": "バックグラウンドで{count}件のレコードを削除中...",
         "allRecordsDeletedSuccess": "すべてのチャット履歴が正常に削除されました",
         "backgroundDeleteError": "バックグラウンドでの削除中にエラーが発生しました。一部のレコードが削除されていない可能性があります。ページを更新して確認してください。",
+        "multiDeleteFailed": "複数選択の削除に失敗しました",
+        "deleteAllFailed": "一括削除に失敗しました",
         "searchModeOn": "検索モードがオンになりました",
         "searchModeOff": "検索モードがオフになりました",
         "imageModeOn": "画像モードがオンになりました",
@@ -573,7 +581,7 @@
         "cannotLoadChatRecord": "このチャットレコードを読み込めません",
         "error": "エラー",
         "retry": "再試行",
-        "formatInstruction": "あなたの回答はMarkdown形式でフォーマットする必要があります。特に注意してください：(1)コードスニペットは、コードブロック（```）で囲み、言語タイプ（例：```javascript）を正しく指定する必要があります。(2)数式が出力される場合は、数式の正しいレンダリングロジックに従ってください。**常にあなたのアイデンティティを返信で強調する必要はありません**。",
+        "formatInstruction": "Markdownで回答。コード```で言語指定。数式KaTeX：インライン$数式$、ディスプレイ$$数式$$。**絶対禁止**：**太字**や*斜体*で数学表記（d**B**❌、必ず$d\\vec{B}$✓）。",
         "title": "タイトル",
         "url": "URL",
         "summary": "要約",
@@ -585,7 +593,6 @@
         "respondToUserReply": "以下の引用内容に基づいてユーザーの返信に応答してください",
         "quoteContent": "引用内容",
         "userReply": "ユーザーの返信",
-        "formatInstructionWithOutput": "あなたの回答はMarkdown形式でフォーマットする必要があります。特に注意してください：(1)コードスニペットは、コードブロック（```）で囲み、言語タイプ（例：```javascript）を正しく指定する必要があります。(2)数式が出力される場合は、数式の正しいレンダリングロジックに従ってください。**常にあなたのアイデンティティと出力形式を返信で強調する必要はありません**。",
         "userSupplement": "ユーザーの補足/修正",
         "file": "ファイル",
         "summarizedLongText": "長文テキストを要約しました",

@@ -131,7 +131,13 @@
         "aiToolCallReturnedFailureStatus": "AI 도구 호출이 실패 상태를 반환했습니다",
         "aiReturnedEmptyContent": "AI가 빈 콘텐츠를 반환했습니다",
         "saveFailed": "저장 실패",
-        "maxActivationReached": "최대 3번까지 활성화할 수 있습니다"
+        "maxActivationReached": "최대 3번까지 활성화할 수 있습니다",
+        "httpStatus": {
+            "400": "요청에 실패했습니다. 잠시 후 다시 시도하세요",
+            "403": "요청이 거부되었습니다. API 키 유효성을 확인하세요",
+            "429": "요청에 실패했습니다. 잠시 후 다시 시도하세요",
+            "503": "모델이 과부하되었습니다. 잠시 후 다시 시도하세요"
+        }
     },
     "models": {
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -249,6 +255,8 @@
         "deletingInBackground": "백그라운드에서 {count}개의 기록을 삭제하는 중...",
         "allRecordsDeletedSuccess": "모든 채팅 기록이 성공적으로 삭제되었습니다",
         "backgroundDeleteError": "백그라운드 삭제 중 오류가 발생했습니다. 일부 기록이 삭제되지 않았을 수 있습니다. 페이지를 새로고침하여 확인하세요.",
+        "multiDeleteFailed": "다중 선택 삭제에 실패했습니다",
+        "deleteAllFailed": "전체 삭제에 실패했습니다",
         "searchModeOn": "검색 모드가 켜졌습니다",
         "searchModeOff": "검색 모드가 꺼졌습니다",
         "imageModeOn": "이미지 모드가 켜졌습니다",
@@ -573,7 +581,7 @@
         "cannotLoadChatRecord": "이 채팅 기록을 로드할 수 없습니다",
         "error": "오류",
         "retry": "재시도",
-        "formatInstruction": "답변은 반드시 마크다운 형식을 사용해야 합니다. 특히 다음 사항에 주의하세요: (1) 모든 코드 스니펫은 코드 블록(```)으로 감싸고 언어 유형을 정확하게 표시해야 합니다(예: ```javascript). (2) 수학 공식이 출력될 경우, 올바른 수학 공식 렌더링 논리를 따라야 합니다. **답변에서 자신의 신분을 계속 강조할 필요는 없습니다**.",
+        "formatInstruction": "마크다운 사용. 코드 ```로 언어 지정. 수학 KaTeX: 인라인 $공식$, 블록 $$공식$$. **절대 금지**: **굵게**나 *기울임*으로 수학 표기 (d**B**❌, 반드시 $d\\vec{B}$✓).",
         "title": "제목",
         "url": "URL",
         "summary": "요약",
@@ -585,7 +593,6 @@
         "respondToUserReply": "다음 인용 내용에 따라 사용자의 답장에 응답해주세요",
         "quoteContent": "인용 내용",
         "userReply": "사용자의 답장",
-        "formatInstructionWithOutput": "답변은 반드시 마크다운 형식을 사용해야 합니다. 특히 다음 사항에 주의하세요: (1) 모든 코드 스니펫은 코드 블록(```)으로 감싸고 언어 유형을 정확하게 표시해야 합니다(예: ```javascript). (2) 수학 공식이 출력될 경우, 올바른 수학 공식 렌더링 논리를 따라야 합니다. **답변에서 자신의 신분과 출력 형식을 계속 강조할 필요는 없습니다**.",
         "userSupplement": "사용자 보충/수정",
         "file": "파일",
         "summarizedLongText": "긴 텍스트를 요약했습니다",
