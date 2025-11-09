@@ -831,7 +831,8 @@
         "updateMessage": "LittleAIBox v{version} がリリースされました。通知をタップしてダウンロードページへ",
         "downloadingUpdate": "v{version} アップデートをダウンロード中...",
         "installPrompt": "APK をダウンロードしました。アップデートをインストールしてください",
-        "updateFailed": "更新に失敗しました。後でもう一度お試しください"
+        "updateFailed": "更新に失敗しました。後でもう一度お試しください",
+        "openInBrowser": "ネイティブインストーラーが利用できないため、ブラウザでダウンロードを開始します..."
     },
     "notification": {
         "aiResponding": "AIが応答中",

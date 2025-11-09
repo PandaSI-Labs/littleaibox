@@ -1,4 +1,4 @@
-# ----------------------------------------------------------------------
+﻿# ----------------------------------------------------------------------
 # 缓存策略 (Cache Policy)
 # ----------------------------------------------------------------------
 
@@ -24,6 +24,16 @@
 /downloads/*.apk
   Content-Type: application/vnd.android.package-archive
   Cache-Control: public, max-age=86400, immutable
+  Access-Control-Allow-Origin: *
+  Access-Control-Allow-Methods: GET, OPTIONS
+  Access-Control-Allow-Headers: *
+
+# 4.1 为APK存储目录提供CORS支持
+/downloads/
+  Cache-Control: no-cache
+  Access-Control-Allow-Origin: *
+  Access-Control-Allow-Methods: GET, OPTIONS
+  Access-Control-Allow-Headers: *
 
 # 5. 对所有其他请求使用默认的验证缓存，并添加通用安全头
 /*
@@ -48,3 +58,5 @@
 /.env*
   Status: 403
   Cache-Control: no-store
+
+

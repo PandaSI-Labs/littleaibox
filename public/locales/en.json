@@ -831,6 +831,7 @@
         "updateMessage": "LittleAIBox v{version} has been released, tap to visit download page",
         "downloadingUpdate": "Downloading v{version} update...",
         "installPrompt": "APK downloaded, please install the update",
+        "openInBrowser": "Native installer unavailable, opening browser to download the update...",
         "updateFailed": "Update failed, please try again later"
     },
     "notification": {

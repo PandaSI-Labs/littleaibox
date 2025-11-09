@@ -831,7 +831,8 @@
         "updateMessage": "LittleAIBox v{version}이 출시되었습니다. 알림을 탭하여 다운로드 페이지로 이동",
         "downloadingUpdate": "v{version} 업데이트 다운로드 중...",
         "installPrompt": "APK 다운로드 완료, 업데이트를 설치하세요",
-        "updateFailed": "업데이트 실패, 나중에 다시 시도하세요"
+        "updateFailed": "업데이트 실패, 나중에 다시 시도하세요",
+        "openInBrowser": "네이티브 설치 프로그램을 사용할 수 없어 브라우저에서 업데이트를 다운로드합니다..."
     },
     "notification": {
         "aiResponding": "AI 응답 중",

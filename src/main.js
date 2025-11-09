@@ -15,7 +15,7 @@ import { renderMermaidDiagrams } from './mermaid-renderer.js';
 import './style.css';
 
 // ==================== AI System Prompts ====================
-const ROLE_INSTRUCTION = `Please always act as a professional, comprehensive, and helpful AI assistant.`;
+const ROLE_INSTRUCTION = `Please always act as a professional, comprehensive, and helpful AI assistant. Politely guide users away from explicit sexual content, hateful or violent instructions, and unsafe or illegal activities while offering constructive, safety-focused alternatives.`;
 const FORMAT_INSTRUCTION = `Use Markdown. Code\`\`\`lang. Math:$inline$/$$display$$. Chem **MUST**$\\ce{}$:$\\ce{H2O}$/$\\ce{A+B->C}$/$\\ce{A<=>B}$. Mermaid: (1)ALL labels/text MUST use double quotes"" (2)BAN fullwidth chars()（）①② (3)arrows ONLY --> or == (4)comments ONLY start-of-line %% (5)first line MUST be flowchart/graph directive (6)if uncertain, skip Mermaid.`;
 const SEARCH_CONTEXT_INSTRUCTION = `Answer based on the web search results below. Synthesize the information and cite sources as [1], [2] at sentence ends. Respond in user's language.`;
 // ===========================================================
@@ -2272,6 +2272,21 @@ async function ensureStoragePersistence() {
     }
 }
 
+async function ensureNotificationPermission() {
+    if (!isNativeApp || !LocalNotifications) {
+        return;
+    }
+    try {
+        const status = await LocalNotifications.checkPermissions();
+        if (status?.display === 'granted') {
+            return;
+        }
+        await LocalNotifications.requestPermissions();
+    } catch (error) {
+        console.warn('Failed to ensure notification permission:', error);
+    }
+}
+
 async function clearCacheAndReload() {
     const { updateNowBtn } = getUpdateElements();
     const version = updateNowBtn?.dataset.version || 'latest';
@@ -2341,11 +2356,99 @@ async function clearCacheAndReload() {
     try { location.reload(true); } catch (_) { location.reload(); }
 }
 
+function resolveApkDownloadUrl(relativePath) {
+    if (!relativePath) return '';
+    if (/^https?:/i.test(relativePath)) {
+        return relativePath;
+    }
+    const base = API_BASE_URL || window.location.origin;
+    try {
+        return new URL(relativePath, base || window.location.origin).href;
+    } catch (_) {
+        return `${base}${relativePath}`;
+    }
+}
+
+async function openApkInBrowser(relativePath) {
+    const absoluteUrl = resolveApkDownloadUrl(relativePath);
+    if (!absoluteUrl) return false;
+
+    const openViaBrowserPlugin = async () => {
+        if (Capacitor.isPluginAvailable('Browser')) {
+            await Browser.open({
+                url: absoluteUrl,
+                presentationStyle: 'popover'
+            });
+            return true;
+        }
+        return false;
+    };
+
+    try {
+        const opened = await openViaBrowserPlugin();
+        if (opened) return true;
+    } catch (browserError) {
+        console.warn('Browser plugin open failed:', browserError);
+    }
+
+    try {
+        const link = document.createElement('a');
+        link.href = absoluteUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        return true;
+    } catch (linkError) {
+        console.warn('Anchor fallback failed:', linkError);
+    }
+
+    try {
+        window.open(absoluteUrl, '_blank', 'noopener');
+        return true;
+    } catch (openError) {
+        console.warn('window.open fallback failed:', openError);
+    }
+
+    try {
+        window.location.href = absoluteUrl;
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
 async function downloadAndInstallApk(version) {
     try {
         showToast(getToastMessage('apk.downloadingUpdate', { version }), 'info');
 
         const apkUrl = `/downloads/LittleAIBox_v${version}.apk`;
+        let browserFallbackShown = false;
+        const triggerBrowserFallback = async () => {
+            if (!browserFallbackShown) {
+                browserFallbackShown = true;
+                showToast(getToastMessage('apk.openInBrowser'), 'info');
+            }
+            const opened = await openApkInBrowser(apkUrl);
+            if (!opened) {
+                showToast(getToastMessage('apk.updateFailed'), 'error');
+            }
+            return opened;
+        };
+
+        const canUseNativeInstaller = (
+            isNativeApp &&
+            Capacitor.getPlatform() === 'android' &&
+            ApkInstaller &&
+            typeof ApkInstaller.installApk === 'function'
+        );
+
+        if (!canUseNativeInstaller) {
+            await triggerBrowserFallback();
+            return;
+        }
+
         const response = await fetch(apkUrl);
 
         if (!response.ok) {
@@ -2409,7 +2512,7 @@ async function downloadAndInstallApk(version) {
         }
 
         if (!installerOpened) {
-            showToast(getToastMessage('apk.updateFailed'), 'error');
+            await triggerBrowserFallback();
             return;
         }
 
@@ -9085,6 +9188,10 @@ async function handleChatMessage(userContent, options = {}) {
             }
         }
 
+        if (!fullResponse) {
+            throw new Error(getToastMessage('errors.aiReturnedEmptyContent'));
+        }
+
     } catch (error) {
         if (error.name !== 'AbortError') {
             if (error.isNetworkError || error.message.includes(getToastMessage('errors.networkConnectionFailed'))) {
@@ -11821,9 +11928,6 @@ function setupEventListeners() {
                 keyOneTouched = false;
                 keyTwoTouched = false;
 
-                originalApiKeys.keyOne = apiKeyOne;
-                originalApiKeys.keyTwo = apiKeyTwo;
-
                 elements.settingsSaveBtn.disabled = false;
                 elements.settingsSaveBtn.textContent = originalButtonText;
                 return;
@@ -13507,6 +13611,12 @@ async function initialize() {
         }
         setupBackgroundProcessing();
         setupVisibilityRerender();
+
+        if (isNativeApp) {
+            ensureNotificationPermission().catch(error => {
+                console.warn('Notification permission request failed:', error);
+            });
+        }
 
         if ('ontouchstart' in window) {
             let isGestureReturn = false;

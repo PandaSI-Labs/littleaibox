@@ -832,7 +832,8 @@
         "updateMessage": "LittleAIBox v{version} 已發布，點擊通知前往下載頁面",
         "downloadingUpdate": "正在下載 v{version} 更新...",
         "installPrompt": "APK 已下載，請安裝更新",
-        "updateFailed": "更新失敗，請稍後重試"
+        "updateFailed": "更新失敗，請稍後重試",
+        "openInBrowser": "原生安裝器不可用，正在開啟瀏覽器下載…"
     },
     "notification": {
         "aiResponding": "AI 正在回覆",

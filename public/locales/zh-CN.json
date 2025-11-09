@@ -1,4 +1,4 @@
-﻿{
+{
     "appSubtitle": "智能AI对话助手",
     "loading": "正在加载核心资源...",
     "login": "登录",
@@ -834,6 +834,7 @@
         "updateMessage": "LittleAIBox v{version} 已发布，点击通知前往下载页面",
         "downloadingUpdate": "正在下载 v{version} 更新...",
         "installPrompt": "APK 已下载，请安装更新",
+        "openInBrowser": "原生安装器不可用，正在打开浏览器下载…",
         "updateFailed": "更新失败，请稍后重试"
     },
     "notification": {
