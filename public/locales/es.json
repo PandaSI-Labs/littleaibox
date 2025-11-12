@@ -129,14 +129,19 @@
         "failedToGetSearchResults": "Error al obtener los resultados de búsqueda",
         "aiToolCallFailed": "Error en la llamada de herramienta de IA",
         "aiToolCallReturnedFailureStatus": "La llamada de herramienta de IA devolvió un estado de fallo",
-        "aiReturnedEmptyContent": "La IA devolvió contenido vacío",
+        "aiReturnedEmptyContent": "El modelo rechazó la solicitud, cambie el contenido/modelo",
         "saveFailed": "Error al guardar",
         "maxActivationReached": "Se alcanzó el máximo de 3 activaciones",
         "httpStatus": {
-            "400": "La solicitud falló, inténtalo de nuevo más tarde",
-            "403": "Solicitud denegada, verifica la validez de tu clave API",
-            "429": "La solicitud falló, inténtalo de nuevo más tarde",
-            "503": "Modelo sobrecargado, inténtalo de nuevo más tarde"
+            "400": "Solicitud inválida o región/facturación no permitida (400)",
+            "401": "No autorizado, verifica tu clave API (401)",
+            "403": "Acceso denegado: permiso o región restringida (403)",
+            "404": "Recurso no encontrado, confirma el ID (404)",
+            "429": "Demasiadas solicitudes o cuota agotada (429)",
+            "500": "Error interno del servidor, inténtalo más tarde (500)",
+            "502": "Error de puerta de enlace, fallo del servicio ascendente (502)",
+            "503": "Servicio no disponible, intenta nuevamente más tarde (503)",
+            "504": "Tiempo de espera agotado, simplifica la solicitud (504)"
         }
     },
     "models": {
@@ -290,7 +295,8 @@
         "sharedTextReceived": "¡Texto compartido recibido!",
         "messageSavedOffline": "Red desconectada, mensaje guardado localmente y se sincronizará cuando esté en línea",
         "messageSendErrorRecovered": "El error de envío de mensaje se ha recuperado",
-        "coreResourcesLoadFailed": "Error al cargar los recursos principales de la aplicación, por favor actualice e intente nuevamente"
+        "coreResourcesLoadFailed": "Error al cargar los recursos principales de la aplicación, por favor actualice e intente nuevamente",
+        "guestKeyDisabled": "Tu clave personalizada dejó de ser válida. Se cambió al límite diario de invitado de {limit} solicitudes."
     },
     "console": {
         "fingerprintError": "Error al generar huella digital",
@@ -521,9 +527,9 @@
         "singleModeDesc": "El sistema usa solo KEY_ONE; KEY_TWO es una copia de seguridad que solo se usa si la primera falla.",
         "enterApiKey": "Ingrese su clave API aquí",
         "saveKeySettings": "Guardar configuración de clave",
-        "todayUsage": "Uso de hoy: {count} / ∞ (Clave personalizada)",
+        "todayUsage": "Uso de hoy: {count} / ∞ (clave personalizada)",
         "todayUsageNoKeys": "Uso de hoy: {count} / 12",
-        "todayUsageServerFallback": "Uso de hoy: {count} / 12 (Una o más claves inválidas)",
+        "todayUsageServerFallback": "Uso de hoy: {count} / 12 (una o más claves inválidas)",
         "themePresets": "Temas preestablecidos",
         "themePresetsDesc": "Elija un estilo de interfaz general. Aún puede sobrescribir el fondo del chat a continuación.",
         "lightMode": "Modo claro",

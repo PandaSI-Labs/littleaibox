@@ -129,14 +129,19 @@
         "failedToGetSearchResults": "未能取得搜尋結果",
         "aiToolCallFailed": "AI工具呼叫失敗",
         "aiToolCallReturnedFailureStatus": "AI工具呼叫傳回失敗狀態",
-        "aiReturnedEmptyContent": "AI傳回了空內容",
+        "aiReturnedEmptyContent": "模型拒絕了該請求,請換內容/模型",
         "saveFailed": "儲存失敗",
         "maxActivationReached": "最多可啟用3次",
         "httpStatus": {
-            "400": "請求失敗，請稍後重試",
-            "403": "請求被拒絕，請檢查金鑰有效性",
-            "429": "請求失敗，請稍後重試",
-            "503": "模型過載，請稍後重試"
+            "400": "請求參數或地區/計費權限異常(400)",
+            "401": "未授權，請檢查 API Key(401)",
+            "403": "存取被拒：權限或地區受限(403)",
+            "404": "資源不存在，請確認 ID(404)",
+            "429": "請求過多或額度耗盡(429)",
+            "500": "伺服器內部錯誤，稍後再試(500)",
+            "502": "閘道錯誤，上游服務異常(502)",
+            "503": "服務不可用，請稍後重試(503)",
+            "504": "回應逾時，請精簡請求(504)"
         }
     },
     "models": {
@@ -192,6 +197,7 @@
         "loginSuccess": "登入成功",
         "logoutSuccess": "已登出",
         "apiKeyUpdateSuccess": "API 金鑰更新成功",
+        "guestKeyDisabled": "自訂金鑰已失效，已切換為訪客每日 {limit} 次限制",
         "verifyingKeyOne": "驗證KEY_ONE中...",
         "verifyingKeyTwo": "驗證KEY_TWO中...",
         "keyOneInvalid": "驗證失敗：KEY_ONE 無效",
@@ -791,7 +797,6 @@
         "storageLocationLabel": "儲存位置：",
         "storageLocation": "您的資料儲存於 Cloudflare 提供的全球分散式網路中。",
         "storageDurationLabel": "儲存期限：",
-        "storageDuration": "",
         "guestData": "訪客資料：使用統計資料（記錄於Cloudflare KV）的有效期為24小時，過期後將自動刪除。聊天記錄儲存於您的本地瀏覽器，由您自行管理。",
         "userData": "註冊使用者資料：您的帳戶資訊、聊天記錄和AI參數將持續儲存，直到您請求刪除您的帳戶。",
         "securityMeasuresLabel": "安全措施：",

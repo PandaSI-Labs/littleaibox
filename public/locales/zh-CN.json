@@ -129,17 +129,19 @@
         "failedToGetSearchResults": "未能获取搜索结果",
         "aiToolCallFailed": "AI工具调用失败",
         "aiToolCallReturnedFailureStatus": "AI工具调用返回失败状态",
-        "aiReturnedEmptyContent": "AI返回了空内容",
+        "aiReturnedEmptyContent": "模型拒绝了该请求,请换内容/模型",
         "saveFailed": "保存失败",
         "maxActivationReached": "最多可激活3次",
         "httpStatus": {
-            "400": "请求参数错误(400)",
-            "401": "未授权，请重新登录(401)",
-            "403": "访问被拒绝(403)",
-            "404": "请求的资源不存在(404)",
-            "500": "服务器内部错误(500)",
-            "502": "网关错误(502)",
-            "503": "服务暂时不可用(503)"
+            "400": "请求参数或地区权限异常(400)",
+            "401": "未授权，请检查 API Key(401)",
+            "403": "访问被拒绝，权限或地区受限(403)",
+            "404": "资源不存在，请核对 ID(404)",
+            "429": "请求过多或额度耗尽(429)",
+            "500": "服务器内部错误，请稍后再试(500)",
+            "502": "网关错误，上游服务异常(502)",
+            "503": "服务不可用，稍后重试(503)",
+            "504": "响应超时，请精简请求(504)"
         }
     },
     "models": {
@@ -195,6 +197,7 @@
         "loginSuccess": "登录成功",
         "logoutSuccess": "已退出登录",
         "apiKeyUpdateSuccess": "API Key 更新成功",
+        "guestKeyDisabled": "自定义密钥已失效，已切换至访客每日 {limit} 次限制",
         "verifyingKeyOne": "验证KEY_ONE中...",
         "verifyingKeyTwo": "验证KEY_TWO中...",
         "keyOneInvalid": "验证失败：KEY_ONE 无效",

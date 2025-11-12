@@ -129,14 +129,19 @@
         "failedToGetSearchResults": "Failed to get search results",
         "aiToolCallFailed": "AI tool call failed",
         "aiToolCallReturnedFailureStatus": "AI tool call returned a failure status",
-        "aiReturnedEmptyContent": "AI returned empty content",
+        "aiReturnedEmptyContent": "Model rejected the request, please change content/model",
         "saveFailed": "Save failed",
         "maxActivationReached": "Maximum of 3 activations reached",
         "httpStatus": {
-            "400": "Request failed, please try again later",
-            "429": "Request failed, please try again later",
-            "403": "Request was denied, please check your API key",
-            "503": "Model overloaded, please try again later"
+            "400": "Bad request or region/billing not allowed (400)",
+            "401": "Unauthorized, please check your API key (401)",
+            "403": "Access denied: permission or region restricted (403)",
+            "404": "Resource not found, please verify the ID (404)",
+            "429": "Too many requests or quota exhausted (429)",
+            "500": "Internal server error, try again later (500)",
+            "502": "Gateway error, upstream service failed (502)",
+            "503": "Service unavailable, retry later (503)",
+            "504": "Request timed out, simplify the payload (504)"
         }
     },
     "models": {
@@ -192,6 +197,7 @@
         "loginSuccess": "Login successful",
         "logoutSuccess": "Logged out successfully",
         "apiKeyUpdateSuccess": "API Key updated successfully",
+        "guestKeyDisabled": "Your custom key became invalid. Switched to the guest daily limit of {limit} requests.",
         "verifyingKeyOne": "Verifying KEY_ONE...",
         "verifyingKeyTwo": "Verifying KEY_TWO...",
         "keyOneInvalid": "Verification failed: KEY_ONE invalid",

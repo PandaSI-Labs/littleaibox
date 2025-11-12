@@ -15,8 +15,8 @@ import { renderMermaidDiagrams } from './mermaid-renderer.js';
 import './style.css';
 
 // ==================== AI System Prompts ====================
-const ROLE_INSTRUCTION = `Please always act as a professional, comprehensive, and helpful AI assistant. Politely guide users away from explicit sexual content, hateful or violent instructions, and unsafe or illegal activities while offering constructive, safety-focused alternatives.`;
-const FORMAT_INSTRUCTION = `Use Markdown. Code\`\`\`lang. Math:$inline$/$$display$$. Chem **MUST**$\\ce{}$:$\\ce{H2O}$/$\\ce{A+B->C}$/$\\ce{A<=>B}$. Mermaid: (1)ALL labels/text MUST use double quotes"" (2)BAN fullwidth chars()（）①② (3)arrows ONLY --> or == (4)comments ONLY start-of-line %% (5)first line MUST be flowchart/graph directive (6)if uncertain, skip Mermaid.`;
+const ROLE_INSTRUCTION = `Act as professional helpful AI. Decline explicit sexual/hateful/violent/illegal requests,offer safe alternatives.`;
+const FORMAT_INSTRUCTION = `Use Markdown. Code\`\`\`lang. Math:**CRITICAL**If response contains ANY math(equations/formulas/variables),ALL math symbols/expressions MUST wrap in$:inline$x$,display$$x$$.NO bare math chars allowed. Chem **MUST**$\\ce{}$:$\\ce{H2O}$/$\\ce{A+B->C}$/$\\ce{A<=>B}$. Mermaid: (1)ALL labels/text MUST use double quotes"" (2)BAN fullwidth chars()（）①② (3)arrows ONLY --> or == (4)comments ONLY start-of-line %% (5)first line MUST be flowchart/graph directive (6)if uncertain, skip Mermaid.`;
 const SEARCH_CONTEXT_INSTRUCTION = `Answer based on the web search results below. Synthesize the information and cite sources as [1], [2] at sentence ends. Respond in user's language.`;
 // ===========================================================
 
@@ -672,7 +672,7 @@ function revokeScriptBlobUrl(src) {
 }
 
 const PRIVACY_POLICY_VERSION = '2025-10-04';
-const GUEST_FILE_SIZE_LIMIT = 2 * 1024 * 1024;
+const GUEST_FILE_SIZE_LIMIT = 5 * 1024 * 1024;
 const LOGGED_IN_FILE_SIZE_LIMIT = 10 * 1024 * 1024;
 const MAX_TABLE_ROWS = 80;
 const LOCAL_STORAGE_KEY_PRIVACY = 'seenPrivacyPolicyVersion';
@@ -1141,6 +1141,8 @@ let chats = {};
 let currentChatId = null;
 let currentQuote = null;
 let attachments = [];
+const aiOptimizedContentStore = new WeakMap();
+let removeFileViewerLinkHandler = null;
 let isProcessing = false;
 let isSendingMessage = false;
 let wasImageGenerated = false;
@@ -1349,6 +1351,7 @@ const GUEST_LIMIT = 5;
 const LOGGED_IN_LIMIT = 12;
 
 let currentUserUsage = { count: 0, limit: LOGGED_IN_LIMIT, apiMode: 'mixed' };
+let guestUsageStats = { count: 0, limit: GUEST_LIMIT, loaded: false };
 
 // 模型配置
 const models = [
@@ -2340,6 +2343,11 @@ async function clearCacheAndReload() {
     });
 
     localStorage.setItem('app_version', version);
+    if (currentUser) {
+        localStorage.setItem('forceServerChatsReload', '1');
+    } else {
+        localStorage.removeItem('forceServerChatsReload');
+    }
     chats = {};
     currentChatId = null;
 
@@ -3360,6 +3368,39 @@ function clearGuestApiKeys() {
     } catch (_) { }
 }
 
+function handleGuestKeyInvalidation(options = {}) {
+    if (currentUser) return;
+
+    const previouslyHadKeys = guestHasActiveCustomKey();
+
+    clearGuestApiKeys();
+    guestUsageStats.count = 0;
+    guestUsageStats.limit = GUEST_LIMIT;
+    guestUsageStats.loaded = false;
+
+    if (elements.apiKeyOneInput) elements.apiKeyOneInput.value = '';
+    if (elements.apiKeyTwoInput) elements.apiKeyTwoInput.value = '';
+    if (elements.apiKeyStatus) {
+        elements.apiKeyStatus.textContent = getToastMessage('status.apiKeyNotConfigured');
+    }
+    if (elements.usageStats) {
+        elements.usageStats.style.display = 'none';
+    }
+
+    try {
+        updateActiveModel();
+        renderModelMenu();
+    } catch (_) { }
+    updateUsageDisplay();
+    try {
+        refreshSettingsI18nTexts();
+    } catch (_) { }
+
+    if (options.showToast !== false && previouslyHadKeys) {
+        showToast(getToastMessage('toast.guestKeyDisabled', { limit: GUEST_LIMIT }), 'warning');
+    }
+}
+
 function sanitizeUserForCache(user) {
     try {
         if (!user || typeof user !== 'object') return user;
@@ -3437,6 +3478,11 @@ function getGuestKeySettings() {
         keyTwo: (guestApiState.keyTwo || '').trim(),
         mode: guestApiState.mode || 'mixed'
     };
+}
+
+function guestHasActiveCustomKey() {
+    const { keyOne, keyTwo } = getGuestKeySettings();
+    return !!(keyOne || keyTwo);
 }
 
 function selectGuestApiKeyForRequest() {
@@ -3724,8 +3770,10 @@ function setupSettingsModalUI() {
 
             displayEmailText.textContent = currentUser.email;
             elements.editUsernameInput.value = currentUser.username || '';
-            try { updateUsageDisplay(); } catch (_) { }
-            fetchUsageStats().catch(err => console.error(`${getToastMessage('console.refreshUsageStatsFailed')}:`, err));
+            try {
+                updateUsageDisplay();
+            } catch (_) { }
+            refreshUsageStats().catch(err => console.error(`${getToastMessage('console.refreshUsageStatsFailed')}:`, err));
 
             if (currentUser.avatar_url) {
                 avatarPreview.style.display = 'block';
@@ -3799,7 +3847,13 @@ function setupSettingsModalUI() {
                 }
 
                 if (elements.usageStats) {
-                    elements.usageStats.style.display = 'none';
+                    const showGuestUsage = guestHasActiveCustomKey();
+                    elements.usageStats.style.display = showGuestUsage ? 'block' : 'none';
+                    if (showGuestUsage) {
+                        fetchGuestUsageStats().catch(err => console.error('Failed to fetch guest usage stats:', err));
+                    } else {
+                        updateUsageDisplay();
+                    }
                 }
             } catch (_) { }
 
@@ -4135,6 +4189,11 @@ async function fetchUsageStats(forceRefresh = false) {
             currentUserUsage.limit = result.limit || (getCustomApiKey() ? Infinity : LOGGED_IN_LIMIT);
             currentUserUsage.apiMode = result.apiMode || currentUser.api_mode;
             currentUserUsage.hasKeys = typeof result.hasKeys === 'boolean' ? result.hasKeys : !!getCustomApiKey();
+            currentUserUsage.fallbackCount = typeof result.fallbackCount === 'number'
+                ? result.fallbackCount
+                : ((result.fallbackRequestCount || 0) + (result.serverFallbackCount || 0));
+            currentUserUsage.fallbackLimit = typeof result.fallbackLimit === 'number' ? result.fallbackLimit : 12;
+            currentUserUsage.totalCount = typeof result.totalCount === 'number' ? result.totalCount : currentUserUsage.count;
 
             updateUsageDisplay();
         }
@@ -4151,6 +4210,48 @@ async function fetchUsageStats(forceRefresh = false) {
     }
 }
 
+async function fetchGuestUsageStats() {
+    if (currentUser) return;
+
+    const usageDisplay = document.getElementById('usage-display');
+    const hasGuestKey = guestHasActiveCustomKey();
+
+    if (!hasGuestKey) {
+        guestUsageStats.count = 0;
+        guestUsageStats.loaded = false;
+        guestUsageStats.limit = GUEST_LIMIT;
+        updateUsageDisplay();
+        return;
+    }
+
+    const refreshingText = getToastMessage('status.refreshing');
+    if (usageDisplay) {
+        usageDisplay.textContent = refreshingText;
+    }
+
+    try {
+        const result = await makeApiRequest('guest/usage');
+        if (result.customKeyDisabled) {
+            handleGuestKeyInvalidation({ showToast: true });
+            return;
+        }
+        guestUsageStats.count = typeof result.count === 'number' ? result.count : 0;
+        guestUsageStats.limit = typeof result.limit === 'number' ? result.limit : GUEST_LIMIT;
+        guestUsageStats.loaded = true;
+    } catch (error) {
+        console.error('Failed to fetch guest usage stats:', error);
+    } finally {
+        updateUsageDisplay();
+    }
+}
+
+function refreshUsageStats(forceRefresh = false) {
+    if (currentUser) {
+        return fetchUsageStats(forceRefresh);
+    }
+    return fetchGuestUsageStats();
+}
+
 function checkUsageLimit() {
     if (!currentUser || !currentUserUsage) {
         return { count: 0, limit: 12 };
@@ -4163,35 +4264,65 @@ function checkUsageLimit() {
 }
 
 function updateUsageDisplay() {
-    if (!currentUser || !currentUserUsage) return;
-
-    const usage = checkUsageLimit();
-    let text;
-
-    const hasKeys = (typeof currentUserUsage.hasKeys === 'boolean')
-        ? currentUserUsage.hasKeys
-        : !!getCustomApiKey();
-
-    if (!hasKeys) {
-        text = getToastMessage('ui.todayUsageNoKeys', { count: usage.count });
-    } else if (currentUserUsage.apiMode === 'server_fallback') {
-        text = getToastMessage('ui.todayUsageServerFallback', { count: usage.count });
-    } else {
-        text = getToastMessage('ui.todayUsage', { count: usage.count });
-    }
-
-    // 更新显示元素
     const usageDisplay = document.getElementById('usage-display');
+    if (!usageDisplay) return;
+
     const userInfoPopover = document.getElementById('user-info-popover');
 
-    if (usageDisplay) {
+    if (currentUser && currentUserUsage) {
+        const usage = checkUsageLimit();
+        let text;
+
+        const hasKeys = (typeof currentUserUsage.hasKeys === 'boolean')
+            ? currentUserUsage.hasKeys
+            : !!getCustomApiKey();
+
+        const fallbackCount = typeof currentUserUsage.fallbackCount === 'number'
+            ? currentUserUsage.fallbackCount
+            : 0;
+
+        if (!hasKeys) {
+            text = getToastMessage('ui.todayUsageNoKeys', { count: usage.count });
+        } else if (currentUserUsage.apiMode === 'server_fallback') {
+            text = getToastMessage('ui.todayUsageServerFallback', { count: fallbackCount });
+        } else {
+            text = getToastMessage('ui.todayUsage', { count: usage.count });
+        }
+
+        if (elements.usageStats) {
+            elements.usageStats.style.display = 'block';
+        }
         usageDisplay.textContent = text;
+        if (userInfoPopover) {
+            userInfoPopover.textContent = text;
+        }
+        return;
     }
+
+    const hasGuestKey = guestHasActiveCustomKey();
+
+    if (!hasGuestKey) {
+        if (elements.usageStats) {
+            elements.usageStats.style.display = 'none';
+        }
+        usageDisplay.textContent = '';
+        if (userInfoPopover) {
+            userInfoPopover.textContent = '';
+        }
+        return;
+    }
+
+    const guestCount = typeof guestUsageStats.count === 'number' ? guestUsageStats.count : 0;
+    const guestText = getToastMessage('ui.todayUsage', { count: guestCount });
+
+    if (elements.usageStats) {
+        elements.usageStats.style.display = 'block';
+    }
+    usageDisplay.textContent = guestText;
     if (userInfoPopover) {
-        userInfoPopover.textContent = text;
+        userInfoPopover.textContent = guestText;
     }
 }
-
 function refreshSettingsI18nTexts() {
     try {
         if (!elements.settingsModal) return;
@@ -4226,7 +4357,7 @@ function refreshSettingsI18nTexts() {
                 }
             }
         }
-        if (currentUser) updateUsageDisplay();
+        updateUsageDisplay();
     } catch (_) { }
 }
 
@@ -4637,7 +4768,7 @@ async function login(email, password) {
         });
         resetToDefaultModel();
 
-        fetchUsageStats().catch(err => console.error(`${getToastMessage('console.usageStatsFailed')}:`, err));
+        refreshUsageStats().catch(err => console.error(`${getToastMessage('console.usageStatsFailed')}:`, err));
         fetchWeeklyFeatureStatus().catch(err => console.error(`${getToastMessage('console.weeklyFeatureStatusFailed')}:`, err));
         loadUserAIParameters().catch(err => console.error(`${getToastMessage('console.aiParametersLoadFailed')}:`, err));
         loadChats(true).catch(err => console.error(`${getToastMessage('console.chatHistoryLoadFailed')}:`, err));
@@ -4934,7 +5065,7 @@ async function checkSession() {
                     updateUI(false);
                 } catch (_) { }
 
-                fetchUsageStats().catch(err => console.error(`${getToastMessage('console.usageStatsFailed')}:`, err));
+                refreshUsageStats().catch(err => console.error(`${getToastMessage('console.usageStatsFailed')}:`, err));
                 fetchWeeklyFeatureStatus().catch(err => console.error(`${getToastMessage('console.weeklyFeatureStatusFailed')}:`, err));
 
                 return true;
@@ -4989,7 +5120,7 @@ async function updateApiKey(apiKey, mode = 'mixed', options = {}) {
         }
         try {
             if (context !== 'mode') {
-                await fetchUsageStats(true);
+                await refreshUsageStats(true);
                 updateUsageDisplay();
             }
         } catch (_) { }
@@ -5024,15 +5155,27 @@ async function loadChats(isSessionValid = false) {
         await new Promise(resolve => setTimeout(resolve, 150));
     }
     const loader = document.getElementById('chat-history-loader');
+    const forceServerChatsReload = currentUser && localStorage.getItem('forceServerChatsReload') === '1';
 
     if (currentUser && isSessionValid) {
         try {
-            const cachedChats = await getChatsFromDB(currentUser.id);
-            if (cachedChats) {
-                chats = cachedChats;
-                renderSidebar();
-            } else if (loader) {
-                loader.style.display = 'flex';
+            let cachedChats = null;
+            if (forceServerChatsReload) {
+                try {
+                    await deleteChatsFromDB(currentUser.id);
+                } catch (error) {
+                    console.warn('Failed to delete cached chats during forced reload:', error);
+                }
+                chats = {};
+                if (loader) loader.style.display = 'flex';
+            } else {
+                cachedChats = await getChatsFromDB(currentUser.id);
+                if (cachedChats) {
+                    chats = cachedChats;
+                    renderSidebar();
+                } else if (loader) {
+                    loader.style.display = 'flex';
+                }
             }
             makeApiRequest('chats/conversations').then(async (result) => {
                 if (result.success) {
@@ -5072,6 +5215,10 @@ async function loadChats(isSessionValid = false) {
 
                     if (loader) {
                         loader.style.display = 'none';
+                    }
+
+                    if (forceServerChatsReload) {
+                        localStorage.removeItem('forceServerChatsReload');
                     }
 
                     if (cachedChats) {
@@ -5247,19 +5394,13 @@ async function validateApiKey(apiKey) {
     try {
         // 访客走公开验证接口；登录用户走受保护接口
         if (!sessionId) {
-            const result = await makeApiRequest('validate-api-key', {
+            return await makeApiRequest('validate-api-key', {
                 method: 'POST',
                 body: JSON.stringify({ apiKey, validationOnly: true })
             });
-            return result;
-        } else {
-            const result = await makeAuthRequest(
-                'validate-api-key',
-                { apiKey, validationOnly: true },
-                { headers: { 'X-Validation-Only': 'true' } }
-            );
-            return result;
         }
+
+        return await makeAuthRequest('validate-api-key', { apiKey, validationOnly: true });
     } catch (error) {
         console.error(`${getToastMessage('console.backendValidationCallFailed')}:`, error);
         return { success: false, message: error.message || getToastMessage('errors.backendValidationFailed') };
@@ -6834,13 +6975,28 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 sourcesMap.set(index + 1, citation);
             });
         }
-        let citedHtml = html.replace(/\[([\d, ]+)\]/g, (match, numbersStr) => {
+        const citationRegex = /([（(]?)\s*\[([\d, ]+)\]\s*([）)])?/g;
+        let citedHtml = html.replace(citationRegex, (match, openParen, numbersStr, closeParen) => {
             const numbers = numbersStr.split(',').map(s => parseInt(s.trim(), 10));
-            return numbers.map(number => {
+            const links = numbers.map(number => {
                 if (isNaN(number)) return '';
                 const source = sourcesMap.get(number);
                 return source && source.uri ? `<a href="${source.uri}" target="_blank" title="${source.title || ''}" class="citation-link">[${number}]</a>` : `[${number}]`;
             }).join('');
+
+            if (!links) {
+                return match;
+            }
+            if (openParen && closeParen) {
+                return links;
+            }
+            if (openParen && !closeParen) {
+                return openParen + links;
+            }
+            if (!openParen && closeParen) {
+                return links + closeParen;
+            }
+            return links;
         });
         if (sourcesMap.size > 0) {
             let sourcesListHtml = `<div class="sources-list-container"><h4>${getToastMessage('ui.references')}：</h4><ul>`;
@@ -7616,6 +7772,23 @@ function removeAttachment(attachmentId) {
     updateCharacterCountUI();
     updateSendButton();
     resetCharCountTimer();
+}
+
+function cleanupEmptyMessagePlaceholders() {
+    const container = elements.chatContainer;
+    if (!container) return;
+    const messages = container.querySelectorAll('.message');
+    messages.forEach(message => {
+        const contentDiv = message.querySelector('.content');
+        if (!contentDiv) return;
+        const hasSpinner = !!contentDiv.querySelector('.thinking-indicator-new');
+        const textContent = (contentDiv.textContent || '').trim();
+        const hasMedia = contentDiv.querySelector('img, video, pre, code, table, blockquote, ul, ol, .file-chip-display, .rendered-markdown, .assistant-card, .image-result');
+        const hasExternalAttachments = message.querySelector('.attachments-preview, .file-chip-display');
+        if ((hasSpinner || textContent.length === 0) && !hasMedia && !hasExternalAttachments) {
+            message.remove();
+        }
+    });
 }
 
 async function processAndAttachFile(file) {
@@ -8583,7 +8756,6 @@ async function processStreamedResponse(response, contentDiv) {
                 }
             }
 
-            // 检查finish_reason，无论是否有delta内容
             if (data.choices?.[0]?.finish_reason) {
                 finishReason = data.choices[0].finish_reason;
             }
@@ -8648,6 +8820,7 @@ async function processStreamedResponse(response, contentDiv) {
     });
     return { fullResponse, finalCitations, finishReason };
 }
+
 async function handleSearchAndChat(userMessageText) {
     if (!userMessageText) return;
     isProcessing = true;
@@ -8754,8 +8927,7 @@ async function handleSearchAndChat(userMessageText) {
         try {
             const invalidated = response.headers.get('X-Guest-Invalidated') === 'true';
             if (!currentUser && invalidated) {
-                clearGuestApiKeys();
-                try { updateActiveModel(); renderModelMenu(); } catch (_) { }
+                handleGuestKeyInvalidation({ showToast: true });
             }
         } catch (_) { }
 
@@ -8790,9 +8962,7 @@ async function handleSearchAndChat(userMessageText) {
             if (lastUserMessage) {
                 lastUserMessage.remove();
             }
-            if (assistantMessageElement && assistantMessageElement.parentElement) {
-                assistantMessageElement.parentElement.remove();
-            }
+            cleanupEmptyMessagePlaceholders();
 
             if (chats[chatIdForRequest]) {
                 chats[chatIdForRequest].messages.pop();
@@ -8924,7 +9094,8 @@ async function handleChatMessage(userContent, options = {}) {
 
     for (let i = fullHistory.length - 1; i >= 0; i--) {
         const message = fullHistory[i];
-        const contentForEstimation = message.aiOptimizedContent || message.content;
+        const optimizedContent = getAiOptimizedContentForMessage(message);
+        const contentForEstimation = optimizedContent || message.content;
         const messageTokens = estimateTokens(contentForEstimation);
 
         if (currentTokenCount + messageTokens > MAX_CONTEXT_TOKENS) {
@@ -8937,8 +9108,9 @@ async function handleChatMessage(userContent, options = {}) {
     }
 
     const messagesForAI = historyToSend.map((msg, index) => {
-        const hasOptimizedContent = Array.isArray(msg.aiOptimizedContent) || typeof msg.aiOptimizedContent === 'string';
-        const sourceContent = hasOptimizedContent ? msg.aiOptimizedContent : msg.content;
+        const optimizedContent = getAiOptimizedContentForMessage(msg);
+        const hasOptimizedContent = Array.isArray(optimizedContent) || typeof optimizedContent === 'string';
+        const sourceContent = hasOptimizedContent ? optimizedContent : msg.content;
 
         if (msg.role === 'user' && Array.isArray(sourceContent)) {
             const fileContentParts = [];
@@ -8981,14 +9153,12 @@ async function handleChatMessage(userContent, options = {}) {
                 ...msg,
                 content: [...fileContentParts, ...finalContent, ...otherContentParts]
             };
-            delete messageForAI.aiOptimizedContent;
             if ('originalContent' in messageForAI) delete messageForAI.originalContent;
             return messageForAI;
         }
 
         if (msg.role === 'user' && typeof sourceContent === 'string') {
             const messageForAI = { ...msg, content: sourceContent };
-            delete messageForAI.aiOptimizedContent;
             if ('originalContent' in messageForAI) delete messageForAI.originalContent;
             return messageForAI;
         }
@@ -8996,7 +9166,6 @@ async function handleChatMessage(userContent, options = {}) {
         if (hasOptimizedContent) {
             const normalizedContent = Array.isArray(sourceContent) ? cloneMessageParts(sourceContent) : sourceContent;
             const messageForAI = { ...msg, content: normalizedContent };
-            delete messageForAI.aiOptimizedContent;
             if ('originalContent' in messageForAI) delete messageForAI.originalContent;
             return messageForAI;
         }
@@ -9122,7 +9291,7 @@ async function handleChatMessage(userContent, options = {}) {
                     updateUsageDisplay();
 
                     if (currentUser) {
-                        fetchUsageStats(true).catch(err => {
+                        refreshUsageStats(true).catch(err => {
                             console.warn(`${getToastMessage('console.refreshUsageStatsFailed')}:`, err);
                         });
                     }
@@ -9167,8 +9336,7 @@ async function handleChatMessage(userContent, options = {}) {
         try {
             const invalidated = response.headers.get('X-Guest-Invalidated') === 'true';
             if (!currentUser && invalidated) {
-                clearGuestApiKeys();
-                try { updateActiveModel(); renderModelMenu(); } catch (_) { }
+                handleGuestKeyInvalidation({ showToast: true });
             }
         } catch (_) { }
 
@@ -9200,17 +9368,7 @@ async function handleChatMessage(userContent, options = {}) {
                 showToast(error.message, 'error');
             }
 
-            if (assistantMessageElement) {
-                const contentDiv = assistantMessageElement.querySelector('.content');
-                if (contentDiv && (contentDiv.innerHTML.trim() === '' || contentDiv.querySelector('.thinking-indicator-new'))) {
-                    const messageWrapper = assistantMessageElement.closest('.message');
-                    if (messageWrapper) {
-                        messageWrapper.remove();
-                    } else {
-                        assistantMessageElement.remove();
-                    }
-                }
-            }
+            cleanupEmptyMessagePlaceholders();
 
             const messages = elements.chatContainer.querySelectorAll('.message');
             const lastUserMessage = Array.from(messages).reverse().find(msg => msg.classList.contains('user'));
@@ -9273,8 +9431,6 @@ async function handleChatMessage(userContent, options = {}) {
                         ensureActions();
                     }
                 }
-
-                // 渲染完成后刷新“修改”按钮状态
                 refreshEditButtons();
             });
         } catch (renderError) {
@@ -9309,10 +9465,25 @@ async function _processAndSendMessage(userContent, userMessageText) {
     }
     let chatIdForRequest = currentChatId;
 
-    appendMessage('user', userContent);
-    chats[chatIdForRequest].messages.push({ role: 'user', content: userContent });
+    const originalUserContent = cloneMessageParts(userContent) || userContent;
 
-    let userMessageToSave = { role: 'user', content: userContent };
+    appendMessage('user', userContent);
+    chats[chatIdForRequest].messages.push({ role: 'user', content: cloneMessageParts(originalUserContent) || originalUserContent });
+
+    const assistantPlaceholderElement = appendMessage('assistant', '');
+    const assistantPlaceholderContentDiv = assistantPlaceholderElement.querySelector('.content');
+    if (assistantPlaceholderContentDiv) {
+        assistantPlaceholderContentDiv.innerHTML = `
+            <div class="thinking-indicator-new">
+                <svg class="spinner" viewBox="0 0 50 50">
+                    <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle>
+                </svg>
+                <span>${getToastMessage('ui.thinking')}</span>
+            </div>
+        `;
+    }
+
+    let userMessageToSave = { role: 'user', content: cloneMessageParts(originalUserContent) || originalUserContent };
     let assistantMessageToSave = null;
     let requestSuccessful = false;
 
@@ -9328,31 +9499,29 @@ async function _processAndSendMessage(userContent, userMessageText) {
         });
 
         const hasFileAttachments = userContent.some(att => att.type === 'file');
+        const allowLargeDocumentProcessing = !isSearchModeActive && !isImageModeActive;
 
-        if (totalTextLength > LARGE_TEXT_THRESHOLD) {
+        if (allowLargeDocumentProcessing && totalTextLength > LARGE_TEXT_THRESHOLD) {
             // 显示大文档处理提示
+            if (assistantPlaceholderContentDiv) {
+                assistantPlaceholderContentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.intelligentChunking')}</div>`;
+            }
             showToast(getToastMessage('toast.largeAttachmentProcessing'), 'info');
             const intent = await getLargeTextIntent(userMessageText);
 
             switch (intent) {
                 case 'CONTINUATION':
-                    assistantMessageToSave = await handleContinuationTask(userContent);
+                    assistantMessageToSave = await handleContinuationTask(userContent, null, assistantPlaceholderElement);
                     break;
-                case 'ANALYSIS_QA':
-                    assistantMessageToSave = await handleDeepAnalysis(userContent, userMessageText);
-                    userMessageToSave = {
-                        role: 'user',
-                        content: getAiOptimizedContentForLastUserMessage(chatIdForRequest) || cloneMessageParts(userContent)
-                    };
+                case 'ANALYSIS_QA': {
+                    assistantMessageToSave = await handleDeepAnalysis(userContent, userMessageText, assistantPlaceholderElement);
                     break;
+                }
                 case 'SUMMARIZATION':
-                default:
-                    assistantMessageToSave = await handleLargeTextAnalysis(userContent, userMessageText);
-                    userMessageToSave = {
-                        role: 'user',
-                        content: getAiOptimizedContentForLastUserMessage(chatIdForRequest) || cloneMessageParts(userContent)
-                    };
+                default: {
+                    assistantMessageToSave = await handleLargeTextAnalysis(userContent, userMessageText, assistantPlaceholderElement);
                     break;
+                }
             }
         } else if (historyLength > 60000) {
             let combinedStory = "";
@@ -9385,20 +9554,11 @@ async function _processAndSendMessage(userContent, userMessageText) {
 
             userMessageToSave = {
                 role: 'user',
-                content: userContent
+                content: cloneMessageParts(originalUserContent) || originalUserContent
             };
-            assistantMessageToSave = await handleContinuationTask(continuationContentForAI, userContent);
+            assistantMessageToSave = await handleContinuationTask(continuationContentForAI, userContent, assistantPlaceholderElement);
         } else {
-            const assistantPlaceholderElement = appendMessage('assistant', '');
             const contentDiv = assistantPlaceholderElement.querySelector('.content');
-            contentDiv.innerHTML = `
-                <div class="thinking-indicator-new">
-                    <svg class="spinner" viewBox="0 0 50 50">
-                        <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle>
-                    </svg>
-                    <span>${getToastMessage('ui.thinking')}</span>
-                </div>
-            `;
 
             // 执行统一的意图分析
             const intentAnalysis = await performUnifiedIntentAnalysis(userMessageText, conversationHistory, {
@@ -9407,9 +9567,13 @@ async function _processAndSendMessage(userContent, userMessageText) {
             });
 
             if (!hasFileAttachments && isImageModeActive) {
-                contentDiv.querySelector('span').textContent = getToastMessage('status.understandingYourNeeds');
+                if (contentDiv) {
+                    contentDiv.querySelector('span').textContent = getToastMessage('status.understandingYourNeeds');
+                }
                 if (intentAnalysis.shouldGenerateImage) {
-                    contentDiv.querySelector('span').textContent = getToastMessage('status.generatingImageForYou');
+                    if (contentDiv) {
+                        contentDiv.querySelector('span').textContent = getToastMessage('status.generatingImageForYou');
+                    }
                     const newImagePromptObject = await generateCombinedImagePrompt(userMessageText, conversationHistory, intentAnalysis.intentResult.intent);
                     const imageResult = await handleImageGeneration(userContent, newImagePromptObject, {
                         existingAssistantElement: assistantPlaceholderElement
@@ -9422,11 +9586,13 @@ async function _processAndSendMessage(userContent, userMessageText) {
 
                         // 图片生成成功后，实时刷新用量显示
                         if (currentUser) {
-                            fetchUsageStats().catch(err => console.error(`${getToastMessage('console.usageStatsFailed')}:`, err));
+                            refreshUsageStats().catch(err => console.error(`${getToastMessage('console.usageStatsFailed')}:`, err));
                         }
                     } else {
                         const errorMessage = getToastMessage('errors.imageGenerationFailed');
-                        renderMessageContent(contentDiv, `<p style="color: var(--error-color, #ef4444);">${errorMessage}</p>`);
+                        if (contentDiv) {
+                            renderMessageContent(contentDiv, `<p style="color: var(--error-color, #ef4444);">${errorMessage}</p>`);
+                        }
                         assistantMessageToSave = {
                             role: 'assistant',
                             content: `<p style="color: var(--error-color, #ef4444);">${errorMessage}</p>`
@@ -9472,15 +9638,6 @@ async function _processAndSendMessage(userContent, userMessageText) {
         elements.messageInput.value = userMessageText;
         elements.messageInput.dispatchEvent(new Event('input'));
         updateSendButton();
-
-        const assistantMessages = elements.chatContainer.querySelectorAll('.message.assistant');
-        if (assistantMessages.length > 0) {
-            const lastAssistantMessage = assistantMessages[assistantMessages.length - 1];
-            const contentDiv = lastAssistantMessage.querySelector('.content');
-            if (contentDiv && (contentDiv.innerHTML.trim() === '' || contentDiv.querySelector('.thinking-indicator-new'))) {
-                lastAssistantMessage.remove();
-            }
-        }
     } finally {
         if (pendingMessage) {
             const nextMessage = pendingMessage;
@@ -9494,6 +9651,7 @@ async function _processAndSendMessage(userContent, userMessageText) {
             isProcessing = false;
             resetSendButtonState();
         }
+        cleanupEmptyMessagePlaceholders();
     }
 
     if (requestSuccessful) {
@@ -9767,24 +9925,25 @@ function setAiOptimizedContentForLastUserMessage(chatId, optimizedParts) {
     if (!chatId || !Array.isArray(optimizedParts)) return;
     const lastUserMessage = getLastUserMessage(chatId);
     if (!lastUserMessage) return;
-    lastUserMessage.aiOptimizedContent = cloneMessageParts(optimizedParts) || [];
+    aiOptimizedContentStore.set(lastUserMessage, cloneMessageParts(optimizedParts) || []);
 }
 
-function getAiOptimizedContentForLastUserMessage(chatId) {
-    const lastUserMessage = getLastUserMessage(chatId);
-    if (!lastUserMessage || !Array.isArray(lastUserMessage.aiOptimizedContent)) {
-        return null;
-    }
-    return cloneMessageParts(lastUserMessage.aiOptimizedContent);
+function getAiOptimizedContentForMessage(message) {
+    if (!message) return null;
+    const stored = aiOptimizedContentStore.get(message);
+    return stored ? cloneMessageParts(stored) : null;
 }
-async function handleLargeTextAnalysis(userContent, originalQuery) {
+
+async function handleLargeTextAnalysis(userContent, originalQuery, existingAssistantElement = null) {
     if (!currentChatId) await startNewChat(true);
     const chatIdForRequest = currentChatId;
 
-    const assistantMessageElement = appendMessage('assistant', '');
+    const assistantMessageElement = existingAssistantElement || appendMessage('assistant', '');
     const contentDiv = assistantMessageElement.querySelector('.content');
 
-    contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.intelligentChunking')}</div>`;
+    if (contentDiv && !existingAssistantElement) {
+        contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.intelligentChunking')}</div>`;
+    }
 
     let allChunks = [];
     userContent.forEach(part => {
@@ -9851,15 +10010,17 @@ async function handleLargeTextAnalysis(userContent, originalQuery) {
     }
 }
 
-async function handleDeepAnalysis(userContent, originalQuery) {
+async function handleDeepAnalysis(userContent, originalQuery, existingAssistantElement = null) {
     if (!currentChatId) await startNewChat(true);
     const chatIdForRequest = currentChatId;
 
-    const assistantMessageElement = appendMessage('assistant', '');
+    const assistantMessageElement = existingAssistantElement || appendMessage('assistant', '');
     const contentDiv = assistantMessageElement.querySelector('.content');
 
     try {
-        contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step1Chunking')}</div>`;
+        if (contentDiv && !existingAssistantElement) {
+            contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step1Chunking')}</div>`;
+        }
         let allChunks = [];
         let chunkCounter = 0;
 
@@ -10055,9 +10216,8 @@ async function callAISynchronously(prompt, model = 'gemini-2.5-flash-lite', incr
 
         try {
             const invalidated = response.headers.get('X-Guest-Invalidated') === 'true';
-            if (!sessionId && invalidated) {
-                clearGuestApiKeys();
-                try { updateActiveModel(); renderModelMenu(); } catch (_) { }
+            if (!currentUser && invalidated) {
+                handleGuestKeyInvalidation({ showToast: true });
             }
         } catch (_) { }
 
@@ -10200,6 +10360,61 @@ function detectViewerType(filename, content) {
     return 'rich_text';
 }
 
+function unregisterFileViewerLinkHandler() {
+    if (typeof removeFileViewerLinkHandler === 'function') {
+        removeFileViewerLinkHandler();
+        removeFileViewerLinkHandler = null;
+    }
+}
+
+function normalizeFileViewerAnchorTarget(rawHref) {
+    if (!rawHref) return null;
+    let href = rawHref.trim();
+    if (!href) return null;
+
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href) || href.startsWith('//')) {
+        return null;
+    }
+
+    if (href.startsWith('#')) {
+        href = href.slice(1);
+    }
+
+    if (!href || href.includes('/')) {
+        return null;
+    }
+
+    try {
+        return decodeURIComponent(href);
+    } catch (_) {
+        return href;
+    }
+}
+
+function registerFileViewerLinkHandler(container) {
+    unregisterFileViewerLinkHandler();
+    if (!container) return;
+
+    const handler = (event) => {
+        const anchor = event.target.closest('a');
+        if (!anchor) return;
+        const href = anchor.getAttribute('href');
+        const targetId = normalizeFileViewerAnchorTarget(href);
+        if (!targetId) return;
+        event.preventDefault();
+
+        const escapedId = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(targetId) : targetId.replace(/"/g, '\\"');
+        const selector = `[id="${escapedId}"], a[name="${escapedId}"]`;
+        const target = container.querySelector(selector);
+        if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    };
+
+    container.addEventListener('click', handler);
+    removeFileViewerLinkHandler = () => container.removeEventListener('click', handler);
+}
+
 function showFileViewer(filename, content) {
     const codeContainer = document.getElementById('file-viewer-code-container');
     const textContainer = document.getElementById('file-viewer-text-container');
@@ -10211,6 +10426,7 @@ function showFileViewer(filename, content) {
     textContainer.innerHTML = '';
     codeElement.textContent = '';
     elements.fileViewerFilename.textContent = filename;
+    unregisterFileViewerLinkHandler();
 
     const viewerType = detectViewerType(filename, content);
 
@@ -10268,9 +10484,11 @@ function showFileViewer(filename, content) {
                         wrapper.appendChild(table);
                     }
                 });
+                registerFileViewerLinkHandler(textContainer);
             } catch (error) {
                 console.error(`${getToastMessage('console.richTextRenderFailed')}:`, error);
                 textContainer.textContent = content;
+                unregisterFileViewerLinkHandler();
             }
             break;
     }
@@ -10280,6 +10498,7 @@ function showFileViewer(filename, content) {
 
 function hideFileViewerUI() {
     elements.fileViewerOverlay.classList.remove('visible');
+    unregisterFileViewerLinkHandler();
 
     const preElement = elements.fileViewerCode.parentNode;
     if (preElement) {
@@ -11503,15 +11722,27 @@ function setupEventListeners() {
                 const image = await Camera.getPhoto({
                     quality: 90,
                     allowEditing: false,
-                    resultType: CameraResultType.Uri,
+                    resultType: CameraResultType.DataUrl,
                     source: source,
                 });
 
-                if (image.webPath) {
-                    const response = await fetch(image.webPath);
+                if (image.dataUrl) {
+                    const response = await fetch(image.dataUrl);
                     const blob = await response.blob();
-                    const fileName = `image_${Date.now()}.jpg`;
-                    const file = new File([blob], fileName, { type: blob.type });
+
+                    // 提前检测文件大小
+                    const isGuest = !currentUser;
+                    const maxSize = isGuest ? GUEST_FILE_SIZE_LIMIT : LOGGED_IN_FILE_SIZE_LIMIT;
+                    const limitInMB = (maxSize / (1024 * 1024)).toFixed(1);
+
+                    if (blob.size > maxSize) {
+                        const userType = isGuest ? getToastMessage('ui.guest') : getToastMessage('ui.you');
+                        showToast(getToastMessage('toast.fileTooLarge', { filename: getToastMessage('ui.image'), userType: userType, limit: limitInMB }), 'error');
+                        return;
+                    }
+
+                    const fileName = `image_${Date.now()}.${image.format || 'jpg'}`;
+                    const file = new File([blob], fileName, { type: `image/${image.format || 'jpeg'}` });
 
                     filesCurrentlyProcessing++;
                     updateSendButton();
@@ -11826,7 +12057,16 @@ function setupEventListeners() {
                 guestApiState.mode = selectedMode || 'mixed';
                 showToast(getToastMessage('toast.apiKeyUpdateSuccess'), 'success');
                 try { updateActiveModel(); renderModelMenu(); } catch (_) { }
-                try { refreshSettingsI18nTexts(); } catch (_) { }
+                guestUsageStats.count = 0;
+                guestUsageStats.limit = GUEST_LIMIT;
+                guestUsageStats.loaded = false;
+                if (elements.usageStats) {
+                    elements.usageStats.style.display = 'none';
+                }
+                updateUsageDisplay();
+                try {
+                    refreshSettingsI18nTexts();
+                } catch (_) { }
                 elements.settingsModal.classList.remove('visible');
                 forceBlur();
                 return;
@@ -13074,28 +13314,39 @@ async function restoreBackgroundTasks() {
 }
 
 async function getLargeTextIntent(userQuery) {
-    // 检查用户查询是否包含明确的检索或分析请求
-    const hasExplicitSearchRequest = /\b(检索|搜索|查找|分析|问答|回答|问题|问|答|基于|根据|从.*中|在.*中|关于|针对)\b/i.test(userQuery);
-
-    // 检查是否是对话内容（包含大量对话标记）
-    const isConversationContent = /(说|道|问|答|回复|回应|对话|聊天|讨论|交流|谈话|交谈|对话内容|聊天记录|对话记录)/i.test(userQuery) &&
-        (userQuery.includes('：') || userQuery.includes(':') || userQuery.includes('"') || userQuery.includes('"'));
-
-    // 如果用户明确要求检索或分析，使用ANALYSIS_QA
-    if (hasExplicitSearchRequest && !isConversationContent) {
-        return "ANALYSIS_QA";
-    }
-
-    // 如果看起来是对话内容，使用SUMMARIZATION
-    if (isConversationContent) {
+    const trimmedQuery = (userQuery || '').trim();
+    if (!trimmedQuery) {
         return "SUMMARIZATION";
     }
 
-    // 默认使用SUMMARIZATION，避免意外的检索
+    try {
+        const intentPrompt = `
+            You are an intent classifier for document tasks. Read the user's input text (NOT the file itself) and choose exactly one intent:
+            - "ANALYSIS_QA": wants deep analysis, structured Q&A, insights, comparisons, or retrieval-like answers.
+            - "CONTINUATION": wants to continue or extend the document/story/section.
+            - "SUMMARIZATION": wants overall summary, abstract, overview, or evaluation.
+
+            User input:
+            """${trimmedQuery.substring(0, 2000)}"""
+
+            Respond **ONLY** with JSON: {"intent":"ANALYSIS_QA|CONTINUATION|SUMMARIZATION"}
+        `.trim();
+        const intentResult = await callAISynchronously(intentPrompt, 'gemini-2.0-flash', false);
+        const parsed = safeJsonParse(intentResult, null);
+        const rawIntent = (parsed && typeof parsed.intent === 'string') ? parsed.intent : intentResult;
+        if (rawIntent) {
+            const match = String(rawIntent).match(/(ANALYSIS_QA|CONTINUATION|SUMMARIZATION)/i);
+            if (match) {
+                return match[1].toUpperCase();
+            }
+        }
+    } catch (error) {
+        console.error('Large text intent detection failed, falling back to heuristics:', error);
+    }
     return "SUMMARIZATION";
 }
 
-async function handleContinuationTask(userContent, contentForDisplay) {
+async function handleContinuationTask(userContent, contentForDisplay, existingAssistantElement = null) {
     const MAX_CONTINUATION_CONTEXT = 75000;
     let modifiedContent = [...userContent];
     let totalLength = 0;
@@ -13147,8 +13398,9 @@ async function handleContinuationTask(userContent, contentForDisplay) {
         return true;
     });
 
-    return await handleChatMessage(modifiedContent, { skipLengthCheck: true, contentForDisplay: contentForDisplay });
+    return await handleChatMessage(modifiedContent, { skipLengthCheck: true, contentForDisplay: contentForDisplay, existingAssistantElement });
 }
+
 async function saveChatToServer(chatId, userMessage, assistantMessage, pendingChatData = null) {
     let finalChatId = chatId;
     const isTempChat = chatId.startsWith('temp_');
