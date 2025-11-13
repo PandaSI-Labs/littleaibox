@@ -14296,6 +14296,12 @@ async function commitInlineEditMode() {
         all[all.length - 2].remove();
     }
     try {
+        const userIdForDb = currentUser?.id || 'guest';
+        await saveChatsToDB(userIdForDb, chats);
+    } catch (error) {
+        console.error('Failed to persist removal before re-sending edited turn:', error);
+    }
+    try {
         notifyBackendCacheInvalidation('last_turn_replaced', { chatId });
     } catch (_) { }
 
