@@ -7,13 +7,13 @@
 :root {
     /* 让滚动条/表单控件等根据主题正确着色 */
     color-scheme: light;
-    /* 定义原生安全区域变量，默认为0px用于Web */
+
     --native-safe-area-top: 0px;
     --native-safe-area-bottom: 0px;
     --native-safe-area-left: 0px;
     --native-safe-area-right: 0px;
 
-    /* 安全区域变量 - 优先使用原生值，回退到env() */
+    /* 安全区域变量 */
     --safe-area-inset-top: max(var(--native-safe-area-top, 0px), env(safe-area-inset-top, 0px));
     --safe-area-inset-bottom: max(var(--native-safe-area-bottom, 0px), env(safe-area-inset-bottom, 0px));
     --safe-area-inset-left: max(var(--native-safe-area-left, 0px), env(safe-area-inset-left, 0px));
@@ -35,7 +35,7 @@
     --primary-text-color: #333;
     --secondary-text-color: #666;
 
-    /* 输入框 (Inputs) & GPT特定输入框 */
+    /* 输入框 */
     --input-bg: #f0f0f0;
     --gpt-input-bg: #fff;
     --gpt-input-border: #e0e0e0;
@@ -1540,8 +1540,6 @@ body.is-native-app .message:first-child {
     overflow-y: hidden;
     max-width: 100%;
     padding: 0.5em 0;
-    -webkit-mask-image: linear-gradient(to right, transparent, black 10px, black 90%, transparent);
-    mask-image: linear-gradient(to right, transparent, black 10px, black 90%, transparent);
     -webkit-overflow-scrolling: touch;
 }
 

@@ -243,8 +243,13 @@ class NavigationEngine {
 
     async handleBackAction() {
         try {
-            if (typeof isEditModeActive !== 'undefined' && isEditModeActive) {
-                cancelInlineEditMode();
+            if (this.hasModalOpen()) {
+                await this.closeModal();
+                return;
+            }
+        } catch (_) { }
+        try {
+            if (ensureInlineEditModeClosed && ensureInlineEditModeClosed()) {
                 return;
             }
         } catch (_) { }
@@ -253,11 +258,6 @@ class NavigationEngine {
             await this.returnToMainPage();
             return;
         }
-        if (this.hasModalOpen()) {
-            await this.closeModal();
-            return;
-        }
-
         if (this.isSidebarOpen()) {
             this.closeSidebar(true);
             if (this.isOnChatPage()) {
@@ -495,8 +495,8 @@ class NavigationEngine {
     // 返回到主页面
     async returnToMainPage() {
         try {
-            if (typeof isEditModeActive !== 'undefined' && isEditModeActive) {
-                cancelInlineEditMode();
+            if (ensureInlineEditModeClosed) {
+                ensureInlineEditModeClosed();
             }
         } catch (_) { }
         if (currentChatId) {
@@ -5408,6 +5408,8 @@ async function validateApiKey(apiKey) {
 }
 
 async function loadChat(chatId) {
+    ensureInlineEditModeClosed();
+
     if (currentChatId && currentChatId.startsWith('temp_') && currentChatId !== chatId) {
         const previousChat = chats[currentChatId];
         if (previousChat && (!previousChat.messages || previousChat.messages.length === 0)) {
@@ -5629,6 +5631,8 @@ function showEmptyState(forceLanguage = null) {
 }
 
 async function startNewChat(skipProcessingCheck = false) {
+    ensureInlineEditModeClosed();
+
     if (currentChatId && currentChatId.startsWith('temp_') && chats[currentChatId]?.messages.length === 0) {
         closeSidebarOnInteraction();
         return;
@@ -11825,6 +11829,7 @@ function setupEventListeners() {
         if (!historyItem) return;
 
         const chatId = historyItem.dataset.chatId;
+        ensureInlineEditModeClosed();
 
         if (isMultiSelectMode) {
             const checkbox = historyItem.querySelector('.history-item-checkbox');
@@ -14274,6 +14279,14 @@ function cancelInlineEditMode() {
     isEditModeActive = false;
     editModeState = null;
     refreshEditButtons();
+}
+
+function ensureInlineEditModeClosed() {
+    if (isEditModeActive || editModeState) {
+        cancelInlineEditMode();
+        return true;
+    }
+    return false;
 }
 
 async function commitInlineEditMode() {
