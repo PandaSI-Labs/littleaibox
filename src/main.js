@@ -919,6 +919,27 @@ class RouteManager {
         }
     }
 
+    redirectGuestToAuth(options = {}) {
+        const {
+            mode = 'login',
+            onlyManageUi = false,
+            showImmediateOverlay = true,
+            hideSettings = true,
+            origin = 'route'
+        } = options;
+
+        const state = this.normalizeAuthState(mode);
+        if (hideSettings) {
+            hideSettingsModal(false, { skipHandleBack: true });
+        }
+        if (!onlyManageUi) {
+            this.syncAuthRoute(state, { replace: true, silent: true });
+        }
+        if (showImmediateOverlay) {
+            openAuthOverlay(origin, state, { syncRoute: false });
+        }
+    }
+
     async openAuthFromRoute(modeState) {
         const state = this.normalizeAuthState(modeState);
         openAuthOverlay('route', state, { syncRoute: false });
@@ -928,6 +949,22 @@ class RouteManager {
         if (!chatId) return;
         await this.waitForChatsToLoad();
         if (!chats || !chats[chatId]) {
+            if (String(chatId).startsWith('temp_')) {
+                currentChatId = null;
+                try {
+                    showEmptyState();
+                } catch (_) { }
+                scheduleRenderSidebar();
+                if (!currentUser) {
+                    this.redirectGuestToAuth({
+                        origin: 'auto',
+                        onlyManageUi: true,
+                        showImmediateOverlay: false,
+                        hideSettings: false
+                    });
+                }
+                this.navigateToHome({ replace: true, force: true });
+            }
             return;
         }
         try {
@@ -954,7 +991,12 @@ class RouteManager {
         if (this.initialRouteHandled) return;
         this.initialRouteHandled = true;
         try {
-            await this.handleRouteIntent(router.getCurrentRoute());
+            const initialRoute = router.getCurrentRoute();
+            if (!currentUser && initialRoute?.name === 'settings') {
+                this.redirectGuestToAuth({ hideSettings: true });
+                return;
+            }
+            await this.handleRouteIntent(initialRoute);
         } catch (error) {
             console.error('Failed to handle initial route:', error);
         }
@@ -1745,6 +1787,7 @@ let originalAvatarUrl = null;
 let originalAIParameters = null;
 let isWelcomePage = true;
 let isLoadingParameters = false;
+let lastSettingsOriginRoute = null;
 
 // API密钥未保存提示逻辑
 let originalApiKeys = { keyOne: '', keyTwo: '', mode: 'mixed' };
@@ -5196,11 +5239,30 @@ function hideSettingsModal(manageHistory = true, options = {}) {
     if (!currentChatId && (!welcomePageShown || !(elements.chatContainer?.innerHTML || '').trim())) {
         showEmptyState();
     }
-    const shouldPop = manageHistory && router.getCurrentRoute()?.name === 'settings';
+    const currentRoute = router.getCurrentRoute();
+    const isSettingsRoute = currentRoute?.name === 'settings';
+    const shouldPop = manageHistory && isSettingsRoute;
     if (shouldPop) {
         navigationEngine.requestProgrammaticBack({
             skipHandleBack: options.skipHandleBack === true
         });
+        requestAnimationFrame(() => {
+            if (router.getCurrentRoute()?.name === 'settings') {
+                const fallbackRoute = lastSettingsOriginRoute || { name: 'home', params: {} };
+                router.navigate(fallbackRoute.name, fallbackRoute.params || {}, { replace: true, silent: true });
+                lastSettingsOriginRoute = null;
+            }
+        });
+    } else if (isSettingsRoute) {
+        const fallbackRoute = lastSettingsOriginRoute || (currentChatId ? {
+            name: String(currentChatId).startsWith('temp_') ? 'tempChat' : 'chat',
+            params: { chatId: currentChatId }
+        } : { name: 'home', params: {} });
+        router.navigate(fallbackRoute.name, fallbackRoute.params || {}, {
+            replace: true,
+            silent: !lastSettingsOriginRoute
+        });
+        lastSettingsOriginRoute = null;
     }
     return true;
 }
@@ -6313,6 +6375,41 @@ async function updateApiKey(apiKey, mode = 'mixed', options = {}) {
     }
 }
 
+function shouldPreserveEphemeralChat(chatId, chatData) {
+    if (!chatData) return false;
+    if (chatData.isTemp) return true;
+    return String(chatId || '').startsWith('temp_');
+}
+
+function extractEphemeralChats(source = chats) {
+    if (!source) return {};
+    const preserved = {};
+    for (const [chatId, chatData] of Object.entries(source)) {
+        if (shouldPreserveEphemeralChat(chatId, chatData)) {
+            preserved[chatId] = chatData;
+        }
+    }
+    return preserved;
+}
+
+function mergeEphemeralChats(baseChats = {}, ephemeralChats = {}) {
+    const merged = { ...(baseChats || {}) };
+    if (!ephemeralChats) {
+        return merged;
+    }
+    for (const [chatId, chatData] of Object.entries(ephemeralChats)) {
+        if (!merged[chatId]) {
+            merged[chatId] = chatData;
+        }
+    }
+    return merged;
+}
+
+function replaceChatsPreservingEphemeral(nextChats = {}) {
+    const ephemeral = extractEphemeralChats();
+    chats = mergeEphemeralChats(nextChats || {}, ephemeral);
+}
+
 async function loadChats(isSessionValid = false) {
     if (!isSessionValid && !currentUser) {
         await new Promise(resolve => setTimeout(resolve, 150));
@@ -6329,12 +6426,12 @@ async function loadChats(isSessionValid = false) {
                 } catch (error) {
                     console.warn('Failed to delete cached chats during forced reload:', error);
                 }
-                chats = {};
+                replaceChatsPreservingEphemeral({});
                 if (loader) loader.style.display = 'flex';
             } else {
                 cachedChats = await getChatsFromDB(currentUser.id);
                 if (cachedChats) {
-                    chats = cachedChats;
+                    replaceChatsPreservingEphemeral(cachedChats);
                     renderSidebar();
                 } else if (loader) {
                     loader.style.display = 'flex';
@@ -6373,7 +6470,7 @@ async function loadChats(isSessionValid = false) {
                     );
 
                     await saveChatsToDB(currentUser.id, mergedChats);
-                    chats = mergedChats;
+                    replaceChatsPreservingEphemeral(mergedChats);
                     renderSidebar();
 
                     if (loader) {
@@ -6406,7 +6503,7 @@ async function loadChats(isSessionValid = false) {
         }
     } else {
         const localChats = await getChatsFromDB('guest');
-        chats = localChats || {};
+        replaceChatsPreservingEphemeral(localChats || {});
         renderSidebar();
     }
 }
@@ -6509,8 +6606,10 @@ function updateUI(showLoginPage = true) {
         hasParametersLoaded = false;
         isLoadingParameters = false;
     } else {
-        if (showLoginPage) {
-            const currentRoute = router.getCurrentRoute();
+        const currentRoute = router.getCurrentRoute();
+        const isChatContext = currentRoute?.name === 'chat' || currentRoute?.name === 'tempChat';
+
+        if (showLoginPage && !isChatContext) {
             const initialAuthRoutePending = !routeManager.isInitialRouteProcessed() && currentRoute?.name === 'auth';
             const desiredState = initialAuthRoutePending
                 ? routeManager.normalizeAuthState({ mode: currentRoute.params?.mode, token: currentRoute.params?.token })
@@ -6527,6 +6626,8 @@ function updateUI(showLoginPage = true) {
             if (elements.chatContainer) {
                 elements.chatContainer.style.display = 'none';
             }
+        } else if (elements.chatContainer) {
+            elements.chatContainer.style.display = 'flex';
         }
 
         elements.rightSidebarToggleBtn.style.display = 'none';
@@ -7294,6 +7395,42 @@ function setActiveChat(chatId) {
         if (newActive && !newActive.classList.contains('active')) {
             newActive.classList.add('active');
         }
+    }
+}
+
+function updateSidebarChatId(oldId, newId) {
+    if (!oldId || !newId || oldId === newId) return;
+    const existingItem = sidebarElementsCache.get(oldId);
+    if (!existingItem) return;
+
+    // Remove any stale cache entry mapped to the new ID
+    if (sidebarElementsCache.has(newId)) {
+        const duplicate = sidebarElementsCache.get(newId);
+        if (duplicate && duplicate !== existingItem) {
+            duplicate.remove();
+        }
+        sidebarElementsCache.delete(newId);
+    }
+
+    existingItem.dataset.chatId = newId;
+    const checkbox = existingItem.querySelector('.history-item-checkbox');
+    if (checkbox) {
+        checkbox.dataset.chatId = newId;
+    }
+
+    sidebarElementsCache.delete(oldId);
+    sidebarElementsCache.set(newId, existingItem);
+
+    if (selectedChatIds.has(oldId)) {
+        selectedChatIds.delete(oldId);
+        selectedChatIds.add(newId);
+        if (checkbox) {
+            checkbox.checked = true;
+        }
+    }
+
+    if (currentChatId === newId) {
+        setActiveChat(newId);
     }
 }
 
@@ -10814,9 +10951,11 @@ async function _processAndSendMessage(userContent, userMessageText) {
     } catch (error) {
         console.error(`${getToastMessage('console.sendMessageTopLevelError')}:`, error);
 
-        elements.messageInput.value = userMessageText;
-        elements.messageInput.dispatchEvent(new Event('input'));
-        updateSendButton();
+        if (!requestSuccessful && userMessageText) {
+            elements.messageInput.value = userMessageText;
+            elements.messageInput.dispatchEvent(new Event('input'));
+            updateSendButton();
+        }
     } finally {
         if (pendingMessage) {
             const nextMessage = pendingMessage;
@@ -13112,6 +13251,10 @@ function setupEventListeners() {
             }
         });
 
+        if (router.getCurrentRoute()?.name !== 'settings') {
+            lastSettingsOriginRoute = router.getCurrentRoute();
+        }
+
         // 立即显示UI并更新URL
         if (elements.settingsModal) {
             hideAuthOverlay();
@@ -14576,6 +14719,8 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
                     };
 
                     currentChatId = finalChatId;
+                    updateSidebarChatId(chatId, finalChatId);
+                    setActiveChat(finalChatId);
                 } else {
                     throw new Error(result.error || getToastMessage('errors.cannotCreateNewConversationOnServer'));
                 }
@@ -14585,6 +14730,8 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
                 delete chats[chatId];
                 currentChatId = newId;
                 finalChatId = newId;
+                updateSidebarChatId(chatId, newId);
+                setActiveChat(newId);
                 scheduleRenderSidebar();
             }
             if (finalChatId !== chatId) {
