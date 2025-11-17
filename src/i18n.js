@@ -2,6 +2,12 @@ const translations = {};
 const translationsLoaded = {};
 let __runtimeLanguage = null;
 const SUPPORTED_LANGUAGES = ['en', 'zh-CN', 'zh-TW', 'es', 'ja', 'ko'];
+const APP_BUILD_ID = typeof __APP_BUILD_ID__ !== 'undefined' ? __APP_BUILD_ID__ : 'dev';
+const TRANSLATION_CACHE_PREFIX = `translations_${APP_BUILD_ID}_`;
+
+function getTranslationCacheKey(lang) {
+    return `${TRANSLATION_CACHE_PREFIX}${lang}`;
+}
 
 /**
  * 尝试从网络或 SW 缓存中获取指定语言的 JSON。
@@ -73,7 +79,7 @@ async function loadTranslations(lang, { preferCacheFirst = true, revalidateInBac
  */
 async function getCachedTranslations(lang) {
     try {
-        const cached = localStorage.getItem(`translations_${lang}`);
+        const cached = localStorage.getItem(getTranslationCacheKey(lang));
         if (cached) {
             return JSON.parse(cached);
         }
@@ -88,7 +94,7 @@ async function getCachedTranslations(lang) {
  */
 async function cacheTranslations(lang, data) {
     try {
-        localStorage.setItem(`translations_${lang}`, JSON.stringify(data));
+        localStorage.setItem(getTranslationCacheKey(lang), JSON.stringify(data));
     } catch (error) {
         console.warn(`Failed to cache translations for ${lang}:`, error);
     }
@@ -101,7 +107,7 @@ async function clearTranslationCache() {
     try {
         // 清除 localStorage 中的翻译缓存
         for (const lang of SUPPORTED_LANGUAGES) {
-            localStorage.removeItem(`translations_${lang}`);
+            localStorage.removeItem(getTranslationCacheKey(lang));
             delete translations[lang];
             translationsLoaded[lang] = false;
         }
@@ -319,4 +325,3 @@ async function applyLanguage(lang) {
 
 // Export the functions for use in other modules
 export { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLanguageApplied, preloadAllTranslations, t, translatePage };
-

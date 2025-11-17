@@ -94,14 +94,18 @@ LittleAIBox is perfect for:
 ## ✨ Key Features
 
 ### 🎯 **Smart File Processing**
-- **Office Documents**: Parse Word (.docx), PDF, Excel (.xlsx), and **PowerPoint (.pptx)** files directly in the browser
+- **Office Documents**: Parse Word (.docx), PDF, Excel (.xlsx, .xls, .csv), and **PowerPoint (.pptx)** files directly in the browser
 - **Rich Media**: Support for images and Markdown files
+- **Plain Text Files**: Support for various text file formats
 - **Zero Upload Required**: All file processing happens client-side for maximum privacy
 
 ### 🔐 **Privacy-First Design**
 - **No Registration Required**: Start using immediately without creating an account
+- **Multiple Login Options**: Email/password, OAuth (Google, GitHub), or guest mode
+- **Multi-Factor Authentication (MFA)**: Optional TOTP authenticator app support with backup codes
 - **Self-Configure API Key**: Use your own Gemini API key, with complete data control
 - **Flexible Storage**: Registered users' API keys are persisted for multi-device sync; guest users' keys are stored locally only and automatically cleared on page refresh, ensuring privacy
+- **Password Management**: Secure password reset via email verification
 
 ### 🌍 **Universal Access**
 - **Regional Restriction Solution**: Built-in service relay routing to bypass geographical limitations
@@ -115,7 +119,7 @@ LittleAIBox is perfect for:
 - **GitHub Flavored Markdown**: Full GFM support with syntax highlighting
 
 ### 🌐 **Multi-Language Support**
-- **5 Languages**: Chinese (Simplified/Traditional), English, Japanese, Korean
+- **5 Languages**: Chinese (Simplified/Traditional), English, Japanese, Korean, Spanish
 - **Smart Detection**: Automatic language detection based on browser settings
 - **Optimized Loading**: Intelligent translation caching for instant language switching
 
@@ -243,14 +247,17 @@ graph TB
 - **Charts**: Mermaid
 - **File Parsing**: mammoth (Word), PDF.js, xlsx, pptx2html
 - **Storage**: IndexedDB + localStorage
+- **Authentication**: JWT-based auth with OAuth 2.0 support (Google, GitHub)
+- **Security**: MFA/TOTP support with backup codes
 
 ### 💾 Client-Side Processing
 
 All file parsing and processing happens entirely in the browser:
 - **PPTX Parsing**: Full PowerPoint content extraction
 - **PDF Reading**: Text and metadata extraction
-- **Excel Processing**: Spreadsheet data parsing
-- **Image Handling**: Client-side image processing
+- **Excel Processing**: Spreadsheet data parsing (.xlsx, .xls, .csv)
+- **Word Documents**: DOCX file parsing with formatting preservation
+- **Image Handling**: Client-side image processing and base64 encoding
 
 ### Offline Support
 
@@ -284,8 +291,15 @@ While I'm committed to transparency, the backend remains closed-source for sever
 #### Core Database Layer
 
 **Cloudflare D1 (SQLite)**
-- Complete user authentication system (email/password) with secure password hashing and verification
+- Complete user authentication system with multiple login methods:
+  - Email/password with secure bcrypt hashing
+  - OAuth 2.0 integration (Google, GitHub)
+  - Guest mode for anonymous usage
+- Multi-Factor Authentication (MFA) support:
+  - TOTP authenticator app integration
+  - Backup code generation and management
 - JWT session management for stateless authentication and multi-device login
+- Password reset flow with email verification
 - Chat history persistence with query and recovery support
 - User configuration and preference management
 
@@ -315,6 +329,7 @@ The system automatically detects and bypasses regional restrictions, invalid key
 **Email Services**
 - **Resend**: For secure email verification and password reset flows
 - Supports HTML templates and internationalized email content
+- Email-based account recovery and verification
 
 **Search & Content**
 - **Brave Search API**: High-quality web search results to enhance AI context understanding
@@ -355,9 +370,15 @@ LittleAIBox/
 ├── src/                    # Source code
 │   ├── main.js            # Main application logic
 │   ├── api-config.js      # API configuration
+│   ├── auth-oauth.js      # OAuth authentication (Google, GitHub)
+│   ├── auth-template.js  # Authentication UI templates
+│   ├── auth.css           # Authentication styles
 │   ├── db.js              # IndexedDB wrapper
 │   ├── i18n.js            # Internationalization
 │   ├── mermaid-renderer.js # Diagram rendering
+│   ├── mfa-login.js       # Multi-factor authentication
+│   ├── oauth-flow.js      # OAuth flow handling
+│   ├── router.js           # Client-side routing
 │   ├── style.css          # Global styles
 │   └── sw-custom.js       # Service Worker
 ├── public/                 # Static assets
@@ -366,8 +387,10 @@ LittleAIBox/
 │   ├── images/            # Images and icons
 │   └── manifest.webmanifest # PWA manifest
 ├── appshow/                # Screenshots by language
+├── docs/                   # Documentation (multi-language)
 ├── capacitor.config.json   # Mobile app configuration
 ├── vite.config.js          # Build configuration
+├── tailwind.config.js      # Tailwind CSS configuration
 └── package.json            # Dependencies
 ```
 
@@ -419,6 +442,11 @@ npm run build
    - Enter your Gemini API key
    - Save and start chatting!
 
+3. **Account Options** (Optional):
+   - **Create Account**: Register with email/password or use OAuth (Google/GitHub)
+   - **Enable MFA**: Go to Settings → Security to set up TOTP authenticator
+   - **Guest Mode**: Use without registration (API keys stored locally only)
+
 ### Troubleshooting
 
 **Common Issues:**
@@ -461,7 +489,7 @@ npx cap open android
 
 ## 🤝 Contributing
 
-We welcome contributions! Whether you're fixing bugs, adding features, or improving documentation, every contribution makes LittleAIBox better.
+I welcome contributions! Whether you're fixing bugs, adding features, or improving documentation, every contribution makes LittleAIBox better.
 
 ### How to Contribute
 
@@ -499,8 +527,13 @@ Have ideas? [Open an issue](https://github.com/diandiancha/LittleAIBox/issues) o
 
 - **Client-Side Processing**: File parsing happens in your browser
 - **Local Storage**: Chat history stored locally (optional cloud sync)
+- **Secure Authentication**: 
+  - Multiple login options (email/password, OAuth)
+  - Optional MFA/TOTP for enhanced security
+  - Secure password reset via email verification
 - **No Tracking**: Privacy-first design
 - **Open Source**: Transparent and auditable code
+- **API Key Security**: User API keys encrypted and stored securely
 
 🧠 **All processing happens locally or through your configured API key — no data ever leaves your device without your consent.**
 

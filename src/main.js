@@ -1,4 +1,4 @@
-﻿import { App } from '@capacitor/app';
+import { App } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Clipboard } from '@capacitor/clipboard';
@@ -8,11 +8,16 @@ import { Keyboard } from '@capacitor/keyboard';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { StatusBar } from '@capacitor/status-bar';
 import { FilePicker } from '@capawesome/capacitor-file-picker';
+import qrcodeGenerator from 'qrcode-generator';
 import { API_BASE_URL, isNativeApp } from './api-config.js';
+import { injectAuthUI } from './auth-template.js';
+import './auth.css';
 import { deleteChatsFromDB, getChatsFromDB, getSettingsFromDB, saveChatsToDB, saveSettingsToDB } from './db.js';
 import { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLanguageApplied, preloadAllTranslations, t } from './i18n.js';
 import { renderMermaidDiagrams } from './mermaid-renderer.js';
-import { appRouter as router } from './router.js';
+import { cancelMfaVerificationFlow, clearMfaChallengeState, configureMfaLogin, extractMfaChallenge, handleMfaVerificationSubmit, setActiveMfaMethod, setPendingMfaChallenge, showMfaVerificationForm } from './mfa-login.js';
+import { clearPendingOAuthState, handleOAuthCallbackRoute as handleOAuthCallbackRouteImpl, setupNativeOAuthDeepLinkHandler as setupNativeOAuthDeepLinkHandlerImpl, setupOAuthButtons as setupOAuthButtonsImpl } from './oauth-flow.js';
+import router, { DEFAULT_SETTINGS_SECTION } from './router.js';
 import './style.css';
 
 // ==================== AI System Prompts ====================
@@ -20,38 +25,6 @@ const ROLE_INSTRUCTION = `SYSTEM DIRECTIVE: ON SEXUAL, VIOLENT, HATEFUL, OR HIGH
 const FORMAT_INSTRUCTION = `Use Markdown. Code\`\`\`lang. Math:**CRITICAL**If response contains ANY math(equations/formulas/variables),ALL math symbols/expressions MUST wrap in$:inline$x$,display$$x$$.NO bare math chars allowed. Chem **MUST**$\\ce{}$:$\\ce{H2O}$/$\\ce{A+B->C}$/$\\ce{A<=>B}$. Mermaid: (1)ALL labels/text MUST use double quotes"" (2)BAN fullwidth chars()（）①② (3)arrows ONLY --> or == (4)comments ONLY start-of-line %% (5)first line MUST be flowchart/graph directive (6)if uncertain, skip Mermaid.`;
 const SEARCH_CONTEXT_INSTRUCTION = `Answer based on the web search results below. Synthesize the information and cite sources as [1], [2] at sentence ends.`;
 // ===========================================================
-
-function shouldForceHomeOnLoad() {
-    if (typeof window === 'undefined' || !window.performance) {
-        return false;
-    }
-    try {
-        if (typeof window.performance.getEntriesByType === 'function') {
-            const entries = window.performance.getEntriesByType('navigation');
-            if (entries && entries.length > 0) {
-                return entries[0].type === 'reload';
-            }
-        }
-        if (window.performance.navigation) {
-            return window.performance.navigation.type === 1;
-        }
-    } catch (_) { }
-    return false;
-}
-
-// 当刷新页面时统一回到主界面，但允许直接输入聊天链接
-(function enforceHomeRouteOnLoad() {
-    if (!shouldForceHomeOnLoad()) {
-        return;
-    }
-    try {
-        if (window.location && window.location.pathname !== '/' && window.location.pathname !== '') {
-            window.history.replaceState(null, document.title, '/');
-        }
-    } catch (_) {
-        try { window.location.replace('/'); } catch (_) { }
-    }
-})();
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -94,51 +67,140 @@ async function applyNativeSafeAreaInsets() {
 const scriptPromises = new Map();
 const scriptBlobUrls = new Map();
 const SCRIPT_CACHE_NAME = 'littleaibox-file-parsers';
-const settingsAlertReasons = new Set();
-let pendingVersionUpdateVersion = null;
 let welcomePageShown = false;
+const GUEST_LOCKED_SETTINGS = new Set(['security']);
 const uiStateStack = [];
 let authOverlayReason = null;
 let touchActiveMessage = null;
 let touchActionHandlersInitialized = false;
 let touchActionModeEnabled = false;
-let initialChatsResolved = false;
-let resolveChatsReady;
-let routerInitialized = false;
-let isSettingsRouteTransition = false;
-let settingsModalObserver = null;
-let settingsModalWasVisible = false;
-const SETTINGS_SECTION_ALIASES = {
-    'profile': 'profile',
-    'theme': 'theme',
-    'themes': 'theme',
-    'language': 'language',
-    'languages': 'language',
-    'timeline': 'timeline',
-    'history': 'timeline',
-    'api': 'api',
-    'api-usage': 'api',
-    'apiusage': 'api',
-    'security': 'security',
-    'privacy-policy': 'privacy-policy',
-    'privacy': 'privacy-policy',
-    'policy': 'privacy-policy',
-    'policies': 'privacy-policy',
-    'privacy_policy': 'privacy-policy',
-    'donation': 'donation',
-    'donations': 'donation',
-    'donate': 'donation',
-    'about': 'about'
-};
-const chatsReady = new Promise((resolve) => {
-    resolveChatsReady = resolve;
-});
+let suppressAuthRouteSync = false;
+let pendingAuthRouteOptions = null;
+let loadingScreenDefaultText = null;
+let pendingLoginSuccessToastKey = null;
+let pendingLoginSuccessToastRoute = 'home';
+let securityPageInitialized = false;
+let refreshSecurityMfaToggleFromUser = null;
+const AUTH_ROUTE_STORAGE_KEY = 'littleaibox_last_auth_route';
+const codeInputRegistry = new Map();
 
-function markChatsReady() {
-    if (!initialChatsResolved) {
-        initialChatsResolved = true;
-        resolveChatsReady();
+function resetCodeInputs(targetId) {
+    if (!targetId) return;
+    const record = codeInputRegistry.get(targetId);
+    if (!record) return;
+    record.inputs.forEach((input) => { input.value = ''; });
+    record.updateValue();
+    const targetInput = document.getElementById(targetId);
+    if (targetInput) {
+        targetInput.value = '';
     }
+}
+
+function setupCodeInputGroup(group) {
+    if (!group) return;
+    const targetId = group.dataset.codeTarget;
+    if (!targetId) return;
+    const targetInput = document.getElementById(targetId);
+    if (!targetInput) return;
+    const inputs = Array.from(group.querySelectorAll('input[data-code-box]'));
+    if (!inputs.length) return;
+
+    const updateValue = () => {
+        targetInput.value = inputs.map((input) => input.value).join('');
+    };
+
+    inputs.forEach((input, index) => {
+        input.addEventListener('input', (event) => {
+            const value = event.target.value.replace(/\D/g, '');
+            event.target.value = value.slice(-1);
+            if (event.target.value && index < inputs.length - 1) {
+                inputs[index + 1].focus();
+            }
+            updateValue();
+        });
+
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Backspace' && !input.value) {
+                if (index > 0) {
+                    inputs[index - 1].focus();
+                    inputs[index - 1].value = '';
+                    updateValue();
+                }
+                event.preventDefault();
+            } else if (event.key === 'ArrowLeft' && index > 0) {
+                inputs[index - 1].focus();
+                event.preventDefault();
+            } else if (event.key === 'ArrowRight' && index < inputs.length - 1) {
+                inputs[index + 1].focus();
+                event.preventDefault();
+            }
+        });
+
+        input.addEventListener('paste', (event) => {
+            const clipboard = event.clipboardData?.getData('text') || window.clipboardData?.getData('Text') || '';
+            if (!clipboard) return;
+            event.preventDefault();
+            const digits = clipboard.replace(/\D/g, '').slice(0, inputs.length);
+            let cursor = index;
+            digits.split('').forEach((digit) => {
+                if (cursor >= inputs.length) return;
+                inputs[cursor].value = digit;
+                cursor += 1;
+            });
+            const focusTarget = Math.min(cursor, inputs.length - 1);
+            inputs[focusTarget].focus();
+            updateValue();
+        });
+    });
+
+    group.addEventListener('click', () => {
+        const firstEmpty = inputs.find((input) => !input.value);
+        (firstEmpty || inputs[inputs.length - 1]).focus();
+    });
+
+    codeInputRegistry.set(targetId, { inputs, updateValue });
+    updateValue();
+}
+
+function clearPersistedAuthRoute() {
+    try {
+        sessionStorage.removeItem(AUTH_ROUTE_STORAGE_KEY);
+    } catch (_) { }
+}
+
+const storedAuthRoute = (() => {
+    try {
+        return sessionStorage.getItem(AUTH_ROUTE_STORAGE_KEY);
+    } catch (_) {
+        return null;
+    }
+})();
+const existingSessionId = (() => {
+    try {
+        return localStorage.getItem('sessionId');
+    } catch (_) {
+        return null;
+    }
+})();
+
+if (existingSessionId && storedAuthRoute) {
+    clearPersistedAuthRoute();
+} else if (storedAuthRoute &&
+    storedAuthRoute.startsWith('/auth/') &&
+    window.location.pathname === '/') {
+    const parts = storedAuthRoute.split('/').filter(Boolean);
+    const rawMode = parts[1] || 'login';
+    let params;
+    if (rawMode === 'reset-password') {
+        params = { mode: 'reset', token: decodeURIComponent(parts[2] || '') };
+    } else if (rawMode === 'verify-email') {
+        params = { mode: 'verify' };
+    } else {
+        params = { mode: rawMode };
+    }
+    try {
+        window.history.replaceState({ route: 'auth', params }, document.title, storedAuthRoute);
+    } catch (_) { }
 }
 
 // 设置备份功能
@@ -202,7 +264,9 @@ class NavigationEngine {
         this.isGestureActive = false;
         this.nextBackShouldReturnToMain = false;
         this.suppressNextPop = false;
-
+        this.isHistoryNavigation = false;
+        this.skipNextHistoryBack = false;
+        this.sidebarHistoryState = 'idle';
         this.init();
     }
 
@@ -230,8 +294,13 @@ class NavigationEngine {
             if (e.touches.length === 1) {
                 const startX = e.touches[0].clientX;
                 const startY = e.touches[0].clientY;
+                const isSidebarOpen = this.isSidebarOpen();
 
-                if (startX > window.innerWidth - 30) {
+                const nearRightEdge = startX > window.innerWidth - 30;
+                const nearLeftEdge = isSidebarOpen && startX < 30;
+                const nearRightEdgeWhenSidebarOpen = isSidebarOpen && startX > window.innerWidth - 30;
+
+                if (nearRightEdge || nearLeftEdge || nearRightEdgeWhenSidebarOpen) {
                     this.gestureStartX = startX;
                     this.gestureStartY = startY;
                     this.isGestureActive = true;
@@ -250,11 +319,26 @@ class NavigationEngine {
             const deltaX = endX - this.gestureStartX;
             const deltaY = endY - this.gestureStartY;
 
-            if (this.gestureStartX > window.innerWidth - 30 &&
+            const isHorizontalGesture =
                 Math.abs(deltaX) > this.gestureThreshold &&
-                Math.abs(deltaY) < this.gestureThreshold &&
-                deltaX < 0) {
-                this.handleBackAction();
+                Math.abs(deltaY) < this.gestureThreshold;
+
+            if (isHorizontalGesture) {
+                const isSidebarOpen = this.isSidebarOpen();
+
+                if (isSidebarOpen) {
+                    const swipedFromLeft = this.gestureStartX < 30 && deltaX > 0;
+                    const swipedFromRight = this.gestureStartX > window.innerWidth - 30 && deltaX < 0;
+
+                    if (swipedFromLeft || swipedFromRight) {
+                        this.handleBackAction();
+                    }
+                } else {
+                    const swipedFromRight = this.gestureStartX > window.innerWidth - 30 && deltaX < 0;
+                    if (swipedFromRight) {
+                        this.handleBackAction();
+                    }
+                }
             }
 
             this.isGestureActive = false;
@@ -282,11 +366,111 @@ class NavigationEngine {
     }
 
     setupHistoryIntegration() {
-        // Browser history is managed by the dedicated router module now.
+        try {
+            router.init({
+                isNativeApp: this.isNativeApp,
+                onBack: () => {
+                    if (this.skipNextHistoryBack) {
+                        this.skipNextHistoryBack = false;
+                        return;
+                    }
+                    this.isHistoryNavigation = true;
+                    Promise.resolve(this.handleBackAction()).finally(() => {
+                        this.isHistoryNavigation = false;
+                    });
+                },
+                shouldIgnorePop: () => this.suppressNextPop,
+                onPopIgnored: () => {
+                    this.suppressNextPop = false;
+                }
+            });
+        } catch (_) { }
     }
 
-    requestProgrammaticBack() {
-        router.back();
+    canUseSidebarHistory() {
+        return !this.isNativeApp &&
+            typeof router?.pushPlaceholder === 'function';
+    }
+
+    notifySidebarOpened() {
+        if (!this.canUseSidebarHistory() || this.sidebarHistoryState !== 'idle' || !this.isMobile) {
+            return;
+        }
+        try {
+            router.pushPlaceholder();
+            this.sidebarHistoryState = 'armed';
+        } catch (_) {
+            this.sidebarHistoryState = 'idle';
+        }
+    }
+
+    notifySidebarClosed(options = {}) {
+        if (!this.canUseSidebarHistory()) {
+            return;
+        }
+        if (options.fromHistory) {
+            if (this.sidebarHistoryState !== 'idle') {
+                this.sidebarHistoryState = 'idle';
+                this.markHistoryHandled();
+            }
+            return;
+        }
+        if (this.sidebarHistoryState !== 'armed') {
+            return;
+        }
+        this.sidebarHistoryState = 'closing';
+        this.requestProgrammaticBack({ skipHandleBack: true });
+    }
+
+    consumeSidebarHistoryPop() {
+        if (!this.canUseSidebarHistory()) {
+            return false;
+        }
+        const state = this.sidebarHistoryState;
+        if (state === 'idle') {
+            return false;
+        }
+        this.sidebarHistoryState = 'idle';
+        if (!document.body.classList.contains('sidebar-open')) {
+            this.markHistoryHandled();
+            return true;
+        }
+        try {
+            closeSidebar(true, { fromHistory: true });
+        } catch (error) {
+            console.error('Failed to close sidebar from history pop:', error);
+            this.markHistoryHandled();
+        }
+        return true;
+    }
+
+    requestProgrammaticBack(options = {}) {
+        const { skipHandleBack = false } = options;
+        try {
+            if (skipHandleBack) {
+                this.skipNextHistoryBack = true;
+            } else {
+                this.suppressNextPop = true;
+            }
+            const navigated = router.back();
+            if (!navigated) {
+                if (skipHandleBack) {
+                    this.skipNextHistoryBack = false;
+                } else {
+                    this.suppressNextPop = false;
+                }
+            }
+        } catch (_) {
+            if (skipHandleBack) {
+                this.skipNextHistoryBack = false;
+            } else {
+                this.suppressNextPop = false;
+            }
+        }
+    }
+
+    markHistoryHandled() {
+        this.skipNextHistoryBack = true;
     }
 
     async handleBackAction() {
@@ -301,19 +485,6 @@ class NavigationEngine {
                 return;
             }
         } catch (_) { }
-        if (this.nextBackShouldReturnToMain && this.isOnChatPage()) {
-            const canLeaveTempChat = await confirmTempChatExitIfNeeded();
-            if (!canLeaveTempChat) {
-                return;
-            }
-            this.nextBackShouldReturnToMain = false;
-            if (routerInitialized) {
-                router.reset('home');
-            } else {
-                await this.returnToMainPage();
-            }
-            return;
-        }
         if (this.isSidebarOpen()) {
             this.closeSidebar(true);
             if (this.isOnChatPage()) {
@@ -327,41 +498,25 @@ class NavigationEngine {
             return;
         }
 
+        if (this.nextBackShouldReturnToMain && this.isOnChatPage()) {
+            this.nextBackShouldReturnToMain = false;
+            await this.returnToMainPage();
+            return;
+        }
+
         if (this.isOnLoginPage()) {
             this.enterGuestMode();
             return;
         }
 
-        const currentRouteName = (routerInitialized && typeof router.getCurrentRouteName === 'function')
-            ? router.getCurrentRouteName()
-            : null;
-
-        if (routerInitialized && currentRouteName === 'chat') {
-            const canLeaveTempChat = await confirmTempChatExitIfNeeded();
-            if (!canLeaveTempChat) {
-                return;
-            }
-            router.reset('home');
-            return;
-        }
-
-        if (routerInitialized && router.canGoBack()) {
-            router.back();
-            return;
-        }
-
-        if (routerInitialized && currentRouteName && currentRouteName !== 'home') {
-            router.replace('home');
-            return;
-        }
-
-        if (!routerInitialized && this.isOnChatPage()) {
-            await this.returnToMainPage();
-            return;
-        }
-
         if (this.isOnChatPage()) {
             await this.returnToMainPage();
+            return;
+        }
+
+        if (this.isOnMainPage()) {
+            this.clearAllStateStacks(!this.isNativeApp);
+            this.handleExitLogic();
             return;
         }
 
@@ -410,14 +565,15 @@ class NavigationEngine {
     async closeModal() {
         // 关闭设置模态框
         if (elements.settingsModal?.classList.contains('visible')) {
-            if (routerInitialized && isSettingsRouteActive()) {
-                isSettingsRouteTransition = true;
-                router.back();
-                return;
-            }
-            const canClose = await closeModalAndResetState(handleCloseSettingsModalByPage);
+            const closeOptions = {
+                manageHistory: !this.isHistoryNavigation,
+                skipHandleBack: !this.isHistoryNavigation
+            };
+            const canClose = await closeModalAndResetState(() =>
+                handleCloseSettingsModalByPage(closeOptions)
+            );
             if (canClose) {
-                navigationEngine.suppressNextPop = false;
+                this.suppressNextPop = false;
             }
             return;
         }
@@ -458,8 +614,7 @@ class NavigationEngine {
         // 关闭登录遮罩
         if (elements.authOverlay?.classList.contains('visible')) {
             if (authOverlayReason === 'user') {
-                elements.authOverlay.classList.remove('visible');
-                updateLoginButtonVisibility();
+                hideAuthOverlay(false, { routeHandled: this.isHistoryNavigation });
             } else {
                 this.handleExitLogic();
             }
@@ -473,10 +628,10 @@ class NavigationEngine {
     }
 
     // 关闭侧边栏
-    closeSidebar() {
+    closeSidebar(fromBackAction = false) {
         if (this.isSidebarOpen()) {
             try {
-                closeSidebar(true);
+                closeSidebar(true, { fromHistory: fromBackAction && this.isHistoryNavigation });
             } catch (e) {
                 console.error('Error closing sidebar:', e);
             }
@@ -502,23 +657,16 @@ class NavigationEngine {
 
     // 进入访客模式
     enterGuestMode() {
-        if (elements.authOverlay?.classList.contains('visible')) {
-            elements.authOverlay.classList.remove('visible');
-            updateLoginButtonVisibility();
-        }
+        hideAuthOverlay(false);
     }
 
     // 处理退出逻辑
     handleExitLogic() {
-        if (this.isNativeApp) {
-            this.handleNativeAppExit();
-        } else {
-            this.handleWebAppExit();
+        if (!this.isNativeApp) {
+            return;
         }
-    }
 
-    // 处理原生应用退出
-    handleNativeAppExit() {
+        // 原生应用的两次确认退出逻辑
         if (!this.exitPromptShown) {
             this.exitPromptShown = true;
             showToast(getToastMessage('toast.pressAgainToExitShort'), 'info');
@@ -536,18 +684,11 @@ class NavigationEngine {
             try {
                 if (typeof App !== 'undefined' && typeof App.exitApp === 'function') {
                     App.exitApp();
-                } else {
-                    this.handleWebAppExit();
                 }
-            } catch (_) {
-                this.handleWebAppExit();
+            } catch (error) {
+                console.error('Failed to exit app:', error);
             }
         }
-    }
-
-    // 处理网页应用退出
-    handleWebAppExit() {
-        showToast(getToastMessage('toast.pressAgainToExit'), 'info');
     }
 
     // 重置退出状态
@@ -558,6 +699,20 @@ class NavigationEngine {
             clearTimeout(this.exitTimer);
             this.exitTimer = null;
         }
+    }
+
+    clearAllStateStacks(forImmediateWebExit = false) {
+        while (uiStateStack.length) {
+            const state = uiStateStack.pop();
+            try {
+                state?.close?.();
+            } catch (_) { }
+        }
+        this.suppressNextPop = false;
+        if (forImmediateWebExit && typeof router.resetManagedHistory === 'function') {
+            router.resetManagedHistory();
+        }
+        this.resetExitState();
     }
 
     // 手动触发返回操作
@@ -590,28 +745,350 @@ class NavigationEngine {
             if (currentChatId.startsWith('temp_')) {
                 const canLeave = await handleLeaveTemporaryChat(false);
                 if (!canLeave) {
+                    routeManager.ensureChatRouteSynced();
                     return;
                 }
             } else {
                 currentChatId = null;
-                this.resetExitState();
                 showEmptyState();
                 scheduleRenderSidebar();
             }
         }
+        if (!currentChatId) {
+            routeManager.navigateToHome({ replace: true });
+            this.clearAllStateStacks(!this.isNativeApp);
+        }
     }
-}
 
-async function confirmTempChatExitIfNeeded() {
-    if (!currentChatId || !currentChatId.startsWith('temp_')) {
-        return true;
+    markHistoryHandled() {
+        this.skipNextHistoryBack = true;
     }
-    return await handleLeaveTemporaryChat(false);
 }
 
 // 创建全局导航引擎实例
 const navigationEngine = new NavigationEngine();
 window.isChatProcessing = () => isProcessing;
+
+class RouteManager {
+    constructor() {
+        this.suppressSettingsRouteSync = false;
+        this.initialRouteHandled = false;
+        this.chatsLoadPromise = Promise.resolve();
+        this.currentAuthState = { mode: 'login', token: '' };
+        this.historyUnsubscribe = router.onChange((payload) => {
+            Promise.resolve(this.handleHistoryChange(payload))
+                .catch((error) => console.error('Route history handling failed:', error));
+            maybeShowPendingLoginSuccessToast(payload?.route?.name);
+        });
+    }
+
+    setChatsLoadPromise(promise) {
+        this.chatsLoadPromise = promise || Promise.resolve();
+    }
+
+    async waitForChatsToLoad() {
+        try {
+            await this.chatsLoadPromise;
+        } catch (_) { }
+    }
+
+    navigateToChat(chatId, options = {}) {
+        if (!chatId) return;
+        const routeName = String(chatId).startsWith('temp_') ? 'tempChat' : 'chat';
+        const currentRoute = router.getCurrentRoute();
+        const isCurrentChatContext = currentRoute?.name === 'chat' || currentRoute?.name === 'tempChat';
+        const isTargetChatContext = routeName === 'chat' || routeName === 'tempChat';
+        const shouldReplace = options.replace === true || (isTargetChatContext && isCurrentChatContext);
+        router.navigate(routeName, { chatId }, {
+            replace: shouldReplace,
+            silent: options.silent === true
+        });
+    }
+
+    ensureChatRouteSynced(options = {}) {
+        if (!currentChatId) return;
+        this.navigateToChat(currentChatId, {
+            replace: options.replace === true,
+            silent: options.silent === true
+        });
+    }
+
+    navigateToHome(options = {}) {
+        const currentRoute = router.getCurrentRoute();
+        if (currentRoute?.name === 'home' && options.force !== true) {
+            const currentPath = window.location.pathname;
+            if (currentPath === '/' || currentPath === '') {
+                return;
+            }
+        }
+        router.navigate('home', {}, {
+            replace: options.replace !== false,
+            silent: options.silent === true
+        });
+    }
+
+    getActiveSettingsSection() {
+        const activeNav = document.querySelector('.settings-nav-item.active');
+        return (activeNav?.dataset.page) || lastSettingsPage || DEFAULT_SETTINGS_SECTION;
+    }
+
+    normalizeAuthMode(mode) {
+        if (mode === 'register') return 'register';
+        if (mode === 'verify' || mode === 'verify-email') return 'verify';
+        if (mode === 'reset-request' || mode === 'reset-password-request') return 'reset-request';
+        if (mode === 'reset' || mode === 'reset-password') return 'reset';
+        return 'login';
+    }
+
+    normalizeAuthState(state) {
+        if (typeof state === 'object' && state !== null) {
+            const normalizedMode = this.normalizeAuthMode(state.mode);
+            return {
+                mode: normalizedMode,
+                token: normalizedMode === 'reset' ? (state.token || '') : ''
+            };
+        }
+        const normalizedMode = this.normalizeAuthMode(state);
+        return { mode: normalizedMode, token: '' };
+    }
+
+    syncSettingsRoute(section, options = {}) {
+        if (this.suppressSettingsRouteSync) return;
+        const finalSection = section || this.getActiveSettingsSection();
+        if (!finalSection) return;
+        router.navigate('settings', { section: finalSection }, {
+            replace: options.replace === true,
+            silent: options.silent === true
+        });
+    }
+
+    syncAuthRoute(modeOrState = 'login', options = {}) {
+        const state = this.normalizeAuthState(modeOrState);
+        const params = state.mode === 'reset'
+            ? { mode: 'reset', token: state.token || '' }
+            : state.mode === 'verify'
+                ? { mode: 'verify' }
+                : state.mode === 'reset-request'
+                    ? { mode: 'reset-request' }
+                    : { mode: state.mode };
+        router.navigate('auth', params, {
+            replace: options.replace !== false,
+            silent: options.silent === true
+        });
+        this.currentAuthState = state;
+    }
+
+    isSettingsSyncSuppressed() {
+        return this.suppressSettingsRouteSync;
+    }
+
+    async openSettingsFromRoute(section, options = {}) {
+        let targetSection = section || DEFAULT_SETTINGS_SECTION;
+        if (!currentUser && GUEST_LOCKED_SETTINGS.has(targetSection)) {
+            targetSection = DEFAULT_SETTINGS_SECTION;
+        }
+        this.suppressSettingsRouteSync = true;
+        try {
+            if (elements.settingsModal) {
+                elements.settingsModal.classList.add('visible');
+                elements.chatContainer.style.display = 'flex';
+                updateLoginButtonVisibility();
+                setupSettingsModalUI();
+            }
+            await new Promise(resolve => setTimeout(resolve, 150));
+            const isVisible = (el) => el && window.getComputedStyle(el).display !== 'none';
+            let navItem = document.querySelector(`.settings-nav-item[data-page="${targetSection}"]`);
+            let appliedSection = targetSection;
+            if (!isVisible(navItem)) {
+                const fallbackNav = Array.from(document.querySelectorAll('.settings-nav-item'))
+                    .find(item => isVisible(item));
+                if (fallbackNav) {
+                    navItem = fallbackNav;
+                    appliedSection = fallbackNav.dataset.page;
+                } else {
+                    navItem = null;
+                    appliedSection = DEFAULT_SETTINGS_SECTION;
+                }
+            }
+            if (navItem) {
+                navItem.click();
+            }
+            lastSettingsPage = appliedSection;
+        } finally {
+            this.suppressSettingsRouteSync = false;
+        }
+    }
+
+    async openAuthFromRoute(modeState) {
+        const state = this.normalizeAuthState(modeState);
+        openAuthOverlay('route', state, { syncRoute: false });
+    }
+
+    async openChatFromRoute(chatId) {
+        if (!chatId) return;
+        await this.waitForChatsToLoad();
+        if (!chats || !chats[chatId]) {
+            return;
+        }
+        try {
+            await loadChat(chatId);
+        } catch (error) {
+            console.error('Failed to open chat from route:', error);
+        }
+    }
+
+    async handleRouteIntent(route) {
+        if (!route) return;
+        if ((route.name === 'chat' || route.name === 'tempChat') && route.params?.chatId) {
+            await this.openChatFromRoute(route.params.chatId);
+        } else if (route.name === 'settings') {
+            await this.openSettingsFromRoute(route.params?.section);
+        } else if (route.name === 'auth') {
+            await this.openAuthFromRoute(route.params?.mode);
+        } else if (route.name === 'oauthCallback') {
+            await handleOAuthCallbackRouteImpl(route.params?.provider, route.params?.search, buildOAuthContext({ routeManager: this }));
+        }
+    }
+
+    async handleInitialRouteIntent() {
+        if (this.initialRouteHandled) return;
+        this.initialRouteHandled = true;
+        try {
+            await this.handleRouteIntent(router.getCurrentRoute());
+        } catch (error) {
+            console.error('Failed to handle initial route:', error);
+        }
+    }
+
+    isInitialRouteProcessed() {
+        return this.initialRouteHandled;
+    }
+
+    getAuthMode() {
+        return this.currentAuthState.mode;
+    }
+
+    getAuthState() {
+        return { ...this.currentAuthState };
+    }
+
+    setAuthMode(mode, token = '') {
+        this.currentAuthState = this.normalizeAuthState({ mode, token });
+    }
+
+    resetAuthMode() {
+        this.currentAuthState = { mode: 'login', token: '' };
+    }
+
+    async handleHistoryChange(payload) {
+        if (!payload || payload.type !== 'pop') {
+            return;
+        }
+        const route = payload.route;
+        if (!route) {
+            return;
+        }
+        if (navigationEngine?.consumeSidebarHistoryPop?.()) {
+            return;
+        }
+        navigationEngine.markHistoryHandled?.();
+        if (route.name === 'oauthCallback') {
+            await handleOAuthCallbackRouteImpl(route.params?.provider, route.params?.search, buildOAuthContext({ routeManager: this }));
+            return;
+        }
+        if (route.name === 'auth') {
+            hideSettingsModal(false, { skipHandleBack: true });
+            await this.openAuthFromRoute(route.params?.mode);
+            return;
+        }
+        if (route.name === 'settings') {
+            hideAuthOverlay(false, { routeHandled: true });
+            await this.openSettingsFromRoute(route.params?.section, { fromHistory: true });
+            return;
+        }
+        if (route.name === 'chat' || route.name === 'tempChat') {
+            hideSettingsModal(false, { skipHandleBack: true });
+            hideAuthOverlay(false, { routeHandled: true });
+            const chatId = route.params?.chatId;
+
+            if (chatId && chatId !== currentChatId) {
+                await this.openChatFromRoute(chatId);
+            }
+            return;
+        }
+        if (route.name === 'home') {
+            hideSettingsModal(false, { skipHandleBack: true });
+            hideAuthOverlay(false, { routeHandled: true });
+            if (currentChatId && String(currentChatId).startsWith('temp_')) {
+                const tempId = currentChatId;
+                this.navigateToChat(tempId, { replace: false, silent: true });
+                const canLeave = await handleLeaveTemporaryChat(false);
+                if (canLeave) {
+                    this.navigateToHome({ replace: true });
+                }
+                return;
+            }
+            if (currentChatId) {
+                currentChatId = null;
+                showEmptyState();
+                scheduleRenderSidebar();
+                this.navigateToHome({ replace: true });
+                return;
+            }
+            currentChatId = null;
+            showEmptyState();
+            this.navigateToHome({ replace: true });
+            return;
+        }
+    }
+}
+
+const routeManager = new RouteManager();
+const initialRouteState = router.getCurrentRoute();
+if (initialRouteState?.name === 'auth') {
+    routeManager.setAuthMode(initialRouteState.params?.mode, initialRouteState.params?.token);
+}
+
+function buildOAuthContext(overrides = {}) {
+    return {
+        isNativeApp,
+        showToast,
+        showLoadingScreen,
+        hideLoadingScreen,
+        getToastMessage,
+        hideAuthOverlay,
+        openAuthOverlay,
+        applyAuthenticatedSession,
+        clearPersistedAuthRoute,
+        routeManager,
+        ...overrides
+    };
+}
+
+function getAuthPathForState(state) {
+    const normalizedState = routeManager.normalizeAuthState(state);
+    if (normalizedState.mode === 'reset') {
+        const token = normalizedState.token ? `/${encodeURIComponent(normalizedState.token)}` : '';
+        return `/auth/reset-password${token}`;
+    }
+    if (normalizedState.mode === 'reset-request') {
+        return '/auth/reset-password';
+    }
+    if (normalizedState.mode === 'verify') {
+        return '/auth/verify-email';
+    }
+    if (normalizedState.mode === 'register') {
+        return '/auth/register';
+    }
+    return '/auth/login';
+}
+
+function persistAuthRoute(state) {
+    try {
+        sessionStorage.setItem(AUTH_ROUTE_STORAGE_KEY, getAuthPathForState(state));
+    } catch (_) { }
+}
+
 
 function loadScript(src, globalName) {
     if (window[globalName]) {
@@ -770,7 +1247,6 @@ const GUEST_FILE_SIZE_LIMIT = 5 * 1024 * 1024;
 const LOGGED_IN_FILE_SIZE_LIMIT = 10 * 1024 * 1024;
 const MAX_TABLE_ROWS = 80;
 const LOCAL_STORAGE_KEY_PRIVACY = 'seenPrivacyPolicyVersion';
-const LOCAL_STORAGE_KEY_APP_UPDATE_SEEN = 'seenAppUpdateVersion';
 const LARGE_TEXT_THRESHOLD = 40000;
 const CHARACTER_LIMIT = 300000;
 const ICONS = {
@@ -1236,7 +1712,6 @@ let chats = {};
 let currentChatId = null;
 let currentQuote = null;
 let attachments = [];
-let fileViewerCopyText = '';
 const aiOptimizedContentStore = new WeakMap();
 let removeFileViewerLinkHandler = null;
 let isProcessing = false;
@@ -1284,20 +1759,8 @@ const appReadyPromise = new Promise(resolve => {
 });
 let pendingMessage = null;
 let lastSettingsPage = null;
-const DEFAULT_SETTINGS_SECTION = 'profile';
-let pendingSettingsSection = null;
 let weeklyTimerInterval = null;
 let weeklyFeatureStatus = { can_use: true, expires_at: null, loaded: false };
-
-function normalizeSettingsSection(section) {
-    const raw = (section ?? '').toString().trim();
-    if (!raw) return null;
-    const key = raw.toLowerCase();
-    if (SETTINGS_SECTION_ALIASES[key]) {
-        return SETTINGS_SECTION_ALIASES[key];
-    }
-    return key;
-}
 
 let globalCleanupFunctions = [];
 let isInitializing = false;
@@ -1501,10 +1964,16 @@ function composeSystemPrompt(userPrompt = '') {
 
 // DOM元素引用
 const elements = {};
+
 function populateElements() {
     elements.authOverlay = document.getElementById('auth-overlay');
     elements.loginForm = document.getElementById('login-form');
     elements.registerForm = document.getElementById('register-form');
+    elements.mfaForm = document.getElementById('mfa-verification-form');
+    elements.mfaCodeInput = document.getElementById('mfa-verification-code');
+    elements.mfaMethodButtons = document.querySelectorAll('[data-mfa-method]');
+    elements.mfaBackButton = document.getElementById('mfa-back-to-login');
+    elements.mfaDescription = document.getElementById('mfa-method-description');
     elements.guestContinue = document.getElementById('guest-continue');
     elements.fileViewerOverlay = document.getElementById('file-viewer-overlay');
     elements.fileViewerCode = document.getElementById('file-viewer-code');
@@ -1931,6 +2400,71 @@ function exitMultiSelectMode() {
     resetBackPressExitState();
 }
 
+
+function queueLoginSuccessToast(toastKey, options = {}) {
+    pendingLoginSuccessToastKey = toastKey || null;
+    const hasRouteOption = Object.prototype.hasOwnProperty.call(options, 'route');
+    const desiredRoute = hasRouteOption ? options.route : 'home';
+    pendingLoginSuccessToastRoute = desiredRoute === undefined ? 'home' : desiredRoute;
+
+    if (!pendingLoginSuccessToastKey) {
+        pendingLoginSuccessToastRoute = 'home';
+        return;
+    }
+
+    if (pendingLoginSuccessToastRoute === null) {
+        showToast(getToastMessage(pendingLoginSuccessToastKey), 'success');
+        pendingLoginSuccessToastKey = null;
+        pendingLoginSuccessToastRoute = 'home';
+        return;
+    }
+
+    const currentRoute = router?.getCurrentRoute?.();
+    if (currentRoute) {
+        maybeShowPendingLoginSuccessToast(currentRoute.name);
+    }
+}
+
+function maybeShowPendingLoginSuccessToast(routeName) {
+    if (!pendingLoginSuccessToastKey) {
+        return;
+    }
+    if (pendingLoginSuccessToastRoute === null || routeName === pendingLoginSuccessToastRoute) {
+        showToast(getToastMessage(pendingLoginSuccessToastKey), 'success');
+        pendingLoginSuccessToastKey = null;
+        pendingLoginSuccessToastRoute = 'home';
+    }
+}
+
+function showLoadingScreen(customText = null) {
+    const loadingScreen = document.getElementById('loading-screen');
+    const appContainer = document.querySelector('.app-container');
+    if (!loadingScreen) return;
+
+    const textElement = loadingScreen.querySelector('.loading-text');
+    if (textElement && loadingScreenDefaultText === null) {
+        loadingScreenDefaultText = textElement.textContent || '';
+    }
+    if (textElement) {
+        if (typeof customText === 'string' && customText) {
+            textElement.textContent = customText;
+        } else if (loadingScreenDefaultText !== null) {
+            textElement.textContent = loadingScreenDefaultText;
+        }
+    }
+
+    requestAnimationFrame(() => {
+        loadingScreen.classList.remove('hidden');
+        loadingScreen.setAttribute('aria-hidden', 'false');
+    });
+
+    if (appContainer) {
+        requestAnimationFrame(() => {
+            appContainer.classList.remove('loaded');
+        });
+    }
+}
+
 function hideLoadingScreen() {
     const loadingScreen = document.getElementById('loading-screen');
     const appContainer = document.querySelector('.app-container');
@@ -1938,12 +2472,7 @@ function hideLoadingScreen() {
     if (loadingScreen) {
         requestAnimationFrame(() => {
             loadingScreen.classList.add('hidden');
-
-            setTimeout(() => {
-                if (loadingScreen.parentNode) {
-                    loadingScreen.parentNode.removeChild(loadingScreen);
-                }
-            }, 500);
+            loadingScreen.setAttribute('aria-hidden', 'true');
         });
     }
 
@@ -1975,7 +2504,7 @@ async function updateAboutPageUI() {
     const currentVersionEl = document.getElementById('current-version');
     if (currentVersionEl) {
         if (isNativeApp) {
-            const apkVersion = await syncNativeAppVersion() || localStorage.getItem('apk_version');
+            const apkVersion = localStorage.getItem('apk_version');
             if (apkVersion) {
                 currentVersionEl.textContent = `v${apkVersion}`;
             } else {
@@ -2074,7 +2603,7 @@ async function checkVersionUpdate(showToastIfLatest = false) {
         }
 
         if (serverVersion && currentVersion && serverVersion !== currentVersion) {
-            showVersionUpdateNotification(serverVersion);
+            showVersionUpdateNotification();
             showUpdateNowButton(serverVersion);
             return true;
         } else {
@@ -2092,58 +2621,35 @@ async function checkVersionUpdate(showToastIfLatest = false) {
     }
 }
 
-function updateSettingsButtonAlertColor() {
-    const settingsText = document.getElementById('settings-text');
-    if (!settingsText) return;
-    settingsText.style.color = settingsAlertReasons.size > 0 ? '#ef4444' : '';
-}
-
-function setSettingsAlertReason(reason, isActive) {
-    if (!reason) return;
-    if (isActive) {
-        settingsAlertReasons.add(reason);
-    } else {
-        settingsAlertReasons.delete(reason);
-    }
-    updateSettingsButtonAlertColor();
-}
-
-function hasUnseenVersionUpdateNotice() {
-    if (!pendingVersionUpdateVersion) return false;
-    const seenVersion = localStorage.getItem(LOCAL_STORAGE_KEY_APP_UPDATE_SEEN);
-    return seenVersion !== pendingVersionUpdateVersion;
-}
-
-function showVersionUpdateNotification(version) {
-    if (version) {
-        pendingVersionUpdateVersion = version;
-    } else if (!pendingVersionUpdateVersion) {
-        pendingVersionUpdateVersion = 'unknown';
-    }
+function showVersionUpdateNotification() {
     const aboutBadge = document.getElementById('about-update-badge');
+    const settingsText = document.getElementById('settings-text');
 
     if (aboutBadge) {
         aboutBadge.style.display = 'inline-block';
     }
 
-    setSettingsAlertReason('version', hasUnseenVersionUpdateNotice());
+    if (settingsText) {
+        settingsText.style.color = '#ef4444';
+    }
 }
 
 function hideVersionUpdateNotification() {
     const aboutBadge = document.getElementById('about-update-badge');
+    const settingsText = document.getElementById('settings-text');
 
-    if (aboutBadge) {
-        aboutBadge.style.display = 'none';
+
+    if (settingsText) {
+        settingsText.style.color = '';
     }
-
-    pendingVersionUpdateVersion = null;
-    setSettingsAlertReason('version', false);
 }
 
 function markVersionUpdateAsSeen() {
-    if (!pendingVersionUpdateVersion) return;
-    localStorage.setItem(LOCAL_STORAGE_KEY_APP_UPDATE_SEEN, pendingVersionUpdateVersion);
-    setSettingsAlertReason('version', false);
+    const settingsText = document.getElementById('settings-text');
+
+    if (settingsText) {
+        settingsText.style.color = '';
+    }
 }
 
 async function checkApkUpdate() {
@@ -2161,7 +2667,7 @@ async function checkApkUpdate() {
             const localApkVersion = localStorage.getItem('apk_version');
 
             if (localApkVersion && serverApkVersion !== localApkVersion) {
-                showVersionUpdateNotification(serverApkVersion);
+                showVersionUpdateNotification();
                 showUpdateNowButton(serverApkVersion);
 
                 const hasPermission = await LocalNotifications.checkPermissions();
@@ -2242,7 +2748,7 @@ async function checkForUpdates() {
             checkBtn.innerHTML = originalText;
             checkBtn.disabled = false;
 
-            showVersionUpdateNotification(serverVersion);
+            showVersionUpdateNotification();
             showUpdateNowButton(serverVersion);
             showToast(getToastMessage('version.newVersionDetected', { version: serverVersion }), 'info');
         } else {
@@ -2492,7 +2998,7 @@ async function clearCacheAndReload() {
     } catch (_) { }
 
     await new Promise(r => setTimeout(r, 300));
-    reloadAppToHome();
+    try { location.reload(true); } catch (_) { location.reload(); }
 }
 
 function resolveApkDownloadUrl(relativePath) {
@@ -2506,37 +3012,6 @@ function resolveApkDownloadUrl(relativePath) {
     } catch (_) {
         return `${base}${relativePath}`;
     }
-}
-
-function reloadAppToHome() {
-    try {
-        const url = new URL(window.location.href);
-        url.pathname = '/';
-        url.searchParams.set('_', Date.now().toString());
-        window.location.replace(url.toString());
-    } catch (_) {
-        try { window.location.replace('/'); } catch (_) {
-            try { location.reload(true); } catch (_) { location.reload(); }
-        }
-    }
-}
-
-async function syncNativeAppVersion() {
-    if (!isNativeApp || typeof App?.getInfo !== 'function') return null;
-    try {
-        const info = await App.getInfo();
-        const version = info?.version;
-        if (version) {
-            const stored = localStorage.getItem('apk_version');
-            if (stored !== version) {
-                localStorage.setItem('apk_version', version);
-            }
-            return version;
-        }
-    } catch (error) {
-        console.warn('Failed to sync native app version info:', error);
-    }
-    return null;
 }
 
 async function openApkInBrowser(relativePath) {
@@ -3217,6 +3692,16 @@ function getToastMessage(key, params = {}) {
     return translated;
 }
 
+function updateCurrentPasswordPlaceholderInput() {
+    const input = document.getElementById('current-password');
+    if (!input) return;
+    const hasExistingPassword = !!(currentUser?.has_password);
+    const placeholderKey = hasExistingPassword ? 'ui.currentPassword' : 'ui.currentPasswordOptional';
+    input.dataset.i18nPlaceholderKey = placeholderKey;
+    input.placeholder = getToastMessage(placeholderKey);
+}
+onAfterLanguageApplied(updateCurrentPasswordPlaceholderInput);
+
 function getModelErrorMessage(status) {
     const statusKey = `errors.httpStatus.${status}`;
     const message = getToastMessage(statusKey);
@@ -3476,27 +3961,28 @@ function cancelQuote() {
 function openSidebar() {
     document.body.classList.add('sidebar-open');
     document.getElementById('sidebar-toggle-btn').setAttribute('aria-expanded', 'true');
+    navigationEngine?.notifySidebarOpened?.();
 }
 
-function closeSidebar(isFromBackButton = false) {
-    if (isFromBackButton) {
-        document.body.classList.remove('sidebar-open');
-        document.getElementById('sidebar-toggle-btn').setAttribute('aria-expanded', 'false');
-    } else {
-        document.body.classList.remove('sidebar-open');
-        document.getElementById('sidebar-toggle-btn').setAttribute('aria-expanded', 'false');
+function closeSidebar(isFromBackButton = false, options = {}) {
+    if (!document.body.classList.contains('sidebar-open')) {
+        return;
     }
+    document.body.classList.remove('sidebar-open');
+    document.getElementById('sidebar-toggle-btn').setAttribute('aria-expanded', 'false');
+    const fromHistory = options.fromHistory === true;
+    navigationEngine?.notifySidebarClosed?.({ fromHistory });
 }
 
 function closeSidebarOnInteraction() {
     const isMobile = window.matchMedia('(max-width: 640px)').matches;
     const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
     if (isMobile) {
-        document.body.classList.remove('sidebar-open');
+        closeSidebar();
     } else {
         document.body.classList.add('sidebar-collapsed');
+        sidebarToggleBtn.setAttribute('aria-expanded', 'false');
     }
-    sidebarToggleBtn.setAttribute('aria-expanded', 'false');
 }
 
 function generateId() {
@@ -3573,6 +4059,13 @@ function sanitizeUserForCache(user) {
     } catch (_) {
         return user;
     }
+}
+
+function persistCurrentUserCache() {
+    if (!sessionId || !currentUser) return;
+    try {
+        localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser)));
+    } catch (_) { }
 }
 
 const asyncStorage = {
@@ -3881,12 +4374,22 @@ function showKeyValidationNotification(validationStatus) {
 }
 
 function openSettingsForKeys() {
-    lastSettingsPage = 'api';
-    openSettingsRoute('api', { replace: isSettingsRouteActive() });
+    if (elements.settingsBtn) {
+        elements.settingsBtn.click();
+        setTimeout(() => {
+            const keySettingsTab = document.querySelector('[data-page="api"]');
+            if (keySettingsTab) {
+                lastSettingsPage = 'api';
+                keySettingsTab.click();
+            }
+        }, 100);
+    }
 }
 
 
 function setupSettingsModalUI() {
+    const activeNavItem = document.querySelector('.settings-nav-item.active');
+
     requestAnimationFrame(() => {
         const guestProfileSection = document.getElementById('guest-profile-section');
         const userProfileSection = document.getElementById('edit-profile-section');
@@ -3895,6 +4398,8 @@ function setupSettingsModalUI() {
         const avatarWrapper = document.getElementById('avatar-preview-wrapper');
         const displayEmailText = document.getElementById('display-email-text');
 
+        const navItems = document.querySelectorAll('.settings-nav-item');
+        const pages = document.querySelectorAll('.settings-page');
         const profileNavItem = document.querySelector('.settings-nav-item[data-page="profile"]');
         const apiNavItem = document.querySelector('.settings-nav-item[data-page="api"]');
         const securityNavItem = document.querySelector('.settings-nav-item[data-page="security"]');
@@ -3997,14 +4502,9 @@ function setupSettingsModalUI() {
                 }
 
                 if (elements.usageStats) {
-                    const showGuestUsage = guestHasActiveCustomKey();
-                    elements.usageStats.style.display = showGuestUsage ? 'block' : 'none';
-                    if (showGuestUsage) {
-                        fetchGuestUsageStats().catch(err => console.error('Failed to fetch guest usage stats:', err));
-                    } else {
-                        updateUsageDisplay();
-                    }
+                    elements.usageStats.style.display = 'none';
                 }
+                updateUsageDisplay();
             } catch (_) { }
 
             const currentGuestPreset = guestThemeSettings.preset || 'light';
@@ -4027,10 +4527,427 @@ function setupSettingsModalUI() {
             }
         }
 
-        const targetSection = pendingSettingsSection || getDefaultSettingsSection();
-        pendingSettingsSection = null;
-        activateSettingsPage(targetSection);
+        try {
+            const persisted = lastSettingsPage;
+            const isVisible = (el) => el && getComputedStyle(el).display !== 'none';
+            const setActivePage = (pageName) => {
+                navItems.forEach(i => i.classList.remove('active'));
+                pages.forEach(p => p.classList.remove('active'));
+                const nav = document.querySelector(`.settings-nav-item[data-page="${pageName}"]`);
+                const page = document.getElementById(`${pageName}-settings-page`);
+                if (nav) nav.classList.add('active');
+                if (page) page.classList.add('active');
+            };
+
+            let desired = null;
+            if (persisted) {
+                const n = document.querySelector(`.settings-nav-item[data-page="${persisted}"]`);
+                if (isVisible(n)) desired = persisted;
+            }
+            if (!desired && activeNavItem && isVisible(activeNavItem)) {
+                desired = activeNavItem.dataset.page;
+            }
+            if (!desired) {
+                if (isVisible(profileNavItem)) desired = 'profile';
+            }
+            if (!desired) {
+                const firstVisible = Array.from(navItems).find(i => isVisible(i));
+                if (firstVisible) desired = firstVisible.dataset.page;
+            }
+            if (desired) setActivePage(desired);
+        } catch (_) { }
     });
+    setupSecurityPageUI();
+}
+
+function setupSecurityPageUI() {
+    if (securityPageInitialized) return;
+    const page = document.getElementById('security-settings-page');
+    if (!page) return;
+    securityPageInitialized = true;
+
+    const passwordModal = page.querySelector('#security-password-modal');
+    const mfaModal = page.querySelector('#security-mfa-modal');
+    const backupModal = page.querySelector('#security-backup-modal');
+    const confirmModal = page.querySelector('#security-confirm-modal');
+    const mfaToggle = page.querySelector('#security-mfa-toggle');
+    const mfaActive = page.querySelector('#security-mfa-active');
+    const confirmTitle = page.querySelector('#security-confirm-title');
+    const confirmMessage = page.querySelector('#security-confirm-message');
+    const confirmCodeField = page.querySelector('#security-confirm-code-field');
+    const confirmCodeInput = page.querySelector('#security-confirm-code');
+    const confirmBtn = page.querySelector('#security-confirm-btn');
+    const backupCopyBtn = page.querySelector('#security-copy-backup');
+    const backupList = backupModal?.querySelector('.security-backup-list');
+    const manualCodeWrapper = document.getElementById('security-manual-code-wrapper');
+    const manualCodeValue = document.getElementById('security-manual-code-value');
+    const manualCodeCopyBtn = document.getElementById('security-copy-manual-code');
+    const manualCodeLink = page.querySelector('#security-show-manual-code');
+    const manualCodeModal = page.querySelector('#security-manual-code-modal');
+    const verifyMfaBtn = page.querySelector('#security-verify-mfa');
+    const mfaCodeInput = page.querySelector('#security-mfa-code');
+    let currentBackupCodes = [];
+    let fetchingBackupCodes = false;
+
+    const applyMfaStateFromUser = () => {
+        if (!mfaToggle) return;
+        mfaToggle.checked = !!currentUser?.mfa_enabled;
+        updateMfaState();
+    };
+    refreshSecurityMfaToggleFromUser = applyMfaStateFromUser;
+
+    page.querySelectorAll('[data-code-target]').forEach(setupCodeInputGroup);
+    let currentMfaSetup = null;
+
+    const updateManualCodeDisplay = (formattedCode) => {
+        if (!manualCodeWrapper || !manualCodeValue) return;
+        if (!formattedCode) {
+            manualCodeValue.textContent = '····';
+            manualCodeValue.dataset.rawCode = '';
+            if (manualCodeLink) {
+                manualCodeLink.disabled = true;
+            }
+            return;
+        }
+        manualCodeValue.textContent = formattedCode;
+        manualCodeValue.dataset.rawCode = formattedCode.replace(/\s+/g, '');
+        if (manualCodeLink) {
+            manualCodeLink.disabled = false;
+        }
+    };
+
+    manualCodeCopyBtn?.addEventListener('click', async () => {
+        if (!manualCodeValue) return;
+        const rawCode = manualCodeValue.dataset.rawCode;
+        if (!rawCode) return;
+        try {
+            await navigator.clipboard.writeText(rawCode);
+            showToast(getToastMessage('ui.securityManualCodeCopiedToast'), 'success');
+        } catch (error) {
+            console.error('Failed to copy manual MFA code:', error);
+        }
+    });
+
+    const openManualCodeModal = () => {
+        if (!manualCodeModal) return;
+        if (!manualCodeValue?.dataset.rawCode) return;
+        openModal(manualCodeModal);
+    };
+
+    manualCodeLink?.addEventListener('click', openManualCodeModal);
+    if (manualCodeLink) {
+        manualCodeLink.disabled = true;
+    }
+    updateManualCodeDisplay(null);
+
+    const renderBackupCodes = () => {
+        if (!backupList) return;
+        backupList.innerHTML = '';
+        if (!currentBackupCodes.length) {
+            const placeholder = document.createElement('span');
+            placeholder.textContent = '—';
+            backupList.appendChild(placeholder);
+            return;
+        }
+        currentBackupCodes.forEach((code) => {
+            const span = document.createElement('span');
+            span.textContent = code;
+            backupList.appendChild(span);
+        });
+    };
+
+    let pendingConfirmResolve = null;
+    let pendingConfirmCancel = null;
+
+    const resetConfirmModalState = () => {
+        if (!confirmModal) return;
+        confirmModal.dataset.mode = '';
+        if (confirmCodeField) confirmCodeField.style.display = 'none';
+        if (confirmCodeInput) confirmCodeInput.value = '';
+    };
+
+    const openModal = (modal) => { if (modal) modal.classList.add('active'); };
+    const closeModal = (modal) => { if (modal) modal.classList.remove('active'); };
+
+    let suppressMfaToggleReset = false;
+
+    const clearMfaSetupState = () => {
+        currentMfaSetup = null;
+        resetCodeInputs('security-mfa-code');
+        updateManualCodeDisplay(null);
+    };
+
+    const handleDisableConfirm = async () => {
+        if (!confirmModal) return;
+        const code = confirmCodeInput?.value.trim();
+        if (!code) {
+            showToast(getToastMessage('errors.verificationCodeInvalidOrExpired'), 'error');
+            return;
+        }
+        confirmBtn.disabled = true;
+        try {
+            await makeAuthRequest('mfa/disable', { code });
+            closeModal(confirmModal);
+            resetConfirmModalState();
+            if (mfaToggle) {
+                mfaToggle.checked = false;
+                updateMfaState();
+            }
+            if (currentUser) {
+                currentUser.mfa_enabled = false;
+                persistCurrentUserCache();
+            }
+            refreshSecurityMfaToggleFromUser?.();
+            showToast(getToastMessage('ui.securityMfaDisabledToast'), 'info');
+        } catch (error) {
+            showToast(error.message || getToastMessage('errors.verificationCodeInvalidOrExpired'), 'error');
+            if (mfaToggle) {
+                mfaToggle.checked = !!currentUser?.mfa_enabled;
+                updateMfaState();
+            }
+            refreshSecurityMfaToggleFromUser?.();
+        } finally {
+            confirmBtn.disabled = false;
+        }
+    };
+
+    page.querySelectorAll('[data-close-modal]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const modal = btn.closest('.security-modal');
+            if (!modal) return;
+            closeModal(modal);
+            if (modal === confirmModal) {
+                resetConfirmModalState();
+                pendingConfirmCancel?.();
+                pendingConfirmResolve = null;
+                pendingConfirmCancel = null;
+            } else if (modal === mfaModal) {
+                if (!suppressMfaToggleReset && mfaToggle) {
+                    mfaToggle.checked = !!currentUser?.mfa_enabled;
+                    updateMfaState();
+                }
+                suppressMfaToggleReset = false;
+                clearMfaSetupState();
+            }
+        });
+    });
+
+    const openPasswordModal = () => {
+        updateCurrentPasswordPlaceholderInput();
+        openModal(passwordModal);
+    };
+
+    page.querySelector('#security-open-password-modal')?.addEventListener('click', openPasswordModal);
+
+    const openMfaModal = async () => {
+        if (!mfaModal) return;
+        openModal(mfaModal);
+        const canvas = mfaModal.querySelector('#security-qr-canvas');
+        drawSecurityQRCode(canvas, null);
+        updateManualCodeDisplay(null);
+        resetCodeInputs('security-mfa-code');
+        try {
+            const setupData = await makeAuthRequest('mfa/initiate', {});
+            currentMfaSetup = setupData;
+            drawSecurityQRCode(canvas, setupData.otpAuthUrl);
+            updateManualCodeDisplay(setupData.manualCode);
+        } catch (error) {
+            console.error('Failed to start MFA setup:', error);
+            showToast(error.message || getToastMessage('errors.serverError'), 'error');
+            closeModal(mfaModal);
+            if (mfaToggle) {
+                mfaToggle.checked = !!currentUser?.mfa_enabled;
+                updateMfaState();
+            }
+        }
+    };
+
+    verifyMfaBtn?.addEventListener('click', async () => {
+        if (!mfaCodeInput) return;
+        const codeValue = mfaCodeInput.value.trim();
+        if (!/^\d{6}$/.test(codeValue)) {
+            showToast(getToastMessage('toast.verificationError'), 'error');
+            return;
+        }
+        if (!currentMfaSetup?.challengeId) {
+            await openMfaModal();
+            return;
+        }
+        verifyMfaBtn.disabled = true;
+        try {
+            await makeAuthRequest('mfa/confirm', {
+                challengeId: currentMfaSetup.challengeId,
+                code: codeValue
+            });
+            currentMfaSetup = null;
+            suppressMfaToggleReset = true;
+            closeModal(mfaModal);
+            if (mfaToggle) {
+                mfaToggle.checked = true;
+                updateMfaState();
+            }
+            if (currentUser) {
+                currentUser.mfa_enabled = true;
+                persistCurrentUserCache();
+            }
+            refreshSecurityMfaToggleFromUser?.();
+            resetCodeInputs('security-mfa-code');
+            updateManualCodeDisplay(null);
+            showToast(getToastMessage('ui.securityMfaEnabledToast'), 'success');
+        } catch (error) {
+            showToast(error.message || getToastMessage('toast.verificationError'), 'error');
+            if (mfaToggle) {
+                mfaToggle.checked = !!currentUser?.mfa_enabled;
+                updateMfaState();
+            }
+            refreshSecurityMfaToggleFromUser?.();
+            clearMfaSetupState();
+        } finally {
+            verifyMfaBtn.disabled = false;
+        }
+    });
+
+    const openBackupModal = async () => {
+        if (!backupModal || fetchingBackupCodes) return;
+        fetchingBackupCodes = true;
+        try {
+            const result = await makeAuthRequest('mfa/backup-codes', {});
+            currentBackupCodes = Array.isArray(result.codes) ? result.codes : [];
+            renderBackupCodes();
+            openModal(backupModal);
+            showToast(getToastMessage('toast.securityBackupGenerated'), 'info');
+        } catch (error) {
+            showToast(error.message || getToastMessage('toast.securityBackupFailed'), 'error');
+        } finally {
+            fetchingBackupCodes = false;
+        }
+    };
+
+    page.querySelector('#security-open-backup-modal')?.addEventListener('click', openBackupModal);
+
+    backupCopyBtn?.addEventListener('click', () => {
+        if (!currentBackupCodes.length) {
+            showToast(getToastMessage('toast.securityBackupFailed'), 'error');
+            return;
+        }
+        try {
+            const content = currentBackupCodes.join('\n');
+            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+            a.href = url;
+            a.download = `backup-codes-${stamp}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            showToast(getToastMessage('toast.securityBackupFailed'), 'error');
+        }
+    });
+
+    const showDisableConfirm = () => {
+        if (!confirmModal) return;
+        pendingConfirmResolve = null;
+        pendingConfirmCancel = () => {
+            if (mfaToggle) {
+                mfaToggle.checked = !!currentUser?.mfa_enabled;
+                updateMfaState();
+            }
+        };
+        if (confirmTitle) {
+            confirmTitle.textContent = getToastMessage('ui.securityDisableConfirmTitle');
+        }
+        if (confirmMessage) {
+            confirmMessage.textContent = getToastMessage('ui.securityDisableConfirmMessage');
+        }
+        if (confirmCodeField) {
+            confirmCodeField.style.display = 'flex';
+        }
+        if (confirmCodeInput) {
+            confirmCodeInput.value = '';
+        }
+        if (confirmModal) {
+            confirmModal.dataset.mode = 'disable';
+        }
+        resetCodeInputs('security-confirm-code');
+        if (mfaToggle) {
+            mfaToggle.checked = !!currentUser?.mfa_enabled;
+            updateMfaState();
+        }
+        openModal(confirmModal);
+    };
+
+    confirmBtn?.addEventListener('click', () => {
+        if (!confirmModal) return;
+        if (confirmModal.dataset.mode === 'disable') {
+            void handleDisableConfirm();
+            return;
+        }
+        closeModal(confirmModal);
+        pendingConfirmResolve?.();
+        pendingConfirmResolve = null;
+        pendingConfirmCancel = null;
+    });
+
+    mfaToggle?.addEventListener('change', (event) => {
+        if (!event.target.checked) {
+            if (!currentUser?.mfa_enabled) {
+                event.target.checked = false;
+                updateMfaState();
+                return;
+            }
+            showDisableConfirm();
+            return;
+        }
+        if (currentUser?.mfa_enabled) {
+            event.target.checked = true;
+            updateMfaState();
+            return;
+        }
+        openMfaModal();
+    });
+
+    function updateMfaState() {
+        const enabled = mfaToggle?.checked;
+        if (mfaActive) {
+            mfaActive.style.display = enabled ? 'flex' : 'none';
+        }
+    }
+
+    applyMfaStateFromUser();
+    updateCurrentPasswordPlaceholderInput();
+}
+
+function drawSecurityQRCode(canvas, data) {
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (!data) {
+        return;
+    }
+    try {
+        const qr = qrcodeGenerator(0, 'M');
+        qr.addData(data);
+        qr.make();
+        const modules = qr.getModuleCount();
+        const tileW = canvas.width / modules;
+        const tileH = canvas.height / modules;
+        ctx.fillStyle = '#000';
+        for (let row = 0; row < modules; row += 1) {
+            for (let col = 0; col < modules; col += 1) {
+                if (qr.isDark(row, col)) {
+                    const w = Math.ceil((col + 1) * tileW) - Math.floor(col * tileW);
+                    const h = Math.ceil((row + 1) * tileH) - Math.floor(row * tileH);
+                    ctx.fillRect(Math.round(col * tileW), Math.round(row * tileH), w, h);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Failed to render security QR code:', error);
+    }
 }
 
 function resetBackPressExitState() {
@@ -4048,7 +4965,9 @@ async function closeModalAndResetState(closeAction) {
     return result;
 }
 
-async function closeSettingsModalFromUI() {
+async function closeSettingsModalFromUI(options = {}) {
+    const manageHistory = options.manageHistory !== false;
+    const skipHandleBack = options.skipHandleBack === true;
     if (!elements.settingsModal) return false;
 
     if (apiKeysChanged) {
@@ -4082,14 +5001,16 @@ async function closeSettingsModalFromUI() {
         } catch (_) { }
     }
 
-    elements.settingsModal.classList.remove('visible');
+    hideSettingsModal(manageHistory, { skipHandleBack });
     if (document.body.classList.contains('sidebar-open')) {
         try { closeSidebar(true); } catch (_) { }
     }
     return true;
 }
 
-async function closeProfileSettingsModal() {
+async function closeProfileSettingsModal(options = {}) {
+    const manageHistory = options.manageHistory !== false;
+    const skipHandleBack = options.skipHandleBack === true;
     if (!elements.settingsModal) return false;
     const currentUsername = elements.editUsernameInput.value.trim();
     const profileChanged = (currentUser) && (currentUsername !== originalUsername || newAvatarFile !== null);
@@ -4141,20 +5062,22 @@ async function closeProfileSettingsModal() {
         newAvatarFile = null;
         newAvatarUrl = null;
     }
-    elements.settingsModal.classList.remove('visible');
+    hideSettingsModal(manageHistory, { skipHandleBack });
     return true;
 }
 
-async function handleCloseSettingsModalByPage() {
+async function handleCloseSettingsModalByPage(options = {}) {
+    const manageHistory = options.manageHistory !== false;
+    const skipHandleBack = options.skipHandleBack === true;
     const activeNavItem = document.querySelector('.settings-nav-item.active');
     const activePage = activeNavItem ? activeNavItem.dataset.page : 'profile';
     if (activePage === 'api') {
-        return await closeSettingsModalFromUI();
+        return await closeSettingsModalFromUI({ manageHistory, skipHandleBack });
     }
     if (activePage === 'profile') {
-        return await closeProfileSettingsModal();
+        return await closeProfileSettingsModal({ manageHistory, skipHandleBack });
     }
-    elements.settingsModal.classList.remove('visible');
+    hideSettingsModal(manageHistory, { skipHandleBack });
     return true;
 }
 
@@ -4165,14 +5088,67 @@ function updateLoginButtonVisibility() {
     elements.customLoginBtn.style.display = shouldShow ? 'block' : 'none';
 }
 
-function openAuthOverlay(origin = 'auto') {
-    switchToLoginForm();
+function openAuthOverlay(origin = 'auto', modeOrState, options = {}) {
+    const baseState = modeOrState ?? routeManager.getAuthState();
+    const state = typeof baseState === 'object' && baseState !== null
+        ? routeManager.normalizeAuthState(baseState)
+        : routeManager.normalizeAuthState({ mode: baseState, token: options.token });
+    const normalizedMode = state.mode;
+    const shouldSyncRoute = options.syncRoute !== false;
+    const routeOptions = options.routeOptions || { replace: origin !== 'user' };
+    if (normalizedMode === 'register') {
+        activateAuthTab('register', { syncRoute: false });
+    } else if (normalizedMode === 'verify') {
+        switchToVerificationForm();
+    } else if (normalizedMode === 'reset') {
+        showResetPasswordForm(state.token);
+    } else if (normalizedMode === 'reset-request') {
+        switchToForgotPasswordForm();
+    } else {
+        switchToLoginForm({ syncRoute: false });
+    }
     if (elements.authOverlay) {
         elements.authOverlay.classList.add('visible');
         elements.chatContainer.style.display = 'flex';
         updateLoginButtonVisibility();
         authOverlayReason = origin;
+        if (shouldSyncRoute) {
+            routeManager.syncAuthRoute(state, routeOptions);
+        } else {
+            routeManager.setAuthMode(state.mode, state.token);
+        }
+        persistAuthRoute(state);
     }
+}
+
+function hideAuthOverlay(manageHistory = true, options = {}) {
+    const skipHandleBack = options.skipHandleBack === true;
+    if (!elements.authOverlay?.classList.contains('visible')) {
+        authOverlayReason = null;
+        return false;
+    }
+    elements.authOverlay.classList.remove('visible');
+    if (elements.chatContainer) {
+        elements.chatContainer.style.display = 'flex';
+    }
+    updateLoginButtonVisibility();
+    if (!currentChatId && (!elements.chatContainer?.innerHTML?.trim() || !welcomePageShown)) {
+        try {
+            showEmptyState();
+        } catch (_) { }
+    }
+
+    const shouldPop = manageHistory && authOverlayReason === 'user';
+    if (shouldPop) {
+        navigationEngine.requestProgrammaticBack({ skipHandleBack });
+    } else if (!options.routeHandled) {
+        routeManager.navigateToHome({ replace: true });
+    }
+    authOverlayReason = null;
+    routeManager.resetAuthMode();
+    clearPersistedAuthRoute();
+    clearMfaChallengeState();
+    return shouldPop;
 }
 
 function safeNavigationCall(method, ...args) {
@@ -4195,354 +5171,38 @@ function safeNavigationCall(method, ...args) {
             if (st && typeof st.close === 'function') st.close();
         },
         back: () => {
-            navigationEngine.triggerBack();
+            const handled = router.back({
+                fallbackRoute: { name: 'home', params: {} },
+                onFallback: () => navigationEngine.triggerBack()
+            });
+            if (handled) {
+                return;
+            }
         },
         go: () => { }
     };
     return api[method] ? api[method](...args) : undefined;
 }
 
-function getDefaultSettingsSection() {
-    return normalizeSettingsSection(lastSettingsPage) || DEFAULT_SETTINGS_SECTION;
-}
-
-function updateSettingsContentScrollState(activePage = null) {
-    const settingsModalEl = document.getElementById('settings-modal');
-    if (!settingsModalEl) return;
-    const settingsContent = settingsModalEl.querySelector('.settings-content');
-    if (!settingsContent) return;
-    const page = activePage || settingsContent.querySelector('.settings-page.active');
-    if (!page) return;
-    const needScroll = page.scrollHeight > settingsContent.clientHeight + 1;
-    settingsContent.classList.toggle('no-scroll', !needScroll);
-}
-
-function activateSettingsPage(pageName) {
-    const normalized = normalizeSettingsSection(pageName) || getDefaultSettingsSection();
-    const desired = normalized || DEFAULT_SETTINGS_SECTION;
-    if (!desired) return null;
-
-    const navItems = document.querySelectorAll('.settings-nav-item');
-    const pages = document.querySelectorAll('.settings-page');
-    if (!navItems.length || !pages.length) {
-        pendingSettingsSection = desired;
-        return null;
-    }
-
-    const nav = document.querySelector(`.settings-nav-item[data-page="${desired}"]`);
-    const page = document.getElementById(`${desired}-settings-page`);
-    const isVisible = (el) => el && getComputedStyle(el).display !== 'none';
-    if (!nav || !page || !isVisible(nav)) {
-        if (desired !== DEFAULT_SETTINGS_SECTION) {
-            return activateSettingsPage(DEFAULT_SETTINGS_SECTION);
-        }
-        const firstVisible = Array.from(document.querySelectorAll('.settings-nav-item'))
-            .find(item => isVisible(item));
-        if (firstVisible) {
-            const fallback = firstVisible.dataset.page;
-            if (fallback && fallback !== desired) {
-                return activateSettingsPage(fallback);
-            }
-        }
-        pendingSettingsSection = desired;
-        return null;
-    }
-
-    navItems.forEach(i => i.classList.remove('active'));
-    pages.forEach(p => p.classList.remove('active'));
-    nav.classList.add('active');
-    page.classList.add('active');
-    lastSettingsPage = desired;
-    pendingSettingsSection = null;
-
-    requestAnimationFrame(() => updateSettingsContentScrollState(page));
-    return desired;
-}
-
-function handleSettingsSectionActivation(sectionName) {
-    const normalized = normalizeSettingsSection(sectionName);
-    if (!normalized) return;
-    if (normalized === 'privacy-policy') {
-        handlePrivacyPolicyClick();
-    }
-}
-
-function isSettingsRouteActive() {
-    if (!routerInitialized || typeof router.getCurrentRouteName !== 'function') return false;
-    const name = router.getCurrentRouteName();
-    return name === 'settings' || name === 'settingsSection';
-}
-
-function openSettingsRoute(section, options = {}) {
-    const normalized = normalizeSettingsSection(section);
-    const targetSection = normalized || getDefaultSettingsSection();
-    lastSettingsPage = targetSection;
-    pendingSettingsSection = targetSection;
-
-    if (!routerInitialized) {
-        showSettingsModalFromRoute(targetSection);
-        return;
-    }
-
-    const alreadyInSettings = isSettingsRouteActive();
-    if (alreadyInSettings) {
-        if (typeof router.setCurrentRouteExternal === 'function') {
-            router.setCurrentRouteExternal('settingsSection', { section: targetSection });
-        } else {
-            router.replace('settingsSection', { section: targetSection });
-        }
-        showSettingsModalFromRoute(targetSection);
-        return;
-    }
-
-    if (options.replace) {
-        router.replace('settingsSection', { section: targetSection });
-    } else {
-        router.navigate('settingsSection', { section: targetSection });
-    }
-}
-
-function navigateToChatRoute(chatId, opts = {}) {
-    if (!routerInitialized || !chatId) return;
-    const shouldReplace = opts.replace || (typeof router.isActive === 'function' && router.isActive('chat'));
-    if (shouldReplace) {
-        router.replace('chat', { chatId });
-    } else {
-        router.navigate('chat', { chatId });
-    }
-}
-
-function ensureHomeRouteFromChat() {
-    if (!routerInitialized || typeof router.isActive !== 'function') return;
-    if (router.isActive('chat')) {
-        router.reset('home');
-    }
-}
-
-function handleSettingsModalClosed() {
-    if (hasUnseenVersionUpdateNotice()) {
-        markVersionUpdateAsSeen();
-    }
-}
-
-function setupSettingsModalObserver() {
-    if (!elements.settingsModal || settingsModalObserver) return;
-
-    settingsModalWasVisible = elements.settingsModal.classList.contains('visible');
-
-    settingsModalObserver = new MutationObserver(() => {
-        if (!elements.settingsModal) return;
-        const currentlyVisible = elements.settingsModal.classList.contains('visible');
-        if (!currentlyVisible && settingsModalWasVisible) {
-            handleSettingsModalClosed();
-        }
-        settingsModalWasVisible = currentlyVisible;
-
-        if (!routerInitialized) return;
-        if (!currentlyVisible &&
-            isSettingsRouteActive() &&
-            !isSettingsRouteTransition) {
-            if (typeof router.canGoBack === 'function' && router.canGoBack()) {
-                router.back();
-            } else {
-                router.replace('home');
-            }
-        }
-    });
-
-    settingsModalObserver.observe(elements.settingsModal, {
-        attributes: true,
-        attributeFilter: ['class']
-    });
-}
-
-function showSettingsModalFromRoute(section) {
-    if (!elements.settingsModal) return;
-    const normalizedTarget = normalizeSettingsSection(section) || getDefaultSettingsSection();
-    const targetSection = normalizedTarget || DEFAULT_SETTINGS_SECTION;
-    const wasVisible = elements.settingsModal.classList.contains('visible');
-
-    lastSettingsPage = targetSection;
-    pendingSettingsSection = targetSection;
-    setupSettingsModalObserver();
-
-    const syncRouteToSection = (activated) => {
-        if (!activated) return;
-        const normalizedActivated = normalizeSettingsSection(activated);
-        if (!normalizedActivated || normalizedActivated === normalizedTarget) return;
-
-        if (routerInitialized && typeof router.setCurrentRouteExternal === 'function') {
-            router.setCurrentRouteExternal('settingsSection', { section: normalizedActivated });
-        }
-
-        try {
-            const url = new URL(window.location.href);
-            url.pathname = `/settings/${normalizedActivated}`;
-            window.history.replaceState(window.history.state, document.title, url.toString());
-        } catch (_) { }
-    };
-
-    if (wasVisible) {
-        const activated = activateSettingsPage(targetSection);
-        handleSettingsSectionActivation(activated);
-        syncRouteToSection(activated);
-        return;
-    }
-
-    if (isMultiSelectMode) {
-        exitMultiSelectMode();
-    }
-
-    try {
-        const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
-        if (window.innerWidth <= 640) {
-            document.body.classList.remove('sidebar-open');
-            if (sidebarToggleBtn) sidebarToggleBtn.setAttribute('aria-expanded', 'false');
-        } else {
-            document.body.classList.add('sidebar-collapsed');
-            if (sidebarToggleBtn) sidebarToggleBtn.setAttribute('aria-expanded', 'false');
-        }
-    } catch (_) { }
-
-    safeNavigationCall('pushUiState', {
-        name: 'settingsModal',
-        close: async () => {
-            return await closeModalAndResetState(handleCloseSettingsModalByPage);
-        }
-    });
-
-    if (elements.authOverlay) {
-        elements.authOverlay.classList.remove('visible');
-    }
-    elements.settingsModal.classList.add('visible');
-    elements.chatContainer.style.display = 'flex';
-    updateLoginButtonVisibility();
-    setupSettingsModalUI();
-    const activated = activateSettingsPage(targetSection);
-    handleSettingsSectionActivation(activated);
-    syncRouteToSection(activated);
-}
-
-async function hideSettingsModalFromRoute() {
-    safeNavigationCall('removeUiStateByName', 'settingsModal');
+function hideSettingsModal(manageHistory = true, options = {}) {
     if (!elements.settingsModal?.classList.contains('visible')) {
-        return;
+        return false;
     }
-    isSettingsRouteTransition = true;
-    try {
-        await closeModalAndResetState(handleCloseSettingsModalByPage);
-    } finally {
-        isSettingsRouteTransition = false;
+    elements.settingsModal.classList.remove('visible');
+    safeNavigationCall('removeUiStateByName', 'settingsModal');
+    if (elements.chatContainer) {
+        elements.chatContainer.style.display = 'flex';
     }
-}
-
-async function requestCloseSettingsModal() {
-    if (!elements.settingsModal?.classList.contains('visible')) return;
-    if (routerInitialized && isSettingsRouteActive()) {
-        await hideSettingsModalFromRoute();
-    } else {
-        await closeModalAndResetState(handleCloseSettingsModalByPage);
-    }
-}
-
-
-
-async function handleHomeRouteEnter() {
-    try {
-        await navigationEngine.returnToMainPage();
-    } catch (error) {
-        console.error('Failed to return to main page:', error);
-    }
-    if (!currentChatId) {
+    if (!currentChatId && (!welcomePageShown || !(elements.chatContainer?.innerHTML || '').trim())) {
         showEmptyState();
     }
-}
-
-async function handleChatRouteEnter(params = {}) {
-    const { chatId } = params;
-    if (!chatId) {
-        router.replace('home');
-        return;
-    }
-
-    const existingChat = chats[chatId];
-    if (existingChat && chatId.startsWith('temp_') && (!existingChat.messages || existingChat.messages.length === 0)) {
-        currentChatId = chatId;
-        navigationEngine.resetExitState();
-        navigationEngine.nextBackShouldReturnToMain = false;
-        elements.chatLoaderBar?.classList.remove('loading');
-        elements.chatContainer.innerHTML = '';
-        elements.chatContainer.style.overflowY = 'auto';
-        isWelcomePage = false;
-        welcomePageShown = true;
-        return;
-    }
-
-    await chatsReady;
-
-    if (!chats[chatId]) {
-        showToast(getToastMessage('toast.chatHistoryLoadFailed'), 'error');
-        router.replace('home');
-        return;
-    }
-
-    if (currentChatId === chatId && !welcomePageShown) {
-        return;
-    }
-
-    await loadChat(chatId, { syncRoute: false });
-}
-
-function handleSettingsRouteRedirect() {
-    const defaultSection = getDefaultSettingsSection();
-    router.replace('settingsSection', { section: defaultSection });
-}
-
-function handleSettingsSectionRouteEnter(params = {}) {
-    const normalized = normalizeSettingsSection(params.section);
-    const section = normalized || getDefaultSettingsSection();
-    showSettingsModalFromRoute(section);
-}
-
-async function handleSettingsRouteLeave() {
-    await hideSettingsModalFromRoute();
-}
-
-function ensureRouterInitialized() {
-    if (routerInitialized) return;
-
-    router
-        .registerRoute({
-            name: 'home',
-            path: '/',
-            enter: handleHomeRouteEnter
-        })
-        .registerRoute({
-            name: 'chat',
-            path: '/chat/:chatId',
-            enter: handleChatRouteEnter
-        })
-        .registerRoute({
-            name: 'settings',
-            path: '/settings',
-            enter: handleSettingsRouteRedirect
-        })
-        .registerRoute({
-            name: 'settingsSection',
-            path: '/settings/:section',
-            enter: handleSettingsSectionRouteEnter,
-            leave: handleSettingsRouteLeave
-        })
-        .setNotFound(() => {
-            router.replace('home');
+    const shouldPop = manageHistory && router.getCurrentRoute()?.name === 'settings';
+    if (shouldPop) {
+        navigationEngine.requestProgrammaticBack({
+            skipHandleBack: options.skipHandleBack === true
         });
-
-    if (typeof router.setBeforeEach === 'function') {
-        router.setBeforeEach(routerNavigationGuard);
     }
-
-    router.init('home');
-    routerInitialized = true;
+    return true;
 }
 
 // 使用统计相关函数
@@ -4578,31 +5238,65 @@ function switchToVerificationForm() {
     }
 }
 
-function switchToLoginForm() {
+function showResetPasswordForm(token = '') {
+    resetToken = token || resetToken;
+    const authFormsContainer = document.getElementById('auth-forms-container');
+    const authTabs = document.getElementById('auth-tabs');
+    const resetForm = document.getElementById('reset-password-form');
+
+    if (authFormsContainer) {
+        authFormsContainer.style.display = 'none';
+    }
+    if (authTabs) {
+        authTabs.style.display = 'none';
+    }
+
+    document.querySelectorAll('.auth-form').forEach(form => form.classList.remove('active'));
+    if (resetForm) {
+        resetForm.classList.add('active');
+    }
+}
+
+function activateAuthTab(tabType, options = {}) {
+    const normalized = tabType === 'register' ? 'register' : 'login';
+    const tab = document.querySelector(`.auth-tab[data-tab="${normalized}"]`);
+    if (!tab) return;
+    const shouldSyncRoute = options.syncRoute !== false;
+    if (!shouldSyncRoute) {
+        suppressAuthRouteSync = true;
+        pendingAuthRouteOptions = null;
+    } else {
+        pendingAuthRouteOptions = options.routeOptions || { replace: true };
+    }
+    const authFormsContainer = document.getElementById('auth-forms-container');
+    const authTabs = document.getElementById('auth-tabs');
+    if (authFormsContainer) authFormsContainer.style.display = '';
+    if (authTabs) authTabs.style.display = '';
+    tab.click();
+    routeManager.setAuthMode(normalized);
+}
+
+function switchToLoginForm(options = {}) {
     const authFormsContainer = document.getElementById('auth-forms-container');
     const authTabs = document.getElementById('auth-tabs');
     const loginForm = document.getElementById('login-form');
+
     if (authFormsContainer) {
         authFormsContainer.style.display = '';
-        authFormsContainer.classList.remove('show-register');
     }
     if (authTabs) {
         authTabs.style.display = '';
-        authTabs.classList.remove('show-register');
     }
 
     document.querySelectorAll('.auth-form').forEach(form => form.classList.remove('active'));
     if (loginForm) {
         loginForm.classList.add('active');
     }
-    document.querySelectorAll('.auth-tab').forEach(tab => {
-        tab.style.display = 'flex';
-        tab.classList.toggle('active', tab.dataset.tab === 'login');
+    document.querySelectorAll('.auth-tab').forEach(tab => tab.style.display = 'flex');
+    activateAuthTab('login', {
+        syncRoute: options.syncRoute !== false,
+        routeOptions: options.routeOptions
     });
-    const loginTab = document.querySelector('.auth-tab[data-tab="login"]');
-    if (loginTab) {
-        loginTab.click();
-    }
 
     // 重置状态
     isWaitingVerification = false;
@@ -4612,31 +5306,6 @@ function switchToLoginForm() {
     if (registerSubmitBtn) {
         registerSubmitBtn.disabled = false;
     }
-}
-
-function switchToRegisterForm() {
-    const authFormsContainer = document.getElementById('auth-forms-container');
-    const authTabs = document.getElementById('auth-tabs');
-    const registerForm = document.getElementById('register-form');
-
-    if (authFormsContainer) {
-        authFormsContainer.style.display = '';
-        authFormsContainer.classList.add('show-register');
-    }
-    if (authTabs) {
-        authTabs.style.display = '';
-        authTabs.classList.add('show-register');
-    }
-
-    document.querySelectorAll('.auth-form').forEach(form => form.classList.remove('active'));
-    if (registerForm) {
-        registerForm.classList.add('active');
-    }
-
-    document.querySelectorAll('.auth-tab').forEach(tab => {
-        tab.style.display = 'flex';
-        tab.classList.toggle('active', tab.dataset.tab === 'register');
-    });
 }
 
 async function checkPasswordChangeStatus() {
@@ -4706,36 +5375,10 @@ async function fetchUsageStats(forceRefresh = false) {
 async function fetchGuestUsageStats() {
     if (currentUser) return;
 
-    const usageDisplay = document.getElementById('usage-display');
-    const hasGuestKey = guestHasActiveCustomKey();
-
-    if (!hasGuestKey) {
-        guestUsageStats.count = 0;
-        guestUsageStats.loaded = false;
-        guestUsageStats.limit = GUEST_LIMIT;
-        updateUsageDisplay();
-        return;
-    }
-
-    const refreshingText = getToastMessage('status.refreshing');
-    if (usageDisplay) {
-        usageDisplay.textContent = refreshingText;
-    }
-
-    try {
-        const result = await makeApiRequest('guest/usage');
-        if (result.customKeyDisabled) {
-            handleGuestKeyInvalidation({ showToast: true });
-            return;
-        }
-        guestUsageStats.count = typeof result.count === 'number' ? result.count : 0;
-        guestUsageStats.limit = typeof result.limit === 'number' ? result.limit : GUEST_LIMIT;
-        guestUsageStats.loaded = true;
-    } catch (error) {
-        console.error('Failed to fetch guest usage stats:', error);
-    } finally {
-        updateUsageDisplay();
-    }
+    guestUsageStats.count = 0;
+    guestUsageStats.loaded = false;
+    guestUsageStats.limit = GUEST_LIMIT;
+    updateUsageDisplay();
 }
 
 function refreshUsageStats(forceRefresh = false) {
@@ -4762,39 +5405,7 @@ function updateUsageDisplay() {
 
     const userInfoPopover = document.getElementById('user-info-popover');
 
-    if (currentUser && currentUserUsage) {
-        const usage = checkUsageLimit();
-        let text;
-
-        const hasKeys = (typeof currentUserUsage.hasKeys === 'boolean')
-            ? currentUserUsage.hasKeys
-            : !!getCustomApiKey();
-
-        const fallbackCount = typeof currentUserUsage.fallbackCount === 'number'
-            ? currentUserUsage.fallbackCount
-            : 0;
-
-        if (!hasKeys) {
-            text = getToastMessage('ui.todayUsageNoKeys', { count: usage.count });
-        } else if (currentUserUsage.apiMode === 'server_fallback') {
-            text = getToastMessage('ui.todayUsageServerFallback', { count: fallbackCount });
-        } else {
-            text = getToastMessage('ui.todayUsage', { count: usage.count });
-        }
-
-        if (elements.usageStats) {
-            elements.usageStats.style.display = 'block';
-        }
-        usageDisplay.textContent = text;
-        if (userInfoPopover) {
-            userInfoPopover.textContent = text;
-        }
-        return;
-    }
-
-    const hasGuestKey = guestHasActiveCustomKey();
-
-    if (!hasGuestKey) {
+    if (!currentUser) {
         if (elements.usageStats) {
             elements.usageStats.style.display = 'none';
         }
@@ -4805,15 +5416,31 @@ function updateUsageDisplay() {
         return;
     }
 
-    const guestCount = typeof guestUsageStats.count === 'number' ? guestUsageStats.count : 0;
-    const guestText = getToastMessage('ui.todayUsage', { count: guestCount });
+    const usage = checkUsageLimit();
+    let text;
+
+    const hasKeys = (typeof (currentUserUsage?.hasKeys) === 'boolean')
+        ? currentUserUsage.hasKeys
+        : !!getCustomApiKey();
+
+    const fallbackCount = typeof (currentUserUsage?.fallbackCount) === 'number'
+        ? currentUserUsage.fallbackCount
+        : 0;
+
+    if (!hasKeys) {
+        text = getToastMessage('ui.todayUsageNoKeys', { count: usage.count });
+    } else if ((currentUserUsage?.apiMode) === 'server_fallback') {
+        text = getToastMessage('ui.todayUsageServerFallback', { count: fallbackCount });
+    } else {
+        text = getToastMessage('ui.todayUsage', { count: usage.count });
+    }
 
     if (elements.usageStats) {
         elements.usageStats.style.display = 'block';
     }
-    usageDisplay.textContent = guestText;
+    usageDisplay.textContent = text;
     if (userInfoPopover) {
-        userInfoPopover.textContent = guestText;
+        userInfoPopover.textContent = text;
     }
 }
 function refreshSettingsI18nTexts() {
@@ -4911,6 +5538,8 @@ async function _makeRequest(prefix, endpoint, options = {}) {
                 const expiredSessionId = sessionId;
                 sessionId = null;
                 currentUser = null;
+                refreshSecurityMfaToggleFromUser?.();
+                updateCurrentPasswordPlaceholderInput();
                 localStorage.removeItem('sessionId');
                 if (expiredSessionId) {
                     localStorage.removeItem(`user_cache_${expiredSessionId}`);
@@ -4918,10 +5547,7 @@ async function _makeRequest(prefix, endpoint, options = {}) {
                 localStorage.removeItem('userThemePreset');
 
                 updateUI();
-
-                if (elements.authOverlay) {
-                    elements.authOverlay.classList.add('visible');
-                }
+                openAuthOverlay('auto', { mode: 'login' }, { syncRoute: true, routeOptions: { replace: true } });
             }
             const error = new Error(getToastMessage('errors.sessionInvalidOrExpired'));
             error.isAuthError = true;
@@ -5117,6 +5743,125 @@ const updateWeeklyTimer = () => {
 
     updateWeeklyReportUIState();
 };
+
+async function applyAuthenticatedSession(result, options = {}) {
+    if (!result || !result.sessionId || !result.user) {
+        throw new Error(getToastMessage('errors.serverError'));
+    }
+
+    sessionId = result.sessionId;
+    localStorage.setItem('sessionId', sessionId);
+    localStorage.setItem('userId', result.user?.id || '');
+    currentUser = result.user;
+    updateCurrentPasswordPlaceholderInput();
+    refreshSecurityMfaToggleFromUser?.();
+    window.currentUser = result.user;
+    clearPersistedAuthRoute();
+    routeManager.resetAuthMode();
+    clearPendingOAuthState();
+
+    await applyTheme(currentUser.theme_settings);
+
+    if (currentUser.theme_settings?.preset) {
+        localStorage.setItem('userThemePreset', currentUser.theme_settings.preset);
+    }
+
+    if (currentUser.language) {
+        localStorage.setItem('selectedLanguage', currentUser.language);
+    }
+
+    try {
+        localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser)));
+    } catch (cacheError) {
+        console.error('Failed to cache user info:', cacheError);
+    }
+
+    await deleteChatsFromDB('guest');
+    localStorage.removeItem('usage_stats_guest');
+    Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('pending_chat_')) {
+            localStorage.removeItem(key);
+        }
+    });
+
+    chats = {};
+    currentChatId = null;
+    if (elements.chatContainer) {
+        elements.chatContainer.style.display = 'flex';
+    }
+
+    const showSuccessToast = options.showSuccessToast !== false;
+    const successToastKey = options.successToastKey || 'toast.loginSuccess';
+    const successToastRoute = options.toastRoute ?? 'home';
+
+    const finalizePostLoginUI = (useLanguageContext = true) => {
+        if (useLanguageContext && currentUser.language) {
+            showEmptyState(false, currentUser.language);
+        } else {
+            showEmptyState();
+        }
+        scheduleRenderSidebar();
+        updateUI();
+        if (showSuccessToast) {
+            queueLoginSuccessToast(successToastKey, { route: successToastRoute });
+        } else {
+            queueLoginSuccessToast(null);
+        }
+        notifyBackendCacheInvalidation('user_login', { userId: currentUser.id });
+    };
+
+    requestAnimationFrame(() => {
+        const authOverlayVisible = elements.authOverlay?.classList.contains('visible');
+        if (authOverlayVisible) {
+            hideAuthOverlay();
+        } else {
+            routeManager.resetAuthMode();
+            clearPersistedAuthRoute();
+            clearMfaChallengeState();
+        }
+
+        const currentRoute = router?.getCurrentRoute?.();
+        if (!currentRoute || currentRoute.name !== 'home') {
+            routeManager.navigateToHome({ replace: true });
+        }
+
+        const afterLangApplied = () => finalizePostLoginUI(true);
+
+        if (currentUser.language) {
+            applyLanguage(currentUser.language)
+                .then(afterLangApplied)
+                .catch(() => finalizePostLoginUI(false));
+        } else {
+            try {
+                const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'zh-CN';
+                const defaultLang = (browserLang && (browserLang.startsWith('zh-TW') || browserLang.startsWith('zh-HK'))) ? 'zh-TW'
+                    : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
+                        : (browserLang && browserLang.startsWith('ja')) ? 'ja'
+                            : (browserLang && browserLang.startsWith('ko')) ? 'ko'
+                                : (browserLang && browserLang.startsWith('es')) ? 'es'
+                                    : (browserLang && browserLang.startsWith('en')) ? 'en'
+                                        : 'zh-CN';
+                localStorage.setItem('selectedLanguage', defaultLang);
+                currentUser.language = defaultLang;
+                try {
+                    localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser)));
+                } catch (_) { }
+                applyLanguage(defaultLang).then(afterLangApplied).catch(() => finalizePostLoginUI(false));
+                try { makeAuthRequest('update-language', { language: defaultLang }); } catch (_) { }
+            } catch (_) {
+                finalizePostLoginUI(false);
+            }
+        }
+    });
+
+    resetToDefaultModel();
+    refreshUsageStats().catch(err => console.error(`${getToastMessage('console.usageStatsFailed')}:`, err));
+    fetchWeeklyFeatureStatus().catch(err => console.error(`${getToastMessage('console.weeklyFeatureStatusFailed')}:`, err));
+    loadUserAIParameters().catch(err => console.error(`${getToastMessage('console.aiParametersLoadFailed')}:`, err));
+    loadChats(true).catch(err => console.error(`${getToastMessage('console.chatHistoryLoadFailed')}:`, err));
+    hideLoadingScreen();
+}
+
 async function login(email, password) {
     if (isMultiSelectMode) {
         exitMultiSelectMode();
@@ -5134,10 +5879,7 @@ async function login(email, password) {
         );
         if (!confirmed) {
             // 用户点击取消，关闭登录页面，返回聊天页面
-            elements.authOverlay.classList.remove('visible');
-            if (elements.chatContainer) {
-                elements.chatContainer.style.display = 'flex';
-            }
+            hideAuthOverlay();
             return false;
         }
         stopGeneration();
@@ -5163,114 +5905,33 @@ async function login(email, password) {
 
                 if (!confirmed) {
                     // 用户点击取消，关闭登录页面，返回聊天页面
-                    elements.authOverlay.classList.remove('visible');
-                    if (elements.chatContainer) {
-                        elements.chatContainer.style.display = 'flex';
-                    }
+                    hideAuthOverlay();
                     return false;
                 }
             }
         }
         const result = await makeAuthRequest('login', { email, password });
-        sessionId = result.sessionId;
-        localStorage.setItem('sessionId', sessionId);
-        localStorage.setItem('userId', result.user?.id || '');
-        currentUser = result.user;
-        window.currentUser = result.user;
-
-        await applyTheme(currentUser.theme_settings);
-
-        if (currentUser.theme_settings && currentUser.theme_settings.preset) {
-            localStorage.setItem('userThemePreset', currentUser.theme_settings.preset);
+        const challenge = extractMfaChallenge(result);
+        if (challenge) {
+            clearMfaChallengeState();
+            setPendingMfaChallenge(challenge);
+            showMfaVerificationForm(challenge);
+            return false;
         }
-
-        if (currentUser.language) {
-            localStorage.setItem('selectedLanguage', currentUser.language);
-            await applyLanguage(currentUser.language);
-        }
-
-        localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser)));
-
-        // 清理访客的聊天记录和使用统计
-        await deleteChatsFromDB('guest');
-        localStorage.removeItem('usage_stats_guest');
-        Object.keys(localStorage).forEach(key => {
-            if (key.startsWith('pending_chat_')) {
-                localStorage.removeItem(key);
-            }
-        });
-
-        chats = {};
-        currentChatId = null;
-        if (elements.chatContainer) {
-            elements.chatContainer.style.display = 'flex';
-        }
-
-        requestAnimationFrame(() => {
-            // 隐藏登录界面
-            elements.authOverlay.classList.remove('visible');
-
-            const afterLangApplied = () => {
-                showEmptyState(false, currentUser.language);
-                scheduleRenderSidebar();
-                updateUI();
-                showToast(getToastMessage('toast.loginSuccess'), 'success');
-                notifyBackendCacheInvalidation('user_login', { userId: currentUser.id });
-            };
-
-            if (currentUser.language) {
-                applyLanguage(currentUser.language)
-                    .then(afterLangApplied)
-                    .catch((error) => {
-                        showEmptyState();
-                        scheduleRenderSidebar();
-                        updateUI();
-                        showToast(getToastMessage('toast.loginSuccess'), 'success');
-                        notifyBackendCacheInvalidation('user_login', { userId: currentUser.id });
-                    });
-            } else {
-                // 未设置语言：按系统/浏览器语言确定并保存
-                try {
-                    const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'zh-CN';
-                    const defaultLang = (browserLang && (browserLang.startsWith('zh-TW') || browserLang.startsWith('zh-HK'))) ? 'zh-TW'
-                        : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
-                            : (browserLang && browserLang.startsWith('ja')) ? 'ja'
-                                : (browserLang && browserLang.startsWith('ko')) ? 'ko'
-                                    : (browserLang && browserLang.startsWith('es')) ? 'es'
-                                        : (browserLang && browserLang.startsWith('en')) ? 'en'
-                                            : 'zh-CN';
-                    localStorage.setItem('selectedLanguage', defaultLang);
-                    currentUser.language = defaultLang;
-                    try { localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser))); } catch (_) { }
-                    applyLanguage(defaultLang).then(afterLangApplied).catch(() => {
-                        showEmptyState();
-                        scheduleRenderSidebar();
-                        updateUI();
-                        showToast(getToastMessage('toast.loginSuccess'), 'success');
-                        notifyBackendCacheInvalidation('user_login', { userId: currentUser.id });
-                    });
-                    try { makeAuthRequest('update-language', { language: defaultLang }); } catch (_) { }
-                } catch (_) {
-                    showEmptyState();
-                    scheduleRenderSidebar();
-                    updateUI();
-                    showToast(getToastMessage('toast.loginSuccess'), 'success');
-                    notifyBackendCacheInvalidation('user_login', { userId: currentUser.id });
-                }
-            }
-        });
-        resetToDefaultModel();
-
-        refreshUsageStats().catch(err => console.error(`${getToastMessage('console.usageStatsFailed')}:`, err));
-        fetchWeeklyFeatureStatus().catch(err => console.error(`${getToastMessage('console.weeklyFeatureStatusFailed')}:`, err));
-        loadUserAIParameters().catch(err => console.error(`${getToastMessage('console.aiParametersLoadFailed')}:`, err));
-        loadChats(true).catch(err => console.error(`${getToastMessage('console.chatHistoryLoadFailed')}:`, err));
-
+        await applyAuthenticatedSession(result, { successToastKey: 'toast.loginSuccess', toastRoute: null });
         return true;
     } catch (error) {
         showToast(error.message, 'error');
         return false;
     }
+}
+
+function setupOAuthButtons() {
+    setupOAuthButtonsImpl(buildOAuthContext());
+}
+
+function setupNativeOAuthDeepLinkHandler() {
+    setupNativeOAuthDeepLinkHandlerImpl(buildOAuthContext());
 }
 
 async function logout() {
@@ -5308,6 +5969,8 @@ async function logout() {
         notifyBackendCacheInvalidation('user_logout', { sessionId: sessionIdToClean });
         sessionId = null;
         currentUser = null;
+        refreshSecurityMfaToggleFromUser?.();
+        updateCurrentPasswordPlaceholderInput();
         simpleCache.cache.clear();
         localStorage.removeItem('sessionId');
 
@@ -5362,6 +6025,7 @@ async function logout() {
         if (weeklyTimerInterval) clearInterval(weeklyTimerInterval);
 
         resetToDefaultModel();
+        routeManager.navigateToHome({ replace: true, force: true });
 
         requestAnimationFrame(() => {
             updateUI(false);
@@ -5383,7 +6047,7 @@ async function logout() {
                         elements.chatContainer.style.display = 'flex';
                     }
 
-                    elements.authOverlay.classList.remove('visible');
+                    hideAuthOverlay();
                     showEmptyState(false, defaultLang);
                     showToast(getToastMessage('toast.logoutSuccess'), 'info');
                 }).catch((error) => {
@@ -5393,7 +6057,7 @@ async function logout() {
                         elements.chatContainer.style.display = 'flex';
                     }
 
-                    elements.authOverlay.classList.remove('visible');
+                    hideAuthOverlay();
                     showEmptyState(false, defaultLang);
                     showToast(getToastMessage('toast.logoutSuccess'), 'info');
                 });
@@ -5404,7 +6068,7 @@ async function logout() {
 
         const settingsModal = document.getElementById('settings-modal-overlay');
         if (settingsModal.classList.contains('visible')) {
-            settingsModal.classList.remove('visible');
+            hideSettingsModal();
         }
 
         // 关闭右侧抽屉
@@ -5415,39 +6079,35 @@ async function logout() {
     }
 }
 
-async function handlePasswordResetToken() {
+async function handlePasswordResetToken(initialToken = null) {
     const urlParams = new URLSearchParams(window.location.search || '');
-    const token = urlParams.get('token');
+    let token = initialToken || urlParams.get('token');
+    if (!token) {
+        const pathSegments = (window.location.pathname || '').split('/').filter(Boolean);
+        if (pathSegments[0] === 'auth' && pathSegments[1] === 'reset-password') {
+            token = pathSegments[2] ? decodeURIComponent(pathSegments[2]) : null;
+        }
+    }
 
     if (token) {
+        openAuthOverlay('route', { mode: 'reset', token }, { syncRoute: true, routeOptions: { replace: true } });
+        if (elements.chatContainer) {
+            elements.chatContainer.style.display = 'none';
+        }
         try {
             const result = await makeAuthRequest('validate-reset-token', { token });
 
             if (!result.success) {
-                elements.authOverlay.classList.add('visible');
+                openAuthOverlay('auto', { mode: 'login' }, { syncRoute: true, routeOptions: { replace: true } });
                 if (elements.chatContainer) {
                     elements.chatContainer.style.display = 'none';
                 }
                 setTimeout(() => {
                     showToast(result.error || 'Reset link invalid', 'error');
                 }, 100);
-                return;
             }
-
-            resetToken = token;
-            elements.authOverlay.classList.add('visible');
-
-            if (elements.chatContainer) {
-                elements.chatContainer.style.display = 'none';
-            }
-
-            document.getElementById('auth-forms-container').style.display = 'none';
-            document.getElementById('auth-tabs').style.display = 'none';
-
-            document.querySelectorAll('.auth-form').forEach(form => form.classList.remove('active'));
-            document.getElementById('reset-password-form').classList.add('active');
         } catch (error) {
-            elements.authOverlay.classList.add('visible');
+            openAuthOverlay('auto', { mode: 'login' }, { syncRoute: true, routeOptions: { replace: true } });
             if (elements.chatContainer) {
                 elements.chatContainer.style.display = 'none';
             }
@@ -5471,6 +6131,8 @@ async function checkSession() {
     const cachedUser = simpleCache.get(`user_session_${sessionId}`);
     if (cachedUser) {
         currentUser = cachedUser;
+        updateCurrentPasswordPlaceholderInput();
+        refreshSecurityMfaToggleFromUser?.();
         if (currentUser.language) {
             asyncStorage.setItem('selectedLanguage', currentUser.language);
         }
@@ -5479,6 +6141,8 @@ async function checkSession() {
             if (result.success && result.user) {
                 const previousLanguage = currentUser?.language || null;
                 currentUser = { ...(currentUser || {}), ...result.user };
+                updateCurrentPasswordPlaceholderInput();
+                refreshSecurityMfaToggleFromUser?.();
                 simpleCache.set(`user_session_${sessionId}`, currentUser, 60000);
 
                 if (result.user.language) {
@@ -5510,6 +6174,8 @@ async function checkSession() {
     if (cachedUserFromStorage) {
         try {
             currentUser = JSON.parse(cachedUserFromStorage);
+            updateCurrentPasswordPlaceholderInput();
+            refreshSecurityMfaToggleFromUser?.();
             if (currentUser && typeof currentUser === 'object') {
                 delete currentUser.custom_api_key;
                 delete currentUser.custom_api_key_t;
@@ -5530,6 +6196,8 @@ async function checkSession() {
             if (result.success && result.user) {
                 const previousLanguage = currentUser?.language || null;
                 currentUser = result.user;
+                updateCurrentPasswordPlaceholderInput();
+                refreshSecurityMfaToggleFromUser?.();
                 simpleCache.set(`user_session_${sessionId}`, result.user, 60000);
 
                 if (currentUser.theme_settings) {
@@ -5569,6 +6237,8 @@ async function checkSession() {
                 const tempSessionId = sessionId;
                 sessionId = null;
                 currentUser = null;
+                refreshSecurityMfaToggleFromUser?.();
+                updateCurrentPasswordPlaceholderInput();
                 localStorage.removeItem('sessionId');
                 asyncStorage.removeItem(`user_cache_${tempSessionId}`);
                 updateUI();
@@ -5650,98 +6320,94 @@ async function loadChats(isSessionValid = false) {
     const loader = document.getElementById('chat-history-loader');
     const forceServerChatsReload = currentUser && localStorage.getItem('forceServerChatsReload') === '1';
 
-    try {
-        if (currentUser && isSessionValid) {
-            try {
-                let cachedChats = null;
-                if (forceServerChatsReload) {
-                    try {
-                        await deleteChatsFromDB(currentUser.id);
-                    } catch (error) {
-                        console.warn('Failed to delete cached chats during forced reload:', error);
-                    }
-                    chats = {};
-                    if (loader) loader.style.display = 'flex';
-                } else {
-                    cachedChats = await getChatsFromDB(currentUser.id);
-                    if (cachedChats) {
-                        chats = cachedChats;
-                        renderSidebar();
-                    } else if (loader) {
-                        loader.style.display = 'flex';
-                    }
+    if (currentUser && isSessionValid) {
+        try {
+            let cachedChats = null;
+            if (forceServerChatsReload) {
+                try {
+                    await deleteChatsFromDB(currentUser.id);
+                } catch (error) {
+                    console.warn('Failed to delete cached chats during forced reload:', error);
                 }
-                makeApiRequest('chats/conversations').then(async (result) => {
-                    if (result.success) {
-                        const serverChats = {};
-                        for (const conv of result.conversations) {
-                            serverChats[conv.id] = {
-                                id: conv.id,
-                                title: conv.title,
-                                model_name: conv.model_name,
-                                created_at: conv.created_at,
-                                updated_at: conv.updated_at,
-                                messages: []
-                            };
-                        }
+                chats = {};
+                if (loader) loader.style.display = 'flex';
+            } else {
+                cachedChats = await getChatsFromDB(currentUser.id);
+                if (cachedChats) {
+                    chats = cachedChats;
+                    renderSidebar();
+                } else if (loader) {
+                    loader.style.display = 'flex';
+                }
+            }
+            makeApiRequest('chats/conversations').then(async (result) => {
+                if (result.success) {
+                    const serverChats = {};
+                    for (const conv of result.conversations) {
+                        serverChats[conv.id] = {
+                            id: conv.id,
+                            title: conv.title,
+                            model_name: conv.model_name,
+                            created_at: conv.created_at,
+                            updated_at: conv.updated_at,
+                            messages: []
+                        };
+                    }
 
-                        const mergedChats = { ...serverChats };
+                    const mergedChats = { ...serverChats };
 
-                        if (cachedChats) {
-                            for (const [chatId, serverChat] of Object.entries(serverChats)) {
-                                const localChat = cachedChats[chatId];
-                                if (localChat && localChat.messages && localChat.messages.length > 0) {
-                                    mergedChats[chatId] = {
-                                        ...serverChat,
-                                        messages: localChat.messages
-                                    };
-                                }
+                    if (cachedChats) {
+                        for (const [chatId, serverChat] of Object.entries(serverChats)) {
+                            const localChat = cachedChats[chatId];
+                            if (localChat && localChat.messages && localChat.messages.length > 0) {
+                                mergedChats[chatId] = {
+                                    ...serverChat,
+                                    messages: localChat.messages
+                                };
                             }
                         }
-
-                        preloadChatContents(mergedChats, currentUser.id).catch(err =>
-                            console.warn('Failed to preload chat contents:', err)
-                        );
-
-                        await saveChatsToDB(currentUser.id, mergedChats);
-                        chats = mergedChats;
-                        renderSidebar();
-
-                        if (loader) {
-                            loader.style.display = 'none';
-                        }
-
-                        if (forceServerChatsReload) {
-                            localStorage.removeItem('forceServerChatsReload');
-                        }
-
-                        if (cachedChats) {
-                            const serverChatIds = new Set(Object.keys(serverChats));
-                            const localChatIds = Object.keys(cachedChats);
-                            const deletedChatIds = localChatIds.filter(chatId => !serverChatIds.has(chatId));
-                        }
                     }
-                }).catch((error) => {
+
+                    preloadChatContents(mergedChats, currentUser.id).catch(err =>
+                        console.warn('Failed to preload chat contents:', err)
+                    );
+
+                    await saveChatsToDB(currentUser.id, mergedChats);
+                    chats = mergedChats;
+                    renderSidebar();
+
                     if (loader) {
                         loader.style.display = 'none';
                     }
-                });
-            } catch (error) {
-                if (loader && (!chats || Object.keys(chats).length === 0)) {
-                    loader.style.display = 'flex';
-                    const loadingText = loader.querySelector('.loading-text');
-                    if (loadingText) loadingText.textContent = getToastMessage('status.recordLoadFailed');
-                    const spinner = loader.querySelector('.loading-spinner');
-                    if (spinner) spinner.style.display = 'none';
+
+                    if (forceServerChatsReload) {
+                        localStorage.removeItem('forceServerChatsReload');
+                    }
+
+                    if (cachedChats) {
+                        const serverChatIds = new Set(Object.keys(serverChats));
+                        const localChatIds = Object.keys(cachedChats);
+                        const deletedChatIds = localChatIds.filter(chatId => !serverChatIds.has(chatId));
+                    }
                 }
+            }).catch((error) => {
+                if (loader) {
+                    loader.style.display = 'none';
+                }
+            });
+        } catch (error) {
+            if (loader && (!chats || Object.keys(chats).length === 0)) {
+                loader.style.display = 'flex';
+                const loadingText = loader.querySelector('.loading-text');
+                if (loadingText) loadingText.textContent = getToastMessage('status.recordLoadFailed');
+                const spinner = loader.querySelector('.loading-spinner');
+                if (spinner) spinner.style.display = 'none';
             }
-        } else {
-            const localChats = await getChatsFromDB('guest');
-            chats = localChats || {};
-            renderSidebar();
         }
-    } finally {
-        markChatsReady();
+    } else {
+        const localChats = await getChatsFromDB('guest');
+        chats = localChats || {};
+        renderSidebar();
     }
 }
 // UI更新函数
@@ -5753,10 +6419,7 @@ function updateUI(showLoginPage = true) {
 
     if (currentUser) {
         // 如果用户已登录，确保隐藏登录页面
-        elements.authOverlay.classList.remove('visible');
-        if (elements.chatContainer) {
-            elements.chatContainer.style.display = 'flex';
-        }
+        hideAuthOverlay();
     }
 
     updateLoginButtonVisibility();
@@ -5847,7 +6510,20 @@ function updateUI(showLoginPage = true) {
         isLoadingParameters = false;
     } else {
         if (showLoginPage) {
-            elements.authOverlay.classList.add('visible');
+            const currentRoute = router.getCurrentRoute();
+            const initialAuthRoutePending = !routeManager.isInitialRouteProcessed() && currentRoute?.name === 'auth';
+            const desiredState = initialAuthRoutePending
+                ? routeManager.normalizeAuthState({ mode: currentRoute.params?.mode, token: currentRoute.params?.token })
+                : routeManager.getAuthState();
+            if (!elements.authOverlay.classList.contains('visible')) {
+                openAuthOverlay(initialAuthRoutePending ? 'route' : 'auto', desiredState, {
+                    syncRoute: !initialAuthRoutePending,
+                    routeOptions: { replace: true }
+                });
+            } else if (!initialAuthRoutePending) {
+                routeManager.syncAuthRoute(desiredState, { replace: true });
+                persistAuthRoute(desiredState);
+            }
             if (elements.chatContainer) {
                 elements.chatContainer.style.display = 'none';
             }
@@ -5904,7 +6580,7 @@ async function validateApiKey(apiKey) {
     }
 }
 
-async function loadChat(chatId, options = {}) {
+async function loadChat(chatId) {
     ensureInlineEditModeClosed();
 
     if (currentChatId && currentChatId.startsWith('temp_') && currentChatId !== chatId) {
@@ -5939,8 +6615,8 @@ async function loadChat(chatId, options = {}) {
     navigationEngine.resetExitState();
     navigationEngine.nextBackShouldReturnToMain = false;
 
-    if (options.syncRoute !== false) {
-        navigateToChatRoute(chatId, { replace: wasAlreadyInChat });
+    if (!wasSameChat) {
+        routeManager.navigateToChat(chatId);
     }
 
     elements.chatContainer.style.opacity = '0';
@@ -6090,8 +6766,6 @@ function showEmptyState(forceLanguage = null) {
         return;
     }
 
-    ensureHomeRouteFromChat();
-
     currentChatId = null;
     const currentLang = forceLanguage || (currentUser ? (currentUser.language || getCurrentLanguage()) : getCurrentLanguage());
     welcomePageShown = true;
@@ -6170,7 +6844,7 @@ async function startNewChat(skipProcessingCheck = false) {
             setActiveChat(tempChatId);
             closeSidebarOnInteraction();
         }, 0);
-        navigateToChatRoute(tempChatId);
+        routeManager.navigateToChat(tempChatId);
         return;
     }
 
@@ -6185,7 +6859,7 @@ async function startNewChat(skipProcessingCheck = false) {
         setActiveChat(tempChatId);
         closeSidebarOnInteraction();
     }, 0);
-    navigateToChatRoute(tempChatId);
+    routeManager.navigateToChat(tempChatId);
 }
 
 async function handleLeaveTemporaryChat(skipProcessingCheck = false) {
@@ -6219,20 +6893,6 @@ async function handleLeaveTemporaryChat(skipProcessingCheck = false) {
     }
 
     return true;
-}
-
-async function routerNavigationGuard(targetRoute, params, meta = {}) {
-    if (!meta?.fromPop) {
-        return true;
-    }
-    if (!currentChatId || !currentChatId.startsWith('temp_')) {
-        return true;
-    }
-    const tempChat = chats[currentChatId];
-    if (!tempChat || (tempChat.messages && tempChat.messages.length > 0)) {
-        return true;
-    }
-    return await handleLeaveTemporaryChat(false);
 }
 
 function clearInputAndAttachments(clearAttachmentsArray = false) {
@@ -6773,6 +7433,7 @@ async function deleteChat(chatId, showConfirmation = true, isBatchOperation = fa
         welcomePageShown = false;
         showEmptyState();
         scheduleRenderSidebar();
+        routeManager.navigateToHome({ replace: true });
     }
 
     try {
@@ -9565,7 +10226,7 @@ function showUsageLimitModal() {
                 apiNavItem.click();
             }
         } else {
-            openAuthOverlay();
+            openAuthOverlay('user', { mode: 'login' }, { syncRoute: true });
         }
     };
     elements.limitModalOverlay.classList.add('visible');
@@ -9794,7 +10455,6 @@ async function handleChatMessage(userContent, options = {}) {
                             }
                         }
                     }
-
                     scheduleRenderSidebar();
                 };
 
@@ -10946,7 +11606,6 @@ function showFileViewer(filename, content) {
     codeElement.textContent = '';
     elements.fileViewerFilename.textContent = filename;
     unregisterFileViewerLinkHandler();
-    fileViewerCopyText = '';
 
     const viewerType = detectViewerType(filename, content);
 
@@ -10962,13 +11621,11 @@ function showFileViewer(filename, content) {
             img.style.objectFit = 'contain';
             img.style.borderRadius = '8px';
             textContainer.appendChild(img);
-            fileViewerCopyText = typeof content === 'string' ? content : '';
             break;
 
         case 'code':
             codeContainer.style.display = 'block';
             codeElement.textContent = content;
-            fileViewerCopyText = typeof content === 'string' ? content : (codeElement.textContent || '');
             setTimeout(() => {
                 try {
                     ensurePlaintextHighlightLanguage();
@@ -11007,12 +11664,10 @@ function showFileViewer(filename, content) {
                     }
                 });
                 registerFileViewerLinkHandler(textContainer);
-                fileViewerCopyText = textContainer.textContent || (typeof content === 'string' ? content : '');
             } catch (error) {
                 console.error(`${getToastMessage('console.richTextRenderFailed')}:`, error);
                 textContainer.textContent = content;
                 unregisterFileViewerLinkHandler();
-                fileViewerCopyText = textContainer.textContent || (typeof content === 'string' ? content : '');
             }
             break;
     }
@@ -11236,7 +11891,13 @@ async function forceClearCacheAndReload() {
             await toastCtrl.whenShown;
         } catch (_) { }
         await new Promise(r => setTimeout(r, 300));
-        reloadAppToHome();
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('_', Date.now().toString());
+            window.location.replace(url.toString());
+        } catch (_) {
+            try { location.reload(true); } catch (_) { location.reload(); }
+        }
 
     } catch (error) {
         console.error(`${getToastMessage('console.clearCacheFailed')}:`, error);
@@ -11438,73 +12099,29 @@ function setupEventListeners() {
         }
     });
 
-    if (isTouchDevice) {
-        let touchStartX = 0;
-        let touchStartY = 0;
-        let isScrolling = false;
-        const sidebar = elements.sidebar;
-
-        // 保留侧边栏的触摸手势处理（与导航引擎的手势返回不冲突）
-        document.body.addEventListener('touchstart', (e) => {
-            if (e.touches[0].clientX < 30 && !document.body.classList.contains('sidebar-open')) {
-                touchStartX = e.touches[0].clientX;
-                touchStartY = e.touches[0].clientY;
-                isScrolling = false;
-            }
-        }, { passive: true });
-
-        document.body.addEventListener('touchmove', (e) => {
-            if (touchStartX === 0 || isScrolling) return;
-
-            const diffX = e.touches[0].clientX - touchStartX;
-            const diffY = e.touches[0].clientY - touchStartY;
-
-            if (Math.abs(diffX) < Math.abs(diffY)) {
-                isScrolling = true;
-                return;
-            }
-
-            if (diffX > 50) {
-                openSidebar();
-                touchStartX = 0;
-            }
-        }, { passive: true });
-
-        sidebar.addEventListener('touchstart', (e) => {
-            touchStartX = e.touches[0].clientX;
-            isScrolling = false;
-        }, { passive: true });
-
-        sidebar.addEventListener('touchmove', (e) => {
-            if (touchStartX === 0 || isScrolling) return;
-            const diffX = e.touches[0].clientX - touchStartX;
-            if (diffX < -50) {
-                closeSidebar();
-                touchStartX = 0;
-            }
-        }, { passive: true });
-
-        document.body.addEventListener('touchend', () => {
-            touchStartX = 0;
-            touchStartY = 0;
-            isScrolling = false;
-        });
-    }
 
     document.querySelectorAll('.auth-tab').forEach(tab => {
         tab.addEventListener('click', function () {
-            const tabType = this.dataset.tab;
+            const tabType = this.dataset.tab === 'register' ? 'register' : 'login';
             const authTabs = document.getElementById('auth-tabs');
             const authFormsContainer = document.getElementById('auth-forms-container');
             document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
             this.classList.add('active');
             if (tabType === 'register') {
-                authTabs.classList.add('show-register');
-                authFormsContainer.classList.add('show-register');
+                authTabs?.classList.add('show-register');
+                authFormsContainer?.classList.add('show-register');
             } else {
-                authTabs.classList.remove('show-register');
-                authFormsContainer.classList.remove('show-register');
+                authTabs?.classList.remove('show-register');
+                authFormsContainer?.classList.remove('show-register');
             }
+            const routeOptions = pendingAuthRouteOptions;
+            pendingAuthRouteOptions = null;
+            if (suppressAuthRouteSync) {
+                suppressAuthRouteSync = false;
+                return;
+            }
+            routeManager.syncAuthRoute(tabType, routeOptions || { replace: true });
+            persistAuthRoute({ mode: tabType });
         });
     });
 
@@ -11521,6 +12138,17 @@ function setupEventListeners() {
             submitBtn.disabled = false;
             submitBtn.textContent = getToastMessage('status.login');
         }
+    });
+
+    if (elements.mfaForm) {
+        elements.mfaForm.addEventListener('submit', handleMfaVerificationSubmit);
+    }
+    elements.mfaBackButton?.addEventListener('click', cancelMfaVerificationFlow);
+    elements.mfaMethodButtons?.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            if (btn.disabled) return;
+            setActiveMfaMethod(btn.dataset.mfaMethod);
+        });
     });
 
     elements.registerForm.addEventListener('submit', async (e) => {
@@ -11572,6 +12200,8 @@ function setupEventListeners() {
                     emailDisplay.textContent = email;
                 }
                 switchToVerificationForm();
+                routeManager.syncAuthRoute({ mode: 'verify' }, { replace: true });
+                persistAuthRoute({ mode: 'verify' });
                 showToast(getToastMessage('toast.verificationCodeSent'), 'success');
             }
         } catch (error) {
@@ -11612,24 +12242,12 @@ function setupEventListeners() {
     });
 
     elements.guestContinue.addEventListener('click', () => {
-        // 关闭登录遮罩
-        elements.authOverlay.classList.remove('visible');
-
-        // 显示聊天容器
-        if (elements.chatContainer) {
-            elements.chatContainer.style.display = 'flex';
-        }
-
         const isFirstLaunchAuth = authOverlayReason !== 'user';
+        hideAuthOverlay();
         const noActiveChat = !currentChatId || !chats[currentChatId] || (chats[currentChatId].messages?.length || 0) === 0;
         if (isFirstLaunchAuth && noActiveChat) {
             try { showEmptyState(); } catch (_) { }
         }
-
-        authOverlayReason = null;
-
-        // 更新登录按钮可见性
-        updateLoginButtonVisibility();
     });
 
     document.getElementById('user-avatar-button').addEventListener('click', () => {
@@ -11640,7 +12258,7 @@ function setupEventListeners() {
     });
 
     if (elements.customLoginBtn) {
-        elements.customLoginBtn.addEventListener('click', () => openAuthOverlay('user'));
+        elements.customLoginBtn.addEventListener('click', () => openAuthOverlay('user', { mode: 'login' }, { syncRoute: true }));
     }
 
     document.getElementById('verify-form').addEventListener('submit', async (e) => {
@@ -11660,17 +12278,7 @@ function setupEventListeners() {
 
             const loginResult = await makeAuthRequest('login', { email: currentVerificationEmail, password: registerPasswordField.value });
             if (loginResult.success) {
-                sessionId = loginResult.sessionId;
-                localStorage.setItem('sessionId', sessionId);
-                currentUser = loginResult.user;
-                elements.authOverlay.classList.remove('visible');
-                // 恢复主聊天页面的显示
-                if (elements.chatContainer) {
-                    elements.chatContainer.style.display = 'flex';
-                }
-                updateUI();
-                // 显示欢迎页面
-                showEmptyState();
+                await applyAuthenticatedSession(loginResult, { showSuccessToast: false });
                 notifyBackendCacheInvalidation('user_registered', { userId: currentUser.id, email: currentVerificationEmail });
             }
         } catch (error) {
@@ -11701,7 +12309,7 @@ function setupEventListeners() {
     });
 
     document.getElementById('forgot-password-btn').addEventListener('click', () => {
-        switchToForgotPasswordForm();
+        openAuthOverlay('auto', { mode: 'reset-request' }, { syncRoute: true, routeOptions: { replace: true } });
     });
 
     document.getElementById('forgot-password-form').addEventListener('submit', async (e) => {
@@ -11717,7 +12325,8 @@ function setupEventListeners() {
     });
 
     document.getElementById('back-to-login-btn').addEventListener('click', () => {
-        switchToLoginForm();
+        routeManager.resetAuthMode();
+        openAuthOverlay('auto', { mode: 'login' }, { syncRoute: true, routeOptions: { replace: true } });
     });
 
     document.getElementById('reset-password-form').addEventListener('submit', async (e) => {
@@ -11894,6 +12503,7 @@ function setupEventListeners() {
                 currentChatId = null;
                 welcomePageShown = false;
                 showEmptyState();
+                routeManager.navigateToHome({ replace: true });
             }
 
             let deletionFailed = false;
@@ -11979,6 +12589,7 @@ function setupEventListeners() {
                     showEmptyState();
                     scheduleRenderSidebar();
                     closeSidebarOnInteraction();
+                    routeManager.navigateToHome({ replace: true });
                     try {
                         await deleteChatsFromDB('guest');
                         showToast(getToastMessage('toast.allRecordsDeleted'), 'success');
@@ -12012,6 +12623,7 @@ function setupEventListeners() {
                 showEmptyState();
                 scheduleRenderSidebar();
                 closeSidebarOnInteraction();
+                routeManager.navigateToHome({ replace: true });
                 showToast(getToastMessage('toast.deletingInBackground', { count: idsToDelete.length }), 'info');
 
                 const deletionResults = await Promise.allSettled(
@@ -12447,7 +13059,7 @@ function setupEventListeners() {
             if (!await handleLeaveTemporaryChat(true)) {
                 return;
             }
-            navigateToChatRoute(chatId);
+            loadChat(chatId);
             const isMobile = window.matchMedia('(max-width: 640px)').matches;
             if (isMobile) {
                 closeSidebar();
@@ -12471,39 +13083,64 @@ function setupEventListeners() {
         hideFileViewerUI();
     });
 
-    document.getElementById('copy-file-content').addEventListener('click', async () => {
-        const textContainer = document.getElementById('file-viewer-text-container');
-        const fallbackText = elements.fileViewerCode?.textContent || textContainer?.textContent || '';
-        const textToCopy = fileViewerCopyText || fallbackText || '';
-        if (!textToCopy) {
-            showToast(getToastMessage('toast.copyFailed'), 'error');
-            return;
-        }
-        try {
-            await navigator.clipboard.writeText(textToCopy);
+    document.getElementById('copy-file-content').addEventListener('click', function () {
+        navigator.clipboard.writeText(elements.fileViewerCode.textContent).then(() => {
             showToast(getToastMessage('toast.contentCopied'), 'success');
-        } catch (error) {
-            console.error('Failed to copy file content:', error);
-            showToast(getToastMessage('toast.copyFailed'), 'error');
-        }
+        });
     });
 
     // 设置按钮的点击事件
     elements.settingsBtn.addEventListener('click', () => {
-        openSettingsRoute(getDefaultSettingsSection(), { replace: isSettingsRouteActive() });
+        if (isMultiSelectMode) {
+            exitMultiSelectMode();
+        }
+
+        try {
+            const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+            if (window.innerWidth <= 640) {
+                closeSidebar();
+            } else {
+                document.body.classList.add('sidebar-collapsed');
+                if (sidebarToggleBtn) sidebarToggleBtn.setAttribute('aria-expanded', 'false');
+            }
+        } catch (_) { }
+
+        safeNavigationCall('pushUiState', {
+            name: 'settingsModal',
+            close: async () => {
+                return await closeModalAndResetState(handleCloseSettingsModalByPage);
+            }
+        });
+
+        // 立即显示UI并更新URL
+        if (elements.settingsModal) {
+            hideAuthOverlay();
+            elements.settingsModal.classList.add('visible');
+            elements.chatContainer.style.display = 'flex';
+            updateLoginButtonVisibility();
+            setupSettingsModalUI();
+            if (!routeManager.isSettingsSyncSuppressed()) {
+                setTimeout(() => {
+                    routeManager.syncSettingsRoute(routeManager.getActiveSettingsSection());
+                }, 0);
+            }
+        }
     });
 
     const guestLoginBtn = document.getElementById('guest-login-prompt-btn');
     if (guestLoginBtn) {
         guestLoginBtn.addEventListener('click', () => {
-            elements.settingsModal.classList.remove('visible');
-            openAuthOverlay();
+            hideSettingsModal();
+            openAuthOverlay('user', { mode: 'login' }, { syncRoute: true });
         });
     }
 
-    document.getElementById('settings-close-btn').addEventListener('click', () => {
-        requestCloseSettingsModal().catch(() => { });
-    });
+    const settingsCloseBtn = document.getElementById('settings-close-btn');
+    if (settingsCloseBtn) {
+        settingsCloseBtn.addEventListener('click', () => {
+            closeSettingsModalFromUI();
+        });
+    }
 
     const checkUpdateBtn = document.getElementById('check-update-btn');
     if (checkUpdateBtn) {
@@ -12538,7 +13175,7 @@ function setupEventListeners() {
 
         if (!isGuestUser) {
             if (combinedApiKey === (currentUser.custom_api_key || '') && selectedMode === currentMode) {
-                elements.settingsModal.classList.remove('visible');
+                hideSettingsModal();
                 return;
             }
         } else {
@@ -12547,7 +13184,7 @@ function setupEventListeners() {
             const prevMode = (guestApiState.mode || 'mixed');
             const noGuestChange = (apiKeyOne === prevKeyOne) && (apiKeyTwo === prevKeyTwo) && (selectedMode === prevMode);
             if (noGuestChange) {
-                elements.settingsModal.classList.remove('visible');
+                hideSettingsModal();
                 return;
             }
         }
@@ -12569,7 +13206,7 @@ function setupEventListeners() {
                 try {
                     refreshSettingsI18nTexts();
                 } catch (_) { }
-                elements.settingsModal.classList.remove('visible');
+                hideSettingsModal();
                 forceBlur();
                 return;
             } else {
@@ -12587,7 +13224,7 @@ function setupEventListeners() {
                     keyValidationPrefetched = false;
                 } catch (_) { }
 
-                elements.settingsModal.classList.remove('visible');
+                hideSettingsModal();
                 forceBlur();
                 return;
             }
@@ -12688,7 +13325,7 @@ function setupEventListeners() {
                     currentUser.api_mode = selectedMode;
                 }
             }
-            elements.settingsModal.classList.remove('visible');
+            hideSettingsModal();
             forceBlur();
 
             if (!isGuestUser) setOriginalApiKeys();
@@ -12717,36 +13354,84 @@ function setupEventListeners() {
     const settingsNavOverlay = document.getElementById('settings-nav-overlay');
 
     const openSettingsNav = () => {
-        if (!settingsNav) return;
         settingsNav.classList.add('open');
-        if (settingsNavOverlay) settingsNavOverlay.classList.add('visible');
+        settingsNavOverlay.classList.add('visible');
     };
 
     const closeSettingsNav = () => {
-        if (!settingsNav) return;
         settingsNav.classList.remove('open');
-        if (settingsNavOverlay) settingsNavOverlay.classList.remove('visible');
+        settingsNavOverlay.classList.remove('visible');
     };
 
-    settingsNavToggleBtn?.addEventListener('click', openSettingsNav);
-    settingsNavCloseBtn?.addEventListener('click', closeSettingsNav);
-    settingsNavOverlay?.addEventListener('click', closeSettingsNav);
-
-    const settingsContent = settingsModalEl.querySelector('.settings-content');
-    const updateSettingsScrollVisibility = () => {
-        updateSettingsContentScrollState();
-    };
+    settingsNavToggleBtn.addEventListener('click', openSettingsNav);
+    settingsNavCloseBtn.addEventListener('click', closeSettingsNav);
+    settingsNavOverlay.addEventListener('click', closeSettingsNav);
 
     settingsNavItems.forEach(item => {
         item.addEventListener('click', (e) => {
             e.preventDefault();
-            const section = item.dataset.page || DEFAULT_SETTINGS_SECTION;
-            openSettingsRoute(section, { replace: true });
-            activateSettingsPage(section);
+            const pageId = item.dataset.page;
+
+            // 处理隐私协议页面
+            if (pageId === 'privacy-policy') {
+                handlePrivacyPolicyClick(); // Mark as seen when viewed in settings
+            }
+
+            settingsNavItems.forEach(i => i.classList.remove('active'));
+            settingsPages.forEach(p => p.classList.remove('active'));
+
+            item.classList.add('active');
+            const targetPage = document.getElementById(`${pageId}-settings-page`);
+            if (targetPage) {
+                targetPage.classList.add('active');
+                lastSettingsPage = pageId;
+
+                if (pageId === 'language') {
+                    const languageSelector = targetPage.querySelector('.language-selector');
+                    if (languageSelector) {
+                        const currentLang = currentUser
+                            ? (currentUser.language || localStorage.getItem('selectedLanguage') || getCurrentLanguage())
+                            : (localStorage.getItem('selectedLanguage') || getCurrentLanguage());
+                        languageSelector.querySelectorAll('.language-btn').forEach(btn => {
+                            btn.classList.toggle('active', btn.dataset.lang === currentLang);
+                        });
+                    }
+                } else if (pageId === 'about') {
+                    updateAboutPageUI();
+                    markVersionUpdateAsSeen();
+                }
+
+                // 根据当前页是否溢出决定是否显示滚动条
+                requestAnimationFrame(() => updateSettingsScrollVisibility());
+            }
+
             if (window.matchMedia('(max-width: 640px)').matches) {
                 closeSettingsNav();
             }
+
+            routeManager.syncSettingsRoute(pageId, { replace: true });
         });
+    });
+
+    // 初始打开时、窗口尺寸变化时也检查滚动条显示
+    const updateSettingsScrollVisibility = () => {
+        try {
+            const settingsContent = settingsModalEl.querySelector('.settings-content');
+            if (!settingsContent) return;
+            const activePage = settingsContent.querySelector('.settings-page.active');
+            if (!activePage) return;
+            const needScroll = activePage.scrollHeight > settingsContent.clientHeight + 1; // +1 容忍精度
+            settingsContent.classList.toggle('no-scroll', !needScroll);
+        } catch (_) { }
+    };
+
+    if (elements.settingsModal && elements.settingsModal.classList.contains('visible')) {
+        setTimeout(updateSettingsScrollVisibility, 50);
+    }
+    window.addEventListener('resize', () => {
+        if (elements.settingsModal && elements.settingsModal.classList.contains('visible')) {
+            updateSettingsScrollVisibility();
+        }
     });
 
     const donationPageEl = document.getElementById('donation-settings-page');
@@ -12899,7 +13584,7 @@ function setupEventListeners() {
         const usernameChanged = newUsername !== originalUsername;
 
         if (!avatarChanged && !usernameChanged) {
-            elements.settingsModal.classList.remove('visible');
+            hideSettingsModal();
             return;
         }
 
@@ -12932,7 +13617,7 @@ function setupEventListeners() {
 
                 updateUI();
                 showToast(getToastMessage('toast.personalInfoUpdated'), 'success');
-                elements.settingsModal.classList.remove('visible');
+                hideSettingsModal();
                 forceBlur();
 
                 notifyBackendCacheInvalidation('profile_updated', {
@@ -12955,7 +13640,9 @@ function setupEventListeners() {
         const newPassword = document.getElementById('new-password-setting').value;
         const confirmPassword = document.getElementById('confirm-new-password-setting').value;
 
-        if (!currentPassword || !newPassword || !confirmPassword) {
+        const hasExistingPassword = !!(currentUser?.has_password);
+
+        if (!newPassword || !confirmPassword || (hasExistingPassword && !currentPassword)) {
             showToast(getToastMessage('toast.allPasswordFieldsRequired'), 'error');
             return;
         }
@@ -12973,6 +13660,10 @@ function setupEventListeners() {
             document.getElementById('current-password').value = '';
             document.getElementById('new-password-setting').value = '';
             document.getElementById('confirm-new-password-setting').value = '';
+            if (currentUser) {
+                currentUser.has_password = true;
+                updateCurrentPasswordPlaceholderInput();
+            }
             checkPasswordChangeStatus().catch(err => console.error(`${getToastMessage('console.passwordChangeStatusFailed')}:`, err));
 
             notifyBackendCacheInvalidation('password_changed', {});
@@ -12992,7 +13683,7 @@ function setupEventListeners() {
 
     elements.settingsModal.addEventListener('click', (e) => {
         if (e.target === elements.settingsModal) {
-            requestCloseSettingsModal().catch(() => { });
+            closeSettingsModalFromUI();
         }
     });
 
@@ -13885,7 +14576,6 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
                     };
 
                     currentChatId = finalChatId;
-                    navigateToChatRoute(finalChatId, { replace: true });
                 } else {
                     throw new Error(result.error || getToastMessage('errors.cannotCreateNewConversationOnServer'));
                 }
@@ -13895,8 +14585,10 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
                 delete chats[chatId];
                 currentChatId = newId;
                 finalChatId = newId;
-                navigateToChatRoute(finalChatId, { replace: true });
                 scheduleRenderSidebar();
+            }
+            if (finalChatId !== chatId) {
+                routeManager.navigateToChat(finalChatId, { replace: true, silent: true });
             }
         }
 
@@ -14049,7 +14741,6 @@ async function loadUserAIParameters() {
         hideParameterLoadingState();
     }
 }
-
 // 更新AI参数UI显示
 function updateAIParameterUI() {
     if (elements.systemPrompt) {
@@ -14140,11 +14831,21 @@ function hideParameterLoadingState() {
 function checkPrivacyPolicyUpdate() {
     const seenVersion = localStorage.getItem(LOCAL_STORAGE_KEY_PRIVACY);
     const badgeElement = document.getElementById('privacy-update-badge');
+    const settingsText = document.getElementById('settings-text');
+
     if (!badgeElement) return;
 
-    const shouldShowBadge = !seenVersion || seenVersion < PRIVACY_POLICY_VERSION;
-    badgeElement.style.display = shouldShowBadge ? 'inline-block' : 'none';
-    setSettingsAlertReason('privacy', shouldShowBadge);
+    if (!seenVersion || seenVersion < PRIVACY_POLICY_VERSION) {
+        badgeElement.style.display = 'inline-block';
+        if (settingsText) {
+            settingsText.style.color = '#ef4444';
+        }
+    } else {
+        badgeElement.style.display = 'none';
+        if (settingsText) {
+            settingsText.style.color = '';
+        }
+    }
 }
 
 function handleLaunchParams() {
@@ -14171,11 +14872,14 @@ function handleLaunchParams() {
 function handlePrivacyPolicyClick() {
     localStorage.setItem(LOCAL_STORAGE_KEY_PRIVACY, PRIVACY_POLICY_VERSION);
     const badgeElement = document.getElementById('privacy-update-badge');
+    const settingsText = document.getElementById('settings-text');
 
     if (badgeElement) {
         badgeElement.style.display = 'none';
     }
-    setSettingsAlertReason('privacy', false);
+    if (settingsText) {
+        settingsText.style.color = '';
+    }
 }
 
 function setupLayout() {
@@ -14286,8 +14990,23 @@ async function initialize() {
     isInitializing = true;
 
     try {
+        injectAuthUI();
+
         // 保留已缓存的语言文件，避免每次初始化都清空
         populateElements();
+        configureMfaLogin({
+            elements,
+            codeInputRegistry,
+            getToastMessage,
+            showToast,
+            makeAuthRequest,
+            applyAuthenticatedSession,
+            hideAuthOverlay,
+            updateLoginButtonVisibility,
+            resetCodeInputs,
+            setupCodeInputGroup,
+            switchToLoginForm
+        });
         setupLayout();
 
         isProcessing = false;
@@ -14299,7 +15018,9 @@ async function initialize() {
         isSearchModeActive = false;
 
         setupEventListeners();
+        setupOAuthButtons();
         setupTouchMessageActions();
+        setupNativeOAuthDeepLinkHandler();
 
         if (elements.voiceBtn) {
             const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
@@ -14314,7 +15035,6 @@ async function initialize() {
             ensureNotificationPermission().catch(error => {
                 console.warn('Notification permission request failed:', error);
             });
-            await syncNativeAppVersion();
         }
 
         if ('ontouchstart' in window) {
@@ -14443,6 +15163,7 @@ async function initialize() {
             task4_CoreResources
         ]);
 
+        // 2 秒窗口内尝试获取并应用服务端更新；超时则保持已渲染的本地设置
         const hasSession = !!sessionId;
         let sessionValid = hasSession;
         let resolvedWithinWindow = false;
@@ -14592,7 +15313,12 @@ async function initialize() {
         } catch (_) { }
 
         const urlParams = new URLSearchParams(window.location.search || '');
-        const hasResetToken = urlParams.get('token');
+        const pathSegments = (window.location.pathname || '').split('/').filter(Boolean);
+        const pathResetToken = (pathSegments[0] === 'auth' && pathSegments[1] === 'reset-password' && pathSegments[2])
+            ? decodeURIComponent(pathSegments[2])
+            : null;
+        const queryResetToken = urlParams.get('token');
+        const hasResetToken = queryResetToken || pathResetToken;
         const isAuthFlow = !!hasResetToken;
 
         if (sessionValid) {
@@ -14606,14 +15332,9 @@ async function initialize() {
         } else if (isAuthFlow) {
             updateUI(true);
             if (elements.chatContainer) elements.chatContainer.style.display = 'none';
-            await handlePasswordResetToken();
+            await handlePasswordResetToken(pathResetToken || queryResetToken);
         } else {
             updateUI(true);
-            switchToLoginForm();
-            if (elements.authOverlay) elements.authOverlay.classList.add('visible');
-            if (elements.chatContainer) elements.chatContainer.style.display = 'none';
-            if (elements.customLoginBtn) elements.customLoginBtn.style.display = 'block';
-            updateLoginButtonVisibility();
         }
 
         prefetchKeyValidationStatus().catch(e => console.warn('Prefetch key validation failed:', e));
@@ -14621,12 +15342,17 @@ async function initialize() {
         resetToDefaultModel();
 
         if (sessionValid) {
-            loadChats(true).catch(err => console.error('Failed to load user chat history:', err));
+            const loadPromise = loadChats(true);
+            routeManager.setChatsLoadPromise(loadPromise);
+            loadPromise.catch(err => console.error('Failed to load user chat history:', err));
             restorePendingChats().catch(err => console.warn('Failed to restore pending chats:', err));
         } else {
-            setTimeout(() => {
-                loadChats(false).catch(err => console.error('Failed to load guest chat history:', err));
-            }, 50);
+            const loadPromise = (async () => {
+                await new Promise(resolve => setTimeout(resolve, 50));
+                await loadChats(false);
+            })();
+            routeManager.setChatsLoadPromise(loadPromise);
+            loadPromise.catch(err => console.error('Failed to load guest chat history:', err));
         }
 
         restoreBackgroundTasks().catch(err => console.error('Failed to restore background tasks:', err));
@@ -14657,8 +15383,6 @@ async function initialize() {
             }
         }, 300);
 
-        ensureRouterInitialized();
-
         if (elements.apiKeyOneInput) {
             elements.apiKeyOneInput.addEventListener('input', () => {
                 elements.apiKeyOneInput.classList.remove('error');
@@ -14677,6 +15401,8 @@ async function initialize() {
                 }
             });
         }
+
+        await routeManager.handleInitialRouteIntent();
 
     } catch (error) {
         hideLoadingScreen();
@@ -14771,13 +15497,3 @@ async function commitInlineEditMode() {
         // 状态在下游复位
     }
 }
-
-function registerAlias(arr, canonical) {
-    if (!Array.isArray(arr)) return;
-    arr.forEach((name) => {
-        if (!name) return;
-        const key = name.toLowerCase();
-        SETTINGS_SECTION_ALIASES[key] = canonical;
-    });
-}
-

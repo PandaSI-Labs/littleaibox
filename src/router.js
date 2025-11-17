@@ -1,270 +1,221 @@
-const ROUTER_STATE_KEY = '__appRouter';
+const DEFAULT_SETTINGS_SECTION = 'profile';
 
-function compilePath(path) {
-    if (!path.startsWith('/')) {
-        throw new Error(`Route path must start with "/": ${path}`);
-    }
-    const paramNames = [];
-    const pattern = path.replace(/:([A-Za-z0-9_]+)/g, (_, name) => {
-        paramNames.push(name);
-        return '([^/]+)';
-    });
-    const regex = new RegExp(`^${pattern}$`);
-
-    const buildPath = (params = {}) => {
-        return path.replace(/:([A-Za-z0-9_]+)/g, (_, name) => {
-            if (!(name in params)) {
-                throw new Error(`Missing param "${name}" for path ${path}`);
-            }
-            return encodeURIComponent(params[name]);
-        });
-    };
-
-    return { regex, paramNames, buildPath };
+function normalizePathname(pathname = '') {
+    if (!pathname || pathname === '/') return '';
+    return pathname.replace(/^\/+|\/+$/g, '');
 }
 
-export class Router {
-    constructor(options = {}) {
-        this.routes = new Map();
-        this.base = options.base || '';
-        this.current = null;
-        this.currentDepth = 0;
-        this.initialized = false;
-        this.handlePopState = this.handlePopState.bind(this);
-        this.routerId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-        this.notFoundHandler = null;
-        this.beforeEachHandler = null;
-        this.skipNextPop = false;
+function parseRouteFromLocation() {
+    if (typeof window === 'undefined') {
+        return { name: 'home', params: {} };
     }
+    const { pathname, search } = window.location;
+    const segments = normalizePathname(pathname).split('/').filter(Boolean);
 
-    registerRoute({ name, path, enter, leave }) {
-        if (!name || !path) {
-            throw new Error('Route must have both name and path.');
-        }
-        const compiled = compilePath(path);
-        this.routes.set(name, {
-            name,
-            path,
-            enter,
-            leave,
-            ...compiled
-        });
-        return this;
+    if (segments.length >= 2 && segments[0] === 'chat') {
+        return { name: 'chat', params: { chatId: decodeURIComponent(segments[1]) } };
     }
-
-    setNotFound(handler) {
-        this.notFoundHandler = handler;
-        return this;
+    if (segments.length >= 2 && segments[0] === 'temp_chat') {
+        return { name: 'tempChat', params: { chatId: decodeURIComponent(segments[1]) } };
     }
-
-    setBeforeEach(handler) {
-        this.beforeEachHandler = handler;
-        return this;
+    if (segments.length >= 1 && segments[0] === 'settings') {
+        const section = segments[1] ? decodeURIComponent(segments[1]) : DEFAULT_SETTINGS_SECTION;
+        return { name: 'settings', params: { section } };
     }
-
-    init(defaultRoute) {
-        if (this.initialized) return;
-        const initialMatch = this.matchPath(location.pathname);
-        const target = initialMatch || (typeof defaultRoute === 'string'
-            ? { route: this.routes.get(defaultRoute), params: {} }
-            : defaultRoute);
-
-        if (!target || !target.route) {
-            throw new Error('Router needs a valid default route to initialize.');
-        }
-
-        const initialState = this.createState(target.route.name, target.params, 0);
-        this.replaceHistoryState(initialState, this.resolveUrl(target.route, target.params));
-        this.applyRoute(target.route, target.params, { replace: true, initial: true });
-        window.addEventListener('popstate', this.handlePopState);
-        this.initialized = true;
+    if (segments.length >= 3 && segments[0] === 'auth' && segments[2] === 'callback') {
+        const provider = decodeURIComponent(segments[1] || '');
+        return { name: 'oauthCallback', params: { provider, search } };
     }
-
-    navigate(name, params = {}, options = {}) {
-        const route = this.routes.get(name);
-        if (!route) {
-            console.warn(`[Router] Unknown route "${name}"`);
-            return;
-        }
-        const resolvedParams = params || {};
-        const url = this.resolveUrl(route, resolvedParams);
-        const nextDepth = options.replace ? this.currentDepth : this.currentDepth + 1;
-        const state = this.createState(name, resolvedParams, nextDepth);
-
-        if (options.replace) {
-            this.replaceHistoryState(state, url);
-        } else {
-            history.pushState(state, document.title, url);
-            this.currentDepth = nextDepth;
-        }
-
-        this.applyRoute(route, resolvedParams, { replace: !!options.replace });
-    }
-
-    replace(name, params = {}) {
-        this.navigate(name, params, { replace: true });
-    }
-
-    reset(name, params = {}) {
-        const route = this.routes.get(name);
-        if (!route) {
-            console.warn(`[Router] Unknown route "${name}"`);
-            return;
-        }
-        const resolvedParams = params || {};
-        const url = this.resolveUrl(route, resolvedParams);
-        const state = this.createState(name, resolvedParams, 0);
-        this.replaceHistoryState(state, url);
-        this.applyRoute(route, resolvedParams, { replace: true });
-    }
-
-    setCurrentRouteExternal(name, params = {}) {
-        const route = this.routes.get(name);
-        if (!route) {
-            console.warn(`[Router] Unknown route "${name}"`);
-            return;
-        }
-        const resolvedParams = params || {};
-        const url = this.resolveUrl(route, resolvedParams);
-        const state = this.createState(name, resolvedParams, this.currentDepth);
-        this.replaceHistoryState(state, url);
-        this.current = { route, params: resolvedParams };
-    }
-
-    back() {
-        if (!this.initialized) return;
-        history.back();
-    }
-
-    canGoBack() {
-        return this.currentDepth > 0;
-    }
-
-    getCurrentRouteName() {
-        return this.current?.route?.name || null;
-    }
-
-    isActive(name) {
-        return this.getCurrentRouteName() === name;
-    }
-
-    async shouldAllowNavigation(route, params, meta = {}) {
-        if (!this.beforeEachHandler) return true;
-        try {
-            const result = await this.beforeEachHandler(route, params, meta);
-            return result !== false;
-        } catch (error) {
-            console.error('[Router] Error in beforeEach handler:', error);
-            return true;
-        }
-    }
-
-    createState(name, params, depth) {
-        return {
-            name,
-            params,
-            __depth: depth,
-            [ROUTER_STATE_KEY]: this.routerId
-        };
-    }
-
-    resolveUrl(route, params) {
-        const path = route.buildPath(params);
-        return `${this.base}${path}`.replace(/\/{2,}/g, '/');
-    }
-
-    replaceHistoryState(state, url) {
-        history.replaceState(state, document.title, url);
-        this.currentDepth = state.__depth || 0;
-    }
-
-    matchPath(pathname) {
-        for (const route of this.routes.values()) {
-            const match = route.regex.exec(pathname);
-            if (match) {
-                const params = {};
-                route.paramNames.forEach((name, index) => {
-                    params[name] = decodeURIComponent(match[index + 1]);
-                });
-                return { route, params };
+    if (segments.length >= 1 && segments[0] === 'auth') {
+        const mode = segments[1] ? decodeURIComponent(segments[1]) : 'login';
+        if (mode === 'reset-password') {
+            const token = segments[2] ? decodeURIComponent(segments[2]) : '';
+            if (token) {
+                return { name: 'auth', params: { mode: 'reset', token } };
             }
+            return { name: 'auth', params: { mode: 'reset-request' } };
         }
-        return null;
+        if (mode === 'verify-email') {
+            return { name: 'auth', params: { mode: 'verify' } };
+        }
+        return { name: 'auth', params: { mode } };
+    }
+    return { name: 'home', params: {} };
+}
+
+function buildPath(routeName, params = {}) {
+    const safeId = (value) => encodeURIComponent(String(value || '').trim());
+    switch (routeName) {
+        case 'chat':
+            return params.chatId ? `/chat/${safeId(params.chatId)}` : '/';
+        case 'tempChat':
+            return params.chatId ? `/temp_chat/${safeId(params.chatId)}` : '/';
+        case 'settings': {
+            const section = params.section || DEFAULT_SETTINGS_SECTION;
+            return `/settings/${safeId(section)}`;
+        }
+        case 'auth': {
+            if (params.mode === 'reset') {
+                const token = params.token ? `/${encodeURIComponent(params.token)}` : '';
+                return `/auth/reset-password${token}`;
+            }
+            if (params.mode === 'reset-request') {
+                return '/auth/reset-password';
+            }
+            if (params.mode === 'verify') {
+                return '/auth/verify-email';
+            }
+            const mode = params.mode === 'register' ? 'register' : 'login';
+            return `/auth/${mode}`;
+        }
+        case 'oauthCallback':
+            if (params.provider) {
+                return `/auth/${safeId(params.provider)}/callback`;
+            }
+            return '/auth/login';
+        case 'home':
+        default:
+            return '/';
+    }
+}
+
+class AppRouter {
+    constructor() {
+        this.listeners = new Set();
+        this.initialized = false;
+        this.managedDepth = 0;
+        this.currentRoute = parseRouteFromLocation();
+        this.options = {};
     }
 
-    async applyRoute(route, params, meta = {}) {
-        if (!meta?.skipGuard) {
-            const shouldContinue = await this.shouldAllowNavigation(route, params, meta);
-            if (shouldContinue === false) {
+    canUseHistory() {
+        return typeof window !== 'undefined' &&
+            typeof window.history !== 'undefined' &&
+            typeof window.history.pushState === 'function';
+    }
+
+    ensureRootState() {
+        if (!this.canUseHistory()) return;
+        try {
+            if (!window.history.state || !window.history.state.__labRoot) {
+                window.history.replaceState({ __labRoot: true }, document.title, window.location.href);
+            }
+            window.history.pushState({ __labKeep: Date.now() }, document.title, window.location.href);
+        } catch (error) {
+            console.warn('Router root state failed:', error);
+        }
+    }
+
+    init(options = {}) {
+        if (this.initialized || !this.canUseHistory()) {
+            return;
+        }
+        this.initialized = true;
+        this.options = options;
+        if (!options.isNativeApp) {
+            this.ensureRootState();
+        }
+        window.addEventListener('popstate', (event) => {
+            if (options.shouldIgnorePop?.()) {
+                options.onPopIgnored?.();
                 return;
             }
-        }
-
-        const previous = this.current;
-        if (previous && previous.route.leave) {
-            try {
-                await previous.route.leave(previous.params, meta);
-            } catch (error) {
-                console.error('[Router] Error during route leave:', error);
+            const state = event.state;
+            if (state && state.route && this.managedDepth > 0) {
+                this.managedDepth = Math.max(0, this.managedDepth - 1);
             }
-        }
+            if (state && state.route) {
+                this.currentRoute = { name: state.route, params: state.params || {} };
+            } else {
+                this.currentRoute = parseRouteFromLocation();
+            }
+            this.notifyListeners({ type: 'pop', route: this.currentRoute, event });
+            options.onBack?.(this.currentRoute, event);
+        });
+    }
 
-        if (this.beforeEachHandler) {
+    navigate(routeName, params = {}, options = {}) {
+        if (!this.canUseHistory()) {
+            return;
+        }
+        const url = new URL(window.location.href);
+        url.pathname = buildPath(routeName, params);
+        url.search = '';
+        const targetUrl = `${url.pathname}${url.hash}`;
+
+        const state = { route: routeName, params };
+        const method = options.replace ? 'replaceState' : 'pushState';
+
+        // 更新URL
+        const updateUrl = () => {
             try {
-                const shouldContinue = await this.beforeEachHandler(route, params, meta);
-                if (shouldContinue === false) {
-                    return;
+                window.history[method](state, document.title, targetUrl);
+                if (!options.replace) {
+                    this.managedDepth += 1;
+                }
+                this.currentRoute = { name: routeName, params };
+                if (!options.silent) {
+                    this.notifyListeners({ type: method === 'replaceState' ? 'replace' : 'push', route: this.currentRoute });
                 }
             } catch (error) {
-                console.error('[Router] Error in beforeEach handler:', error);
+                console.error('Router navigation failed:', error);
             }
+        };
+        requestAnimationFrame(updateUrl);
+    }
+
+    pushPlaceholder() {
+        if (!this.canUseHistory()) {
+            return;
         }
-
-        this.current = { route, params };
-
-        if (route.enter) {
-            try {
-                await route.enter(params, meta);
-            } catch (error) {
-                console.error('[Router] Error during route enter:', error);
-            }
+        try {
+            window.history.pushState({ __labKeep: Date.now() }, document.title, window.location.href);
+        } catch (error) {
+            console.warn('Router placeholder push failed:', error);
         }
     }
 
-    async handlePopState(event) {
-        if (this.skipNextPop) {
-            this.skipNextPop = false;
-            return;
+    back(options = {}) {
+        if (!this.canUseHistory()) {
+            options.onFallback?.();
+            return false;
         }
-        const state = event.state;
-        if (!state || state[ROUTER_STATE_KEY] !== this.routerId) {
-            const fallback = this.matchPath(location.pathname);
-            if (fallback && fallback.route) {
-                const inferredState = this.createState(fallback.route.name, fallback.params, 0);
-                this.replaceHistoryState(inferredState, this.resolveUrl(fallback.route, fallback.params));
-                await this.applyRoute(fallback.route, fallback.params, { replace: true, fromPop: true });
-            } else if (this.notFoundHandler) {
-                this.notFoundHandler(location.pathname);
-            }
-            return;
+        if (this.managedDepth > 0) {
+            window.history.back();
+            return true;
         }
+        if (options.fallbackRoute) {
+            this.navigate(options.fallbackRoute.name, options.fallbackRoute.params || {}, { replace: true, silent: true });
+        }
+        options.onFallback?.();
+        return false;
+    }
 
-        this.currentDepth = state.__depth || 0;
-        const route = this.routes.get(state.name);
-        if (!route) {
-            if (this.notFoundHandler) {
-                this.notFoundHandler(location.pathname);
+    getCurrentRoute() {
+        return this.currentRoute;
+    }
+
+    onChange(listener) {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+    }
+
+    notifyListeners(payload) {
+        this.listeners.forEach((listener) => {
+            try {
+                listener(payload);
+            } catch (error) {
+                console.error('Router listener error:', error);
             }
-            return;
-        }
-        const shouldContinue = await this.shouldAllowNavigation(route, state.params || {}, { replace: true, fromPop: true });
-        if (shouldContinue === false) {
-            this.skipNextPop = true;
-            history.go(1);
-            return;
-        }
-        await this.applyRoute(route, state.params || {}, { replace: true, fromPop: true, skipGuard: true });
+        });
+    }
+
+    resetManagedHistory() {
+        this.managedDepth = 0;
     }
 }
 
-export const appRouter = new Router({ base: '/' });
+const router = new AppRouter();
+
+export default router;
+export { AppRouter, DEFAULT_SETTINGS_SECTION };

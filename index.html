@@ -5,53 +5,7 @@
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
 
-    <script>
-        (function () {
-            try {
-                var preset = 'light';
-
-                var utsRaw = localStorage.getItem('userThemeSettings');
-                if (utsRaw) {
-                    try {
-                        var uts = JSON.parse(utsRaw);
-                        if (uts && typeof uts === 'object') {
-                            if (uts.preset) preset = uts.preset;
-                        }
-                    } catch (_) { /* ignore parse error */ }
-                } else {
-                    var gtsRaw = localStorage.getItem('guestThemeSettings');
-                    if (gtsRaw) {
-                        try {
-                            var gts = JSON.parse(gtsRaw);
-                            if (gts && typeof gts === 'object') {
-                                if (gts.preset) preset = gts.preset;
-                            }
-                        } catch (_) { /* ignore parse error */ }
-                    } else {
-                        var userPreset = localStorage.getItem('userThemePreset');
-                        if (userPreset) preset = userPreset;
-                    }
-                }
-
-                document.documentElement.setAttribute('data-theme', preset);
-
-                var style = document.createElement('style');
-                style.id = 'pre-theme-style';
-                var bg = preset === 'dark' ? '#1e1e1e' : '#ffffff';
-                var colorScheme = preset === 'dark' ? 'dark' : 'light';
-                style.textContent = 'html,body{background-color:' + bg + ';}';
-                document.head.appendChild(style);
-                try { document.documentElement.style.setProperty('color-scheme', colorScheme); } catch (_) { }
-            } catch (e) {
-                document.documentElement.setAttribute('data-theme', 'light');
-                try {
-                    var style = document.createElement('style');
-                    style.textContent = 'html,body{background-color:#ffffff;}';
-                    document.head.appendChild(style);
-                } catch (_) {}
-            }
-        })();
-    </script>
+    <script src="/pre-theme.js"></script>
 
     <meta name="viewport"
         content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
@@ -63,12 +17,13 @@
     <meta name="theme-color" content="#ffffff">
     <meta name="color-scheme" content="light dark">
 
-    <link rel="manifest" href="/manifest.json">
+    <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" href="/images/favicon.ico">
     <link rel="apple-touch-icon" href="/images/pwa-192x192.png">
 
     <link rel="stylesheet" href="/libs/katex.min.css">
     <link rel="stylesheet" href="/libs/github-dark.min.css">
+    <link rel="stylesheet" href="/libs/css/all.min.css">
 
     <script src="/libs/fp.min.js" defer></script>
     <script src="/libs/turndown.min.js" defer></script>
@@ -76,89 +31,7 @@
     <script src="/libs/marked.min.js" defer></script>
     <script src="/libs/purify.min.js" defer></script>
     <script src="/libs/highlight.min.js" defer></script>
-    <script>
-        window.addEventListener('DOMContentLoaded', () => {
-            try {
-                if (!window.hljs) return;
-
-                const aliasMap = {
-                    riscv: 'x86asm',
-                    asm: 'x86asm',
-                    sh: 'bash',
-                    shell: 'bash',
-                    zsh: 'bash',
-                    yml: 'yaml',
-                    js: 'javascript',
-                    jsx: 'javascript',
-                    ts: 'typescript',
-                    tsx: 'typescript',
-                    proto: 'protobuf',
-                    ps1: 'powershell',
-                    kt: 'kotlin',
-                    rs: 'rust',
-                    'c++': 'cpp',
-                    'c#': 'csharp',
-                    objc: 'objectivec',
-                    md: 'markdown',
-                    text: 'plaintext'
-                };
-
-                const requested = new Map();
-                const resolveLang = (name) => aliasMap[name] || name;
-
-                if (hljs.registerAliases) {
-                    Object.entries(aliasMap).forEach(([alias, languageName]) => {
-                        try { hljs.registerAliases(alias, { languageName }); } catch (e) { }
-                    });
-                }
-
-                function loadLanguageIfNeeded(lang) {
-                    const target = resolveLang(lang);
-                    try { if (hljs.getLanguage(target)) return Promise.resolve(true); } catch (_) { }
-                    if (requested.has(target)) return requested.get(target);
-
-                    const p = new Promise((resolve) => {
-                        const s = document.createElement('script');
-                        s.src = `/libs/languages/${target}.min.js`;
-                        s.async = true;
-                        s.onload = () => resolve(true);
-                        s.onerror = () => resolve(false);
-                        document.head.appendChild(s);
-                    });
-                    requested.set(target, p);
-                    return p;
-                }
-
-                const originalHighlightElement = hljs.highlightElement.bind(hljs);
-                hljs.highlightElement = function (el) {
-                    try {
-                        const cls = Array.from(el.classList || []);
-                        const langClass = cls.find(c => c.startsWith('language-'));
-                        const lang = langClass ? langClass.slice('language-'.length) : null;
-
-                        if (lang === 'mermaid') {
-                            el.classList.remove('language-mermaid');
-                            el.classList.add('language-plaintext');
-                            try { return originalHighlightElement(el); } catch (_) { return; }
-                        }
-                        if (lang && !hljs.getLanguage(resolveLang(lang))) {
-                            loadLanguageIfNeeded(lang).then((ok) => {
-                                if (ok) {
-                                    try { originalHighlightElement(el); } catch (_) { }
-                                } else {
-                                    el.classList.remove(`language-${lang}`);
-                                    el.classList.add('language-plaintext');
-                                    try { originalHighlightElement(el); } catch (_) { }
-                                }
-                            });
-                            return;
-                        }
-                    } catch (_) { }
-                    return originalHighlightElement(el);
-                };
-            } catch (e) { }
-        });
-    </script>
+    <script src="/highlight-enhancer.js" defer></script>
 
     <script src="/libs/katex.min.js" defer></script>
     <script src="/libs/auto-render.min.js" defer></script>
@@ -166,97 +39,7 @@
     <script type="module" src="/libs/copy-tex.mjs"></script>
 
     <!-- 主题相关标题栏颜色 -->
-    <script type="module">
-        import { Capacitor } from '@capacitor/core';
-        import { StatusBar, Style } from '@capacitor/status-bar';
-
-        const isNativeApp = Capacitor.isNativePlatform();
-
-        const THEME_CONFIG = {
-            light: {
-                statusBarStyle: Style.Light,
-                statusBarColor: '#ffffff'
-            },
-            dark: {
-                statusBarStyle: Style.Dark,
-                statusBarColor: '#1e1e1e'
-            }
-        };
-
-        const THEME_COLOR_META = {
-            light: '#ffffff',
-            dark: '#1e1e1e'
-        };
-
-        // 原生应用：更新系统状态栏（Android/iOS）
-        async function updateNativeStatusBar() {
-            if (!isNativeApp) return;
-            try {
-                const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
-                const config = THEME_CONFIG[currentTheme];
-                await StatusBar.setStyle({ style: config.statusBarStyle });
-                await StatusBar.setBackgroundColor({ color: config.statusBarColor });
-            } catch (error) {
-                console.error('StatusBar error:', error);
-            }
-        }
-
-        // PWA：更新 Windows/浏览器标题栏颜色
-        function updatePwaThemeColor() {
-            try {
-                const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
-                const color = THEME_COLOR_META[currentTheme] || '#ffffff';
-                let meta = document.querySelector('meta[name="theme-color"]');
-                if (!meta) {
-                    meta = document.createElement('meta');
-                    meta.setAttribute('name', 'theme-color');
-                    document.head.appendChild(meta);
-                }
-                meta.setAttribute('content', color);
-            } catch (e) {
-                console.error('theme-color meta update error:', e);
-            }
-        }
-
-        function updatePreThemeBaseBg() {
-            try {
-                const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
-                const bg = currentTheme === 'dark' ? '#1e1e1e' : '#ffffff';
-                const colorScheme = currentTheme === 'dark' ? 'dark' : 'light';
-                const styleEl = document.getElementById('pre-theme-style');
-                if (styleEl) styleEl.textContent = 'html,body{background-color:' + bg + ';}';
-                document.documentElement.style.setProperty('color-scheme', colorScheme);
-            } catch (e) {
-                // no-op
-            }
-        }
-
-        function watchThemeChanges() {
-            updateNativeStatusBar();
-            updatePwaThemeColor();
-            updatePreThemeBaseBg();
-
-            const observer = new MutationObserver((mutations) => {
-                mutations.forEach((mutation) => {
-                    if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
-                        updateNativeStatusBar();
-                        updatePwaThemeColor();
-                        updatePreThemeBaseBg();
-                    }
-                });
-            });
-            observer.observe(document.documentElement, {
-                attributes: true,
-                attributeFilter: ['data-theme']
-            });
-        }
-
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', watchThemeChanges);
-        } else {
-            watchThemeChanges();
-        }
-    </script>
+    <script type="module" src="/src/native-statusbar.js"></script>
 
     <script type="module" src="/src/api-config.js"></script>
     <script type="module" src="/src/main.js"></script>
@@ -277,124 +60,6 @@
                 </svg>
             </div>
             <div class="loading-text" data-i18n-key="ui.loadingCoreResources">正在加载核心资源...</div>
-        </div>
-    </div>
-
-    <div id="auth-overlay" class="auth-overlay">
-        <div class="auth-container">
-            <div class="auth-logo">
-                <h1 data-i18n-key="ui.appTitle">LittleAIBox</h1>
-                <p data-i18n-key="ui.appSubtitle">智能AI对话助手</p>
-            </div>
-
-            <div class="auth-tabs" id="auth-tabs">
-                <div class="auth-tab-indicator"></div>
-                <button class="auth-tab active" data-tab="login" data-i18n-key="login">登录</button>
-                <button class="auth-tab" data-tab="register" data-i18n-key="register">注册</button>
-            </div>
-
-            <div class="auth-forms-clipper">
-                <div class="auth-forms-container" id="auth-forms-container">
-                    <form id="login-form" class="auth-form active">
-                        <div class="form-group">
-                            <label for="login-email" data-i18n-key="emailLabel">邮箱</label>
-                            <input type="email" id="login-email" name="email" placeholder="请输入邮箱"
-                                data-i18n-placeholder-key="emailPlaceholder" autocomplete="username" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="login-password" data-i18n-key="passwordLabel">密码</label>
-                            <input type="password" id="login-password" name="password" placeholder="请输入密码"
-                                data-i18n-placeholder-key="passwordPlaceholder" autocomplete="current-password"
-                                required>
-                            <div style="text-align: right; margin-top: 5px;">
-                                <button type="button" id="forgot-password-btn"
-                                    style="background: none; border: none; color: #f44336; cursor: pointer; text-decoration: underline; font-size: 14px;"
-                                    data-i18n-key="forgotPassword">忘记密码？</button>
-                            </div>
-                        </div>
-                        <button type="submit" class="auth-submit" data-i18n-key="loginButton">登录</button>
-                    </form>
-
-                    <form id="register-form" class="auth-form">
-                        <div class="form-group">
-                            <label for="register-email" data-i18n-key="emailLabel">邮箱</label>
-                            <input type="email" id="register-email" name="registerEmail" placeholder="请输入邮箱"
-                                data-i18n-placeholder-key="emailPlaceholder" autocomplete="username" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="register-username" data-i18n-key="usernameLabel">用户名（可选）</label>
-                            <input type="text" id="register-username" name="registerUsername" placeholder="请输入用户名"
-                                data-i18n-placeholder-key="usernamePlaceholder" autocomplete="username">
-                        </div>
-                        <div class="form-group">
-                            <label for="register-password" data-i18n-key="passwordLabel">密码</label>
-                            <input type="password" id="register-password" name="registerPassword" placeholder="请输入密码"
-                                data-i18n-placeholder-key="passwordPlaceholder" autocomplete="new-password" required
-                                minlength="6">
-                        </div>
-                        <div class="form-group">
-                            <label for="register-confirm-password" data-i18n-key="confirmPasswordLabel">确认密码</label>
-                            <input type="password" id="register-confirm-password" name="registerConfirmPassword"
-                                placeholder="请再次输入密码" data-i18n-placeholder-key="confirmPasswordPlaceholder"
-                                autocomplete="new-password" required>
-                        </div>
-                        <button type="submit" class="auth-submit" data-i18n-key="registerButton">注册</button>
-                    </form>
-                </div>
-
-                <form id="verify-form" class="auth-form">
-                    <div class="form-group">
-                        <label for="verify-code" data-i18n-key="verificationCodeSent">验证码已发送至：<span
-                                id="verify-email-display"></span></label>
-                        <input type="text" id="verify-code" name="verificationCode" placeholder="请输入6位验证码"
-                            data-i18n-placeholder-key="verificationCodePlaceholder" autocomplete="one-time-code"
-                            required maxlength="6">
-                        <p style="font-size: 12px; color: #666; margin-top: 5px;" data-i18n-key="verificationCodeHint">
-                            验证码有效期为10分钟</p>
-                    </div>
-                    <button type="submit" class="auth-submit" data-i18n-key="verifyAndRegisterButton">验证并完成注册</button>
-                    <button type="button" id="resend-code-btn"
-                        style="background: none; border: 1px solid var(--border-color); color: var(--text-color); width: 100%; padding: 12px; border-radius: 8px; margin-top: 8px;"
-                        data-i18n-key="resendCodeButton">重新发送验证码</button>
-                </form>
-
-                <form id="forgot-password-form" class="auth-form">
-                    <div class="form-group">
-                        <label for="forgot-email" data-i18n-key="emailLabel">邮箱</label>
-                        <input type="email" id="forgot-email" name="forgotEmail" placeholder="请输入注册邮箱"
-                            data-i18n-placeholder-key="forgotEmailPlaceholder" autocomplete="username" required>
-                    </div>
-                    <button type="submit" class="auth-submit" data-i18n-key="sendResetLinkButton">发送重置链接</button>
-                    <button type="button" id="back-to-login-btn"
-                        style="background: none; border: 1px solid var(--border-color); color: var(--text-color); width: 100%; padding: 12px; border-radius: 8px; margin-top: 8px;"
-                        data-i18n-key="backToLoginButton">返回登录</button>
-                </form>
-
-                <form id="reset-password-form" class="auth-form">
-                    <input type="text" id="reset-username-autocomplete-fix" name="username"
-                        style="position: absolute; left: -9999px; opacity: 0;" autocomplete="username" tabindex="-1">
-                    <div class="form-group">
-                        <label for="new-password" data-i18n-key="newPasswordLabel">新密码</label>
-                        <input type="password" id="new-password" name="newPassword" placeholder="请输入新密码(至少6位)"
-                            data-i18n-placeholder-key="newPasswordPlaceholder" autocomplete="new-password" required
-                            minlength="6">
-                    </div>
-                    <div class="form-group">
-                        <label for="confirm-new-password" data-i18n-key="confirmNewPasswordLabel">确认新密码</label>
-                        <input type="password" id="confirm-new-password" name="confirmNewPassword"
-                            placeholder="请再次输入新密码" data-i18n-placeholder-key="confirmNewPasswordPlaceholder"
-                            autocomplete="new-password" required>
-                    </div>
-                    <button type="submit" class="auth-submit" data-i18n-key="resetPasswordButton">重置密码</button>
-                </form>
-            </div>
-
-            <div class="auth-footer">
-                <p><button type="button" id="guest-continue"
-                        style="background: none; border: none; color: var(--accent-color); cursor: pointer; text-decoration: underline;"
-                        data-i18n-key="continueAsGuest">以访客身份继续体验</button>
-                </p>
-            </div>
         </div>
     </div>
 
@@ -1066,32 +731,198 @@
                     </div>
 
                     <div id="security-settings-page" class="settings-page">
-                        <div class="settings-page-grid">
+                        <div class="settings-page-grid security-settings-grid">
                             <div class="settings-description">
                                 <h3 data-i18n-key="ui.changePassword">修改密码</h3>
                                 <p data-i18n-key="ui.changePasswordDesc">为了您的账户安全，建议定期更换密码。新密码长度请不要少于6位。</p>
                             </div>
                             <div class="settings-form-area">
-                                <form id="change-password-form" class="settings-form">
+                                <div class="security-inline-group">
+                                    <button id="security-open-password-modal" class="btn-secondary"
+                                        data-i18n-key="ui.securityPasswordAction">设置 / 修改</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-page-grid security-settings-grid">
+                            <div class="settings-description">
+                                <h3 data-i18n-key="ui.securityTotpTitle">验证器</h3>
+                                <p data-i18n-key="ui.securityTotpDesc">使用 6 位动态验证码保护登录。</p>
+                            </div>
+                            <div class="settings-form-area">
+                                <div class="security-card-row security-mfa-header-row">
+                                    <label class="settings-toggle">
+                                        <input type="checkbox" id="security-mfa-toggle">
+                                        <span class="settings-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div id="security-mfa-active" class="security-inline-group" style="display: none;">
+                                    <div class="security-support-card">
+                                        <div>
+                                            <strong data-i18n-key="ui.securityBackupTitle">备份代码</strong>
+                                            <p data-i18n-key="ui.securityBackupDesc">丢失手机时可使用</p>
+                                        </div>
+                                        <button class="btn-secondary" id="security-open-backup-modal"
+                                            data-i18n-key="ui.securityViewBackup">查看</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="security-modal" id="security-password-modal">
+                            <div class="security-modal-content">
+                                <div class="security-modal-header">
+                                    <h3 data-i18n-key="ui.changePassword">修改密码</h3>
+                                    <button class="security-modal-close" data-close-modal>&times;</button>
+                                </div>
+                                <p class="security-modal-subtitle" data-i18n-key="ui.changePasswordHint">
+                                    如果您是通过第三方登录且从未设置过密码，请先在此创建一个登录密码，用于后续邮箱登录和安全验证。
+                                </p>
+                                <form id="change-password-form" class="security-form">
                                     <input type="text" id="change-username-autocomplete-fix" name="username"
                                         style="position: absolute; left: -9999px; opacity: 0;" autocomplete="username"
                                         tabindex="-1">
-                                    <div class="form-group">
-                                        <input type="password" id="current-password" name="currentPassword"
-                                            placeholder="当前密码" data-i18n-placeholder-key="ui.currentPassword"
-                                            autocomplete="current-password">
-                                        <input type="password" id="new-password-setting" name="newPassword"
-                                            placeholder="新密码（至少6位）" data-i18n-placeholder-key="ui.newPassword"
-                                            minlength="6" autocomplete="new-password">
-                                        <input type="password" id="confirm-new-password-setting"
-                                            name="confirmNewPassword" placeholder="确认新密码"
-                                            data-i18n-placeholder-key="ui.confirmNewPassword"
-                                            autocomplete="new-password">
-                                    </div>
+                                    <input type="password" id="current-password" name="currentPassword"
+                                        placeholder="当前密码" data-i18n-placeholder-key="ui.currentPassword"
+                                        autocomplete="current-password">
+                                    <input type="password" id="new-password-setting" name="newPassword"
+                                        placeholder="新密码（至少6位）" data-i18n-placeholder-key="ui.newPassword" minlength="6"
+                                        autocomplete="new-password">
+                                    <input type="password" id="confirm-new-password-setting" name="confirmNewPassword"
+                                        placeholder="确认新密码" data-i18n-placeholder-key="ui.confirmNewPassword"
+                                        autocomplete="new-password">
                                     <button type="submit" id="change-password-btn" class="btn-secondary"
                                         data-i18n-key="ui.changePasswordBtn">修改密码</button>
-                                    <p id="password-change-status" class="usage-info" style="margin-top: 10px;"></p>
+                                    <p id="password-change-status" class="usage-info"></p>
                                 </form>
+                            </div>
+                        </div>
+
+                        <div class="security-modal" id="security-mfa-modal">
+                            <div class="security-modal-content">
+                                <div class="security-modal-header">
+                                    <h3 data-i18n-key="ui.securityConnectMfa">连接验证器</h3>
+                                    <button class="security-modal-close" data-close-modal>&times;</button>
+                                </div>
+                                <div class="security-qr-box">
+                                    <canvas id="security-qr-canvas" width="200" height="200"></canvas>
+                                </div>
+                                <button type="button" class="manual-code-link" id="security-show-manual-code"
+                                    data-i18n-key="ui.securityManualCodeLink" disabled>无法扫码？手动输入密钥</button>
+                                <div class="security-code-field">
+                                    <label for="security-mfa-code-box-1" data-i18n-key="ui.securityInputCode">输入 6
+                                        位验证码</label>
+                                    <div class="security-code-inputs" data-code-target="security-mfa-code" role="group">
+                                        <input id="security-mfa-code-box-1" name="security-mfa-code-digit-1" type="text"
+                                            inputmode="numeric" maxlength="1" pattern="[0-9]*" data-code-box
+                                            aria-label="Code digit 1">
+                                        <input id="security-mfa-code-box-2" name="security-mfa-code-digit-2" type="text"
+                                            inputmode="numeric" maxlength="1" pattern="[0-9]*" data-code-box
+                                            aria-label="Code digit 2">
+                                        <input id="security-mfa-code-box-3" name="security-mfa-code-digit-3" type="text"
+                                            inputmode="numeric" maxlength="1" pattern="[0-9]*" data-code-box
+                                            aria-label="Code digit 3">
+                                        <input id="security-mfa-code-box-4" name="security-mfa-code-digit-4" type="text"
+                                            inputmode="numeric" maxlength="1" pattern="[0-9]*" data-code-box
+                                            aria-label="Code digit 4">
+                                        <input id="security-mfa-code-box-5" name="security-mfa-code-digit-5" type="text"
+                                            inputmode="numeric" maxlength="1" pattern="[0-9]*" data-code-box
+                                            aria-label="Code digit 5">
+                                        <input id="security-mfa-code-box-6" name="security-mfa-code-digit-6" type="text"
+                                            inputmode="numeric" maxlength="1" pattern="[0-9]*" data-code-box
+                                            aria-label="Code digit 6">
+                                    </div>
+                                    <input type="hidden" id="security-mfa-code" maxlength="6"
+                                        autocomplete="one-time-code">
+                                </div>
+                                <button class="btn-secondary" id="security-verify-mfa"
+                                    data-i18n-key="ui.securityVerifyCodeBtn">验证</button>
+                            </div>
+                        </div>
+
+                        <div class="security-modal" id="security-backup-modal">
+                            <div class="security-modal-content">
+                                <div class="security-modal-header">
+                                    <h3 data-i18n-key="ui.securityBackupModalTitle">备份代码</h3>
+                                    <button class="security-modal-close" data-close-modal>&times;</button>
+                                </div>
+                                <div class="security-backup-list"></div>
+                                <p class="security-backup-hint" data-i18n-key="ui.securityBackupModalWarning"
+                                    style="margin: 8px 0 16px 0; font-size: 12px; color: var(--secondary-text-color, #666); line-height: 1.5; text-align: center;">
+                                </p>
+                                <button class="btn-secondary" id="security-copy-backup"
+                                    data-i18n-key="ui.securityDownloadBackup">下载代码</button>
+                            </div>
+                        </div>
+
+                        <div class="security-modal" id="security-confirm-modal">
+                            <div class="security-modal-content">
+                                <div class="security-modal-header">
+                                    <h3 id="security-confirm-title" data-i18n-key="ui.securityDisableConfirmTitle">
+                                        关闭验证器</h3>
+                                    <button class="security-modal-close" data-close-modal>&times;</button>
+                                </div>
+                                <p id="security-confirm-message" class="security-modal-subtitle"
+                                    data-i18n-key="ui.securityDisableConfirmMessage">
+                                    关闭后，登录将仅依赖密码。
+                                </p>
+                                <div id="security-confirm-code-field" class="security-code-field"
+                                    style="display: none;">
+                                    <label for="security-confirm-code-box-1" data-i18n-key="ui.securityInputCode">输入 6
+                                        位验证码</label>
+                                    <div class="security-code-inputs" data-code-target="security-confirm-code"
+                                        role="group">
+                                        <input id="security-confirm-code-box-1" name="security-confirm-code-digit-1"
+                                            type="text" inputmode="numeric" maxlength="1" pattern="[0-9]*" data-code-box
+                                            aria-label="Code digit 1">
+                                        <input id="security-confirm-code-box-2" name="security-confirm-code-digit-2"
+                                            type="text" inputmode="numeric" maxlength="1" pattern="[0-9]*" data-code-box
+                                            aria-label="Code digit 2">
+                                        <input id="security-confirm-code-box-3" name="security-confirm-code-digit-3"
+                                            type="text" inputmode="numeric" maxlength="1" pattern="[0-9]*" data-code-box
+                                            aria-label="Code digit 3">
+                                        <input id="security-confirm-code-box-4" name="security-confirm-code-digit-4"
+                                            type="text" inputmode="numeric" maxlength="1" pattern="[0-9]*" data-code-box
+                                            aria-label="Code digit 4">
+                                        <input id="security-confirm-code-box-5" name="security-confirm-code-digit-5"
+                                            type="text" inputmode="numeric" maxlength="1" pattern="[0-9]*" data-code-box
+                                            aria-label="Code digit 5">
+                                        <input id="security-confirm-code-box-6" name="security-confirm-code-digit-6"
+                                            type="text" inputmode="numeric" maxlength="1" pattern="[0-9]*" data-code-box
+                                            aria-label="Code digit 6">
+                                    </div>
+                                    <input type="hidden" id="security-confirm-code" maxlength="6">
+                                </div>
+                                <div class="security-modal-actions">
+                                    <button class="btn-secondary subtle" data-close-modal
+                                        data-i18n-key="common.cancel">取消</button>
+                                    <button class="btn-secondary" id="security-confirm-btn"
+                                        data-i18n-key="common.confirm">确认</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="security-modal" id="security-manual-code-modal">
+                            <div class="security-modal-content">
+                                <div class="security-modal-header">
+                                    <h3 data-i18n-key="ui.securityManualCodeModalTitle">手动输入密钥</h3>
+                                    <button class="security-modal-close" data-close-modal>&times;</button>
+                                </div>
+                                <p class="security-manual-code-text" id="security-manual-code-text"
+                                    data-i18n-key="ui.securityManualCodeLabel">
+                                    无法扫码？请使用下方密钥手动添加。
+                                </p>
+                                <div class="security-manual-code" id="security-manual-code-wrapper">
+                                    <code id="security-manual-code-value" class="security-manual-code-value">····</code>
+                                    <button class="security-manual-code-copy" type="button"
+                                        id="security-copy-manual-code" data-i18n-aria-label="ui.securityCopyManualCode"
+                                        aria-label="复制密钥">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                            <path
+                                                d="M7 3h9a2 2 0 0 1 2 2v2h-2V5H7v12h2v2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm5 4h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zm0 2v10h6V9h-6z" />
+                                        </svg>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1377,7 +1208,8 @@
                                     </path>
                                 </svg>
                                 <h3 data-i18n-key="donation.title">支持 LittleAIBox</h3>
-                                <p data-i18n-key="donation.message">如果您觉得这个应用对您有帮助，可以考虑捐赠一小笔费用来支持开发者的持续维护和服务器开销。感谢您的支持！
+                                <p data-i18n-key="donation.message">
+                                    如果您觉得这个应用对您有帮助，可以考虑捐赠一小笔费用来支持开发者的持续维护和服务器开销。感谢您的支持！
                                 </p>
                             </div>
 

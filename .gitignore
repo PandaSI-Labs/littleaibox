@@ -1,35 +1,53 @@
-# 依赖
-/node_modules
+# Keystore files 
+*.keystore
+*.jks
 
-# 构建产物
-/dist
-/.vite/
+# Keystore properties with passwords
+android/keystore.properties
+keystore.properties
 
-# 环境变量
-.env
-.env.local
-.env.*.local
-*.env
+# Node modules
+node_modules/
 
-# 日志文件
-*.log
-npm-debug.log*
+# Build outputs
+dist/
+.wrangler/
+android/build/
+android/app/build/
+android/.gradle/
 
-# Cloudflare
-/.wrangler
-/functions
-wrangler.toml
+# IDE
+.idea/
+.vscode/
+*.iml
 
-# 操作系统文件
+# OS
 .DS_Store
 Thumbs.db
 
-# Android & Capacitor
-/android/build/
-/android/app/build/
-/android/app/.cxx/
-/android/local.properties
-/android/.gradle/
-/android/.idea/
-/android/capacitor-cordova-android-plugins/
-.capacitor/
+# Local environment
+.env
+.env.local
+.env.*.local
+
+# Mobile app binaries (if you don't want to upload them)
+*.apk
+*.ipa
+*.aab
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Coverage reports
+coverage/
+.nyc_output/
+

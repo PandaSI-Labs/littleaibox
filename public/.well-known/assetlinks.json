@@ -1,0 +1,14 @@
+[
+    {
+        "relation": [
+            "delegate_permission/common.handle_all_urls"
+        ],
+        "target": {
+            "namespace": "android_app",
+            "package_name": "com.littleaibox.app",
+            "sha256_cert_fingerprints": [
+                "C2:D6:F4:C4:88:0C:34:0D:8A:AA:B7:86:BA:F6:4D:FA:1E:D1:59:50:B0:08:6E:48:5E:DC:E7:6C:D6:B6:CA:BC"
+            ]
+        }
+    }
+]

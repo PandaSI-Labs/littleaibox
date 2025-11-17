@@ -1,6 +1,6 @@
 {
   "name": "littleaibox",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -26,6 +26,7 @@
     "d3": "^7.9.0",
     "idb": "^8.0.3",
     "jose": "^5.2.0",
+    "qrcode-generator": "^2.0.4",
     "tslib": "^2.8.1",
     "wrangler": "^4.37.0"
   },

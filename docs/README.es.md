@@ -94,14 +94,18 @@ LittleAIBox es perfecto para:
 ## ✨ Características Principales
 
 ### 🎯 **Procesamiento Inteligente de Archivos**
-- **Documentos de Office**: Analiza archivos Word (.docx), PDF, Excel (.xlsx) y **PowerPoint (.pptx)** directamente en el navegador
+- **Documentos de Office**: Analiza archivos Word (.docx), PDF, Excel (.xlsx, .xls, .csv) y **PowerPoint (.pptx)** directamente en el navegador
 - **Medios Enriquecidos**: Soporte para imágenes y archivos Markdown
+- **Archivos de Texto Plano**: Soporte para varios formatos de archivos de texto
 - **Cero Subidas Requeridas**: Todo el procesamiento de archivos ocurre en el cliente para máxima privacidad
 
 ### 🔐 **Diseño Priorizando Privacidad**
 - **No Requiere Registro**: Comienza a usar inmediatamente sin crear una cuenta
+- **Múltiples Opciones de Inicio de Sesión**: Email/contraseña, OAuth (Google, GitHub) o modo invitado
+- **Autenticación Multi-Factor (MFA)**: Soporte opcional de aplicación autenticadora TOTP con códigos de respaldo
 - **Auto-Configuración de Clave API**: Usa tu propia clave API de Gemini, con control total de datos
 - **Almacenamiento Flexible**: Las claves API de usuarios registrados se persisten para sincronización multi-dispositivo; las claves de usuarios invitados se almacenan solo localmente y se borran automáticamente al refrescar la página, garantizando privacidad
+- **Gestión de Contraseñas**: Restablecimiento seguro de contraseña mediante verificación por email
 
 ### 🌍 **Acceso Universal**
 - **Solución de Restricción Regional**: Enrutamiento de retransmisión de servicio integrado para evitar limitaciones geográficas
@@ -243,14 +247,17 @@ graph TB
 - **Gráficos**: Mermaid
 - **Análisis de Archivos**: mammoth (Word), PDF.js, xlsx, pptx2html
 - **Almacenamiento**: IndexedDB + localStorage
+- **Autenticación**: Autenticación basada en JWT con soporte OAuth 2.0 (Google, GitHub)
+- **Seguridad**: Soporte MFA/TOTP con códigos de respaldo
 
 ### 💾 Procesamiento del Lado del Cliente
 
 Todo el análisis y procesamiento de archivos ocurre completamente en el navegador:
 - **Análisis PPTX**: Extracción completa de contenido de PowerPoint
 - **Lectura PDF**: Extracción de texto y metadatos
-- **Procesamiento Excel**: Análisis de datos de hojas de cálculo
-- **Manejo de Imágenes**: Procesamiento de imágenes en el cliente
+- **Procesamiento Excel**: Análisis de datos de hojas de cálculo (.xlsx, .xls, .csv)
+- **Documentos Word**: Análisis de archivos DOCX con preservación de formato
+- **Manejo de Imágenes**: Procesamiento de imágenes en el cliente y codificación base64
 
 ### Soporte Offline
 
@@ -284,10 +291,17 @@ Aunque estoy comprometido con la transparencia, el backend permanece cerrado por
 #### Capa de Base de Datos Principal
 
 **Cloudflare D1 (SQLite)**
-- Sistema completo de autenticación de usuarios (correo/contraseña) con hash seguro de contraseñas y verificación
+- Sistema completo de autenticación de usuarios con múltiples métodos de inicio de sesión:
+  - Email/contraseña con hash seguro bcrypt
+  - Integración OAuth 2.0 (Google, GitHub)
+  - Modo invitado para uso anónimo
+- Soporte de Autenticación Multi-Factor (MFA):
+  - Integración de aplicación autenticadora TOTP
+  - Generación y gestión de códigos de respaldo
 - Gestión de sesiones JWT para autenticación sin estado e inicio de sesión multi-dispositivo
-- Persistencia de historial de chat con soporte de consulta y recuperación
-- Gestión de configuración y preferencias de usuario
+- Flujo de restablecimiento de contraseña con verificación por email
+- Persistencia del historial de chat con soporte de consulta y recuperación
+- Gestión de configuración y preferencias del usuario
 
 #### Principal: Pool Elástico de Claves API (APIKeyPool)
 
@@ -315,6 +329,7 @@ El sistema detecta y evita automáticamente restricciones regionales, claves inv
 **Servicios de Email**
 - **Resend**: Para flujos seguros de verificación de correo y restablecimiento de contraseña
 - Soporta plantillas HTML y contenido de correo internacionalizado
+- Recuperación y verificación de cuenta basada en email
 
 **Búsqueda y Contenido**
 - **Brave Search API**: Resultados de búsqueda web de alta calidad para mejorar la comprensión del contexto de IA
@@ -355,9 +370,15 @@ LittleAIBox/
 ├── src/                    # Código fuente
 │   ├── main.js            # Lógica principal de la aplicación
 │   ├── api-config.js      # Configuración de API
+│   ├── auth-oauth.js     # Autenticación OAuth (Google, GitHub)
+│   ├── auth-template.js  # Plantillas de UI de autenticación
+│   ├── auth.css          # Estilos de autenticación
 │   ├── db.js              # Envoltorio de IndexedDB
 │   ├── i18n.js            # Internacionalización
 │   ├── mermaid-renderer.js # Renderizado de diagramas
+│   ├── mfa-login.js      # Autenticación multi-factor
+│   ├── oauth-flow.js     # Manejo de flujo OAuth
+│   ├── router.js         # Enrutamiento del lado del cliente
 │   ├── style.css          # Estilos globales
 │   └── sw-custom.js       # Service Worker
 ├── public/                 # Recursos estáticos
@@ -366,8 +387,10 @@ LittleAIBox/
 │   ├── images/            # Imágenes e iconos
 │   └── manifest.webmanifest # Manifesto PWA
 ├── appshow/                # Capturas de pantalla por idioma
+├── docs/                   # Documentación (multi-idioma)
 ├── capacitor.config.json   # Configuración de aplicación móvil
 ├── vite.config.js          # Configuración de construcción
+├── tailwind.config.js      # Configuración de Tailwind CSS
 └── package.json            # Dependencias
 ```
 
@@ -419,6 +442,11 @@ npm run build
    - Ingresa tu clave API de Gemini
    - ¡Guarda y comienza a chatear!
 
+3. **Opciones de Cuenta** (Opcional):
+   - **Crear Cuenta**: Regístrate con email/contraseña o usa OAuth (Google/GitHub)
+   - **Habilitar MFA**: Ve a Configuración → Seguridad para configurar la aplicación autenticadora TOTP
+   - **Modo Invitado**: Usa sin registro (las claves API se almacenan solo localmente)
+
 ### Solución de Problemas
 
 **Problemas Comunes:**
@@ -461,7 +489,7 @@ npx cap open android
 
 ## 🤝 Contribuir
 
-¡Bienvenidas las contribuciones! Ya sea que estés corrigiendo errores, agregando características o mejorando la documentación, cada contribución hace que LittleAIBox sea mejor.
+¡Bienvenida la contribución! Ya sea que estés corrigiendo errores, agregando características o mejorando la documentación, cada contribución hace que LittleAIBox sea mejor.
 
 ### Cómo Contribuir
 
@@ -499,8 +527,13 @@ Estoy trabajando activamente en:
 
 - **Procesamiento del Lado del Cliente**: El análisis de archivos ocurre en tu navegador
 - **Almacenamiento Local**: El historial de chat se almacena localmente (sincronización en la nube opcional)
+- **Autenticación Segura**：
+  - Múltiples opciones de inicio de sesión (email/contraseña, OAuth)
+  - MFA/TOTP opcional para mayor seguridad
+  - Restablecimiento seguro de contraseña mediante verificación por email
 - **Sin Seguimiento**: Diseño priorizando privacidad
 - **Código Abierto**: Código transparente y auditable
+- **Seguridad de Claves API**: Las claves API de usuario se cifran y almacenan de forma segura
 
 🧠 **Todo el procesamiento ocurre localmente o a través de tu clave API configurada — ningún dato abandona tu dispositivo sin tu consentimiento.**
 
@@ -523,4 +556,3 @@ Hecho con ❤️ por diandiancha
 💬 **¿Preguntas o comentarios? [Abre un issue](https://github.com/diandiancha/LittleAIBox/issues) — ¡Leo cada uno de ellos!**
 
 </div>
-

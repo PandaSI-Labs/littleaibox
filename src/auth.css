@@ -1,0 +1,226 @@
+/* ==================== Authentication Styles ====================
+ * 认证模块的独立样式文件
+ * 消除内联样式，提高可维护性和可复用性
+ */
+
+/* ==================== 表单链接按钮 ==================== */
+.auth-form-link-wrapper {
+    text-align: right;
+    margin-top: 5px;
+}
+
+.auth-link-button {
+    background: none;
+    border: none;
+    color: #f44336;
+    cursor: pointer;
+    text-decoration: underline;
+    font-size: 14px;
+    padding: 0;
+    transition: opacity 0.2s ease;
+}
+
+.auth-link-button:hover {
+    opacity: 0.8;
+}
+
+/* ==================== 表单提示文本 ==================== */
+.auth-form-hint {
+    font-size: 12px;
+    color: #666;
+    margin-top: 5px;
+    margin-bottom: 0;
+}
+
+/* 深色模式下的提示文本 */
+[data-theme="dark"] .auth-form-hint {
+    color: #999;
+}
+
+/* ==================== 次要按钮样式 ==================== */
+.auth-secondary-button {
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    width: 100%;
+    padding: 12px;
+    border-radius: 8px;
+    margin-top: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.auth-secondary-button:hover {
+    background-color: var(--hover-bg-color, rgba(0, 0, 0, 0.05));
+}
+
+[data-theme="dark"] .auth-secondary-button:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* ==================== 访客按钮样式 ==================== */
+.auth-footer button {
+    background: none;
+    border: none;
+    color: var(--accent-color);
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 0;
+    font-size: 14px;
+    transition: opacity 0.2s ease;
+}
+
+.auth-footer button:hover {
+    opacity: 0.8;
+}
+
+/* ==================== 自动填充修复 ==================== */
+.auth-autocomplete-fix {
+    position: absolute;
+    left: -9999px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* ==================== 响应式设计 ==================== */
+@media (max-width: 640px) {
+    .auth-form-hint {
+        font-size: 11px;
+    }
+
+    .auth-link-button {
+        font-size: 13px;
+    }
+}
+
+/* ==================== 无障碍优化 ==================== */
+.auth-link-button:focus,
+.auth-secondary-button:focus {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+/* ==================== 动画效果 ==================== */
+.auth-secondary-button,
+.auth-link-button {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ==================== 禁用状态 ==================== */
+.auth-secondary-button:disabled,
+.auth-link-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ==================== 社交登录分隔符 ==================== */
+.social-login-divider {
+    display: flex;
+    align-items: center;
+    text-align: center;
+    margin: 24px 0 20px 0;
+    color: var(--secondary-text-color);
+    font-size: 13px;
+}
+
+.social-login-divider::before,
+.social-login-divider::after {
+    content: '';
+    flex: 1;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.social-login-divider span {
+    padding: 0 12px;
+}
+
+/* ==================== 社交登录图标按钮 ==================== */
+.social-login-icons {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.social-icon-btn {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background-color: var(--sidebar-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 24px;
+}
+
+.social-icon-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="dark"] .social-icon-btn:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Google 图标按钮 */
+.google-icon i {
+    color: #4285f4;
+}
+
+.google-icon:hover {
+    background-color: #4285f4;
+    border-color: #4285f4;
+}
+
+.google-icon:hover i {
+    color: white;
+}
+
+/* GitHub 图标按钮 */
+.github-icon i {
+    color: #333;
+}
+
+.github-icon:hover {
+    background-color: #333;
+    border-color: #333;
+}
+
+.github-icon:hover i {
+    color: white;
+}
+
+[data-theme="dark"] .github-icon i {
+    color: #fff;
+}
+
+[data-theme="dark"] .github-icon:hover {
+    background-color: #fff;
+    border-color: #fff;
+}
+
+[data-theme="dark"] .github-icon:hover i {
+    color: #333;
+}
+
+/* 响应式设计 */
+@media (max-width: 640px) {
+    .social-login-icons {
+        gap: 12px;
+    }
+
+    .social-icon-btn {
+        width: 48px;
+        height: 48px;
+        font-size: 20px;
+    }
+
+    .social-login-divider {
+        margin: 20px 0 16px 0;
+        font-size: 12px;
+    }
+}

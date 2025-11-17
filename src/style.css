@@ -3725,14 +3725,376 @@ html[data-theme='dark'] .dropdown-item.active {
  * 设置 - 安全页 (Settings - Security Page)
  * =============================================================================
  */
-
-#security-settings-page #current-password,
-#security-settings-page #new-password-setting {
-    margin-bottom: 10px;
+.security-settings-grid {
+    align-items: center;
 }
 
-#password-change-status.usage-info {
-    margin-top: 10px;
+.security-card-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.security-card h3 {
+    margin: 0;
+    font-size: 16px;
+    color: var(--primary-text-color);
+}
+
+.security-card p {
+    margin: 4px 0 0 0;
+    font-size: 13px;
+    color: var(--secondary-text-color);
+}
+
+.security-inline-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.security-action-group {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.security-support-card {
+    width: 100%;
+    margin-top: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--hover-bg);
+}
+
+.security-support-card button {
+    background: var(--accent-color);
+    color: #fff;
+    border-color: transparent;
+    font-weight: 600;
+    min-width: 96px;
+}
+
+.security-support-card button:hover {
+    background: var(--accent-color);
+    color: #fff;
+}
+
+.security-support-card .btn-secondary:hover:not(:disabled) {
+    background: var(--accent-color);
+    color: #fff;
+}
+
+.manual-code-link {
+    border: none;
+    background: none;
+    color: var(--accent-color);
+    font-size: 13px;
+    margin-top: 12px;
+    align-self: flex-start;
+    padding: 4px 0;
+    cursor: pointer;
+}
+
+.manual-code-link[disabled] {
+    color: var(--secondary-text-color);
+    cursor: not-allowed;
+}
+
+.security-manual-code {
+    width: 100%;
+    margin-top: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 12px 14px;
+    background: var(--hover-bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+}
+
+.security-manual-code-text {
+    color: var(--secondary-text-color);
+    width: 100%;
+}
+
+.security-manual-code-value {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 18px;
+    letter-spacing: 0.4em;
+    white-space: pre-wrap;
+    word-break: break-word;
+    width: 100%;
+    text-align: center;
+}
+
+.security-manual-code-copy {
+    border: none;
+    background: var(--accent-color);
+    padding: 8px 18px;
+    border-radius: 999px;
+    cursor: pointer;
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s ease, color 0.2s ease;
+    align-self: center;
+    min-width: 120px;
+}
+
+.security-manual-code-copy:hover {
+    background: var(--accent-color);
+    filter: brightness(1.05);
+    color: #fff;
+}
+
+.security-manual-code-copy svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+    margin-right: 6px;
+}
+
+.security-device-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.security-device {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 12px 14px;
+    background: var(--main-bg);
+}
+
+.security-device h4 {
+    margin: 0 0 6px 0;
+    font-size: 14px;
+    color: var(--primary-text-color);
+}
+
+.security-device p {
+    margin: 0;
+    color: var(--secondary-text-color);
+    font-size: 12px;
+}
+
+.security-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 9999;
+}
+
+.security-modal.active {
+    display: flex;
+}
+
+.security-modal-content {
+    width: min(420px, calc(100% - 32px));
+    background: var(--sidebar-bg);
+    border-radius: 20px;
+    border: 1px solid var(--border-color);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+
+.security-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.security-modal-subtitle {
+    margin: 4px 0 16px;
+    font-size: 14px;
+    color: var(--secondary-text-color);
+    line-height: 1.6;
+}
+
+.security-modal-close {
+    border: none;
+    background: transparent;
+    font-size: 20px;
+    cursor: pointer;
+    color: var(--secondary-text-color);
+}
+
+.security-form label {
+    margin-top: 8px;
+    font-weight: 500;
+    color: var(--secondary-text-color);
+}
+
+.security-form input {
+    display: block;
+    width: 100%;
+    margin-bottom: 14px;
+}
+
+.security-form button {
+    width: 100%;
+    margin-top: 8px;
+}
+
+.security-modal-subtitle,
+.security-password-hint {
+    margin: 0 0 8px 0;
+    color: var(--secondary-text-color);
+    line-height: 1.6;
+}
+
+.security-qr-box {
+    display: flex;
+    justify-content: center;
+    padding: 12px;
+    border-radius: 12px;
+    background: var(--hover-bg);
+}
+
+.security-backup-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    font-family: monospace;
+    font-size: 14px;
+}
+
+.security-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+#password-change-status {
+    text-align: center;
+}
+
+.security-code-field {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 0 18px;
+}
+
+.security-code-field label {
+    font-size: 14px;
+    color: var(--secondary-text-color);
+    align-self: center;
+    text-align: center;
+    width: 100%;
+}
+
+.security-code-inputs {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    max-width: min(360px, 100%);
+    margin: 0 auto;
+}
+
+.security-code-inputs input {
+    width: 46px;
+    height: 50px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    text-align: center;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--primary-text-color);
+    background: var(--sidebar-bg);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.security-code-inputs input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.12);
+}
+
+@media (max-width: 480px) {
+    .security-code-inputs {
+        gap: 6px;
+    }
+
+    .security-code-inputs input {
+        width: 40px;
+        height: 46px;
+        font-size: 18px;
+    }
+}
+
+@media (max-width: 360px) {
+    .security-code-inputs {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .security-code-inputs input {
+        flex: 1 1 calc(33% - 12px);
+        min-width: 34px;
+        max-width: 42px;
+    }
+}
+
+.btn-secondary.subtle {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--secondary-text-color);
+}
+
+/* 深色主题下的一般次要按钮，降低亮度以避免过亮 */
+html[data-theme='dark'] .btn-secondary:not(.subtle) {
+    background-color: #2f3136;
+    color: #e5e7eb;
+    border: 1px solid #3f4248;
+}
+
+html[data-theme='dark'] .btn-secondary:not(.subtle):hover:not(:disabled) {
+    background-color: #3a3d44;
+}
+
+html[data-theme='dark'] .security-card,
+html[data-theme='dark'] .security-device {
+    background: var(--main-bg);
+}
+
+html[data-theme='dark'] .security-support-card,
+html[data-theme='dark'] .security-qr-box {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+html[data-theme='dark'] .security-support-card button:hover {
+    background: var(--accent-color);
+}
+
+html[data-theme='dark'] .security-code-inputs input {
+    background: var(--main-bg);
+    border-color: var(--border-color);
+    color: var(--primary-text-color);
+}
+
+html[data-theme='dark'] .security-code-inputs input:focus {
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
 }
 
 /**
@@ -4231,6 +4593,169 @@ html[data-theme='dark'] #change-password-btn:hover {
 .auth-form:not(#login-form):not(#register-form).active {
     display: block;
 }
+
+/* MFA验证表单特殊样式 */
+#mfa-verification-form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    max-width: 420px;
+    margin: 0 auto;
+    padding: 0;
+}
+
+#mfa-verification-form .auth-form-header {
+    text-align: center;
+    margin-bottom: 24px;
+    width: 100%;
+}
+
+#mfa-verification-form .auth-form-header h3 {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text-color);
+    margin: 0 0 12px 0;
+}
+
+#mfa-verification-form .auth-form-header .auth-form-hint {
+    font-size: 14px;
+    color: var(--secondary-text-color);
+    margin: 0;
+    line-height: 1.5;
+}
+
+.mfa-methods {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 32px;
+    width: 100%;
+    justify-content: center;
+}
+
+.mfa-method-btn {
+    flex: 1;
+    min-width: 140px;
+    max-width: 200px;
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    padding: 14px 16px;
+    background: var(--sidebar-bg);
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.mfa-method-btn:hover:not(:disabled):not(.unavailable) {
+    border-color: var(--accent-color);
+    background: rgba(26, 115, 232, 0.05);
+    transform: translateY(-1px);
+}
+
+.mfa-method-btn.active {
+    border-color: var(--accent-color);
+    background: rgba(26, 115, 232, 0.1);
+    color: var(--accent-color);
+    box-shadow: 0 2px 8px rgba(26, 115, 232, 0.15);
+}
+
+#mfa-verification-form .form-group {
+    width: 100%;
+    margin-bottom: 32px;
+}
+
+#mfa-verification-form .form-group label {
+    display: block;
+    text-align: center;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-color);
+    margin-bottom: 16px;
+}
+
+#mfa-verification-form .security-code-inputs {
+    justify-content: center;
+    margin-bottom: 0;
+}
+
+#mfa-verification-form .auth-submit {
+    width: 100%;
+    max-width: 100%;
+    margin-bottom: 16px;
+    padding: 14px;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+#mfa-verification-form #mfa-back-to-login {
+    display: block;
+    text-align: center;
+    margin: 0 auto;
+    width: auto;
+}
+
+.mfa-method-btn:disabled,
+.mfa-method-btn.unavailable {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* MFA验证表单响应式样式 */
+@media (max-width: 640px) {
+    #mfa-verification-form {
+        max-width: 100%;
+        padding: 0 16px;
+    }
+
+    #mfa-verification-form .auth-form-header h3 {
+        font-size: 20px;
+    }
+
+    #mfa-verification-form .auth-form-header .auth-form-hint {
+        font-size: 13px;
+    }
+
+    .mfa-methods {
+        gap: 8px;
+        margin-bottom: 24px;
+    }
+
+    .mfa-method-btn {
+        min-width: 120px;
+        padding: 12px 14px;
+        font-size: 14px;
+    }
+
+    #mfa-verification-form .form-group {
+        margin-bottom: 24px;
+    }
+
+    #mfa-verification-form .form-group label {
+        font-size: 14px;
+        margin-bottom: 12px;
+    }
+
+    #mfa-verification-form .auth-submit {
+        padding: 12px;
+        font-size: 15px;
+    }
+}
+
+@media (max-width: 480px) {
+    #mfa-verification-form .auth-form-header h3 {
+        font-size: 18px;
+    }
+
+    .mfa-method-btn {
+        min-width: 100px;
+        padding: 10px 12px;
+        font-size: 13px;
+    }
+}
+
 
 .auth-submit {
     width: 100%;
@@ -6378,7 +6903,32 @@ button,
     box-shadow: 0 0 0 1px #f44336;
 }
 
-/* 模式切换按钮容器 */
+#security-confirm-code,
+#security-mfa-code,
+#current-password,
+#new-password-setting,
+#confirm-new-password-setting {
+    width: 100%;
+    max-width: 480px;
+    padding: 12px 14px;
+    font-size: 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: var(--gpt-input-bg);
+    color: var(--text-color);
+    box-sizing: border-box;
+}
+
+#security-confirm-code:focus,
+#security-mfa-code:focus,
+#current-password:focus,
+#new-password-setting:focus,
+#confirm-new-password-setting:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 1px var(--accent-color);
+}
+
 .api-mode-selector {
     display: flex;
     border: 1px solid var(--border-color);
@@ -6387,12 +6937,10 @@ button,
     margin: 20px 0;
 }
 
-/* 隐藏原始的radio按钮 */
 .api-mode-selector input[type="radio"] {
     display: none;
 }
 
-/* 切换按钮标签样式 */
 .api-mode-selector .mode-label {
     flex: 1;
     text-align: center;
@@ -6410,7 +6958,6 @@ button,
     border-right: 1px solid var(--border-color);
 }
 
-/* 选中状态的样式 */
 .api-mode-selector input[type="radio"]:checked+.mode-label {
     background-color: var(--accent-color);
     color: white;
@@ -6421,11 +6968,9 @@ html[data-theme='dark'] .api-mode-selector {
     border-color: var(--gpt-input-border);
 }
 
-
 html[data-theme='dark'] .api-mode-selector .mode-label:first-of-type {
     border-right-color: var(--gpt-input-border);
 }
-
 
 html[data-theme='dark'] .api-mode-selector input[type="radio"]:checked+.mode-label {
     background-color: var(--accent-color);
@@ -6650,24 +7195,24 @@ html[data-theme='dark'] .donation-method img {
     color: #000000;
     font-weight: 700;
     text-decoration: none;
-    border: 1px solid rgba(0,0,0,0.08);
-    box-shadow: 0 2px 0 rgba(0,0,0,0.04);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2px 0 rgba(0, 0, 0, 0.04);
     transition: transform .15s ease, box-shadow .15s ease, background-color .15s ease;
 }
 
 .buymeacoffee-btn:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 10px rgba(0,0,0,0.12);
-    background-color: #F4D400; 
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+    background-color: #F4D400;
 }
 
 .buymeacoffee-btn:active {
     transform: translateY(0);
-    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
 }
 
 .buymeacoffee-btn span {
-    color: #000000; 
+    color: #000000;
     font-size: 14px;
 }
 

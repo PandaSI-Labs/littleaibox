@@ -1,6 +1,12 @@
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+const appBuildId = process.env.APP_BUILD_ID ||
+    process.env.VERCEL_GIT_COMMIT_SHA ||
+    process.env.CF_PAGES_COMMIT_SHA ||
+    process.env.GITHUB_SHA ||
+    new Date().toISOString();
+
 export default defineConfig({
     // 基础构建配置
     build: {
@@ -10,6 +16,9 @@ export default defineConfig({
         }
     },
     publicDir: 'public',
+    define: {
+        __APP_BUILD_ID__: JSON.stringify(appBuildId),
+    },
 
     // PWA 插件配置
     plugins: [
@@ -126,7 +135,7 @@ export default defineConfig({
                 short_name: 'LittleAIBox',
                 description: '智能AI对话助手',
                 lang: 'zh-CN',
-                version: '2.5.0',
+                version: '2.6.0',
 
                 // --- 外观与显示 ---
                 theme_color: '#ffffff',
