@@ -83,6 +83,9 @@ let securityPageInitialized = false;
 let refreshSecurityMfaToggleFromUser = null;
 const AUTH_ROUTE_STORAGE_KEY = 'littleaibox_last_auth_route';
 const codeInputRegistry = new Map();
+let nativeVersionSyncInFlight = null;
+let autoVersionCheckPromise = null;
+let appStateVersionListenerAttached = false;
 
 function resetCodeInputs(targetId) {
     if (!targetId) return;
@@ -515,7 +518,9 @@ class NavigationEngine {
         }
 
         if (this.isOnMainPage()) {
-            this.clearAllStateStacks(!this.isNativeApp);
+            this.clearAllStateStacks(!this.isNativeApp, {
+                preserveExitState: this.isNativeApp
+            });
             this.handleExitLogic();
             return;
         }
@@ -701,7 +706,8 @@ class NavigationEngine {
         }
     }
 
-    clearAllStateStacks(forImmediateWebExit = false) {
+    clearAllStateStacks(forImmediateWebExit = false, options = {}) {
+        const { preserveExitState = false } = options;
         while (uiStateStack.length) {
             const state = uiStateStack.pop();
             try {
@@ -712,7 +718,9 @@ class NavigationEngine {
         if (forImmediateWebExit && typeof router.resetManagedHistory === 'function') {
             router.resetManagedHistory();
         }
-        this.resetExitState();
+        if (!preserveExitState) {
+            this.resetExitState();
+        }
     }
 
     // 手动触发返回操作
@@ -2543,10 +2551,75 @@ async function getGuestVisitorId() {
     return 'fingerprint_unavailable';
 }
 
+async function syncNativeAppVersionDisplay(targetElement = null) {
+    if (!isNativeApp || typeof App?.getInfo !== 'function') {
+        return null;
+    }
+
+    if (!nativeVersionSyncInFlight) {
+        nativeVersionSyncInFlight = (async () => {
+            try {
+                const info = await App.getInfo();
+                const version = info?.version || info?.build || null;
+                if (version) {
+                    localStorage.setItem('apk_version', version);
+                }
+                return version;
+            } catch (error) {
+                console.warn('Failed to sync native app version info:', error);
+                return null;
+            }
+        })();
+    }
+
+    const pendingSync = nativeVersionSyncInFlight;
+    const resolvedVersion = await pendingSync;
+
+    if (resolvedVersion) {
+        const target = targetElement || document.getElementById('current-version');
+        if (target) {
+            target.textContent = `v${resolvedVersion}`;
+        }
+    }
+
+    if (nativeVersionSyncInFlight === pendingSync) {
+        nativeVersionSyncInFlight = null;
+    }
+
+    return resolvedVersion;
+}
+
+function requestAutoVersionCheck() {
+    if (!autoVersionCheckPromise) {
+        autoVersionCheckPromise = autoCheckVersionUpdate()
+            .finally(() => {
+                autoVersionCheckPromise = null;
+            });
+    }
+    return autoVersionCheckPromise;
+}
+
+function setupAppStateVersionCheck() {
+    if (!isNativeApp || appStateVersionListenerAttached || typeof App?.addListener !== 'function') {
+        return;
+    }
+    appStateVersionListenerAttached = true;
+    App.addListener('appStateChange', (state) => {
+        if (state?.isActive) {
+            syncNativeAppVersionDisplay();
+            requestAutoVersionCheck();
+        }
+    });
+}
+
 async function updateAboutPageUI() {
     const currentVersionEl = document.getElementById('current-version');
     if (currentVersionEl) {
         if (isNativeApp) {
+            const syncedVersion = await syncNativeAppVersionDisplay(currentVersionEl);
+            if (syncedVersion) {
+                return;
+            }
             const apkVersion = localStorage.getItem('apk_version');
             if (apkVersion) {
                 currentVersionEl.textContent = `v${apkVersion}`;
@@ -15182,6 +15255,8 @@ async function initialize() {
             ensureNotificationPermission().catch(error => {
                 console.warn('Notification permission request failed:', error);
             });
+            setupAppStateVersionCheck();
+            syncNativeAppVersionDisplay();
         }
 
         if ('ontouchstart' in window) {
@@ -15521,7 +15596,7 @@ async function initialize() {
             checkPrivacyPolicyUpdate();
             handleLaunchParams();
             updateAboutPageUI();
-            autoCheckVersionUpdate();
+            requestAutoVersionCheck();
 
             if (keyValidationPrefetched && pendingKeyValidationStatus) {
                 showKeyValidationNotification(pendingKeyValidationStatus);
