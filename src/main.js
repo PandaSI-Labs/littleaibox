@@ -270,6 +270,9 @@ class NavigationEngine {
         this.isHistoryNavigation = false;
         this.skipNextHistoryBack = false;
         this.sidebarHistoryState = 'idle';
+        this.isHandlingSettingsHistoryPop = false;
+        this.skipSettingsPopInterception = false;
+        this.settingsRouteInfo = null;
         this.init();
     }
 
@@ -382,12 +385,79 @@ class NavigationEngine {
                         this.isHistoryNavigation = false;
                     });
                 },
-                shouldIgnorePop: () => this.suppressNextPop,
+                shouldIgnorePop: () => {
+                    const shouldIgnore = this.shouldInterceptSettingsHistoryPop() || this.suppressNextPop;
+                    if (shouldIgnore && elements.settingsModal?.classList.contains('visible')) {
+                        // 立即恢复设置页面的 URL
+                        try {
+                            if (this.settingsRouteInfo) {
+                                const section = this.settingsRouteInfo.params?.section || DEFAULT_SETTINGS_SECTION;
+                                const settingsUrl = `/settings/${encodeURIComponent(section)}`;
+                                const currentPath = window.location.pathname;
+                                if (currentPath !== settingsUrl) {
+                                    // 使用 pushState 恢复 URL，但保持当前的历史状态
+                                    window.history.pushState(
+                                        { route: 'settings', params: this.settingsRouteInfo.params },
+                                        document.title,
+                                        settingsUrl
+                                    );
+                                }
+                            }
+                        } catch (error) {
+                            console.error('Failed to restore settings URL after popstate:', error);
+                        }
+                    }
+                    return shouldIgnore;
+                },
                 onPopIgnored: () => {
                     this.suppressNextPop = false;
                 }
             });
         } catch (_) { }
+    }
+
+    shouldInterceptSettingsHistoryPop() {
+        if (this.skipSettingsPopInterception) {
+            this.skipSettingsPopInterception = false;
+            return false;
+        }
+        if (!elements.settingsModal?.classList.contains('visible')) {
+            return false;
+        }
+        const confirmOverlay = document.querySelector('.custom-confirm-overlay');
+        if (confirmOverlay && confirmOverlay.classList.contains('visible')) {
+            return true;
+        }
+        if (this.isHandlingSettingsHistoryPop) {
+            return true;
+        }
+        this.handleSettingsHistoryPopAttempt();
+        return true;
+    }
+
+    handleSettingsHistoryPopAttempt() {
+        if (this.isHandlingSettingsHistoryPop) {
+            return;
+        }
+        this.isHandlingSettingsHistoryPop = true;
+        Promise.resolve().then(async () => {
+            try {
+                const canClose = await closeModalAndResetState(() =>
+                    handleCloseSettingsModalByPage({
+                        manageHistory: false,
+                        skipHandleBack: true
+                    })
+                );
+                if (canClose) {
+                    this.skipSettingsPopInterception = true;
+                    this.requestProgrammaticBack({ skipHandleBack: true });
+                }
+            } catch (error) {
+                console.error('Failed to handle settings back navigation:', error);
+            } finally {
+                this.isHandlingSettingsHistoryPop = false;
+            }
+        });
     }
 
     canUseSidebarHistory() {
@@ -864,6 +934,8 @@ class RouteManager {
         if (this.suppressSettingsRouteSync) return;
         const finalSection = section || this.getActiveSettingsSection();
         if (!finalSection) return;
+        // 保存设置页面的路由信息，以便在阻止后退时恢复 URL
+        navigationEngine.settingsRouteInfo = { name: 'settings', params: { section: finalSection } };
         router.navigate('settings', { section: finalSection }, {
             replace: options.replace === true,
             silent: options.silent === true
@@ -1042,6 +1114,7 @@ class RouteManager {
             return;
         }
         navigationEngine.markHistoryHandled?.();
+
         if (route.name === 'oauthCallback') {
             await handleOAuthCallbackRouteImpl(route.params?.provider, route.params?.search, buildOAuthContext({ routeManager: this }));
             return;
@@ -5306,6 +5379,10 @@ function hideSettingsModal(manageHistory = true, options = {}) {
     }
     elements.settingsModal.classList.remove('visible');
     safeNavigationCall('removeUiStateByName', 'settingsModal');
+    // 清除保存的设置路由信息
+    if (navigationEngine) {
+        navigationEngine.settingsRouteInfo = null;
+    }
     if (elements.chatContainer) {
         elements.chatContainer.style.display = 'flex';
     }
@@ -13354,7 +13431,7 @@ function setupEventListeners() {
     const settingsCloseBtn = document.getElementById('settings-close-btn');
     if (settingsCloseBtn) {
         settingsCloseBtn.addEventListener('click', () => {
-            closeSettingsModalFromUI();
+            handleCloseSettingsModalByPage();
         });
     }
 
@@ -13899,7 +13976,7 @@ function setupEventListeners() {
 
     elements.settingsModal.addEventListener('click', (e) => {
         if (e.target === elements.settingsModal) {
-            closeSettingsModalFromUI();
+            handleCloseSettingsModalByPage();
         }
     });
 
