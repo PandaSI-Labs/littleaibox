@@ -4575,6 +4575,25 @@ function openSettingsForKeys() {
     }
 }
 
+function createInitialAvatar(avatarWrapper, name) {
+    if (!avatarWrapper) return;
+
+    const existingInitial = avatarWrapper.querySelector('.avatar-initial-text');
+    if (existingInitial) {
+        existingInitial.remove();
+    }
+
+    const initial = name ? name.charAt(0).toUpperCase() : 'U';
+    const initialDiv = document.createElement('div');
+    initialDiv.className = 'avatar-initial-text';
+    initialDiv.textContent = initial;
+    initialDiv.style.cssText = `
+        width: 100%; height: 100%; display: flex; align-items: center;
+        justify-content: center; background-color: #1a73e8; color: white;
+        font-size: 48px; font-weight: bold; border-radius: 50%;
+    `;
+    avatarWrapper.appendChild(initialDiv);
+}
 
 function setupSettingsModalUI() {
     const activeNavItem = document.querySelector('.settings-nav-item.active');
@@ -4622,20 +4641,16 @@ function setupSettingsModalUI() {
             if (currentUser.avatar_url) {
                 avatarPreview.style.display = 'block';
                 avatarPreview.src = currentUser.avatar_url;
+                avatarPreview.onerror = () => {
+                    // 图片加载失败时，隐藏图片并显示字母头像
+                    avatarPreview.style.display = 'none';
+                    const name = currentUser.username || currentUser.email;
+                    createInitialAvatar(avatarWrapper, name);
+                };
             } else {
                 avatarPreview.style.display = 'none';
                 const name = currentUser.username || currentUser.email;
-                const initial = name ? name.charAt(0).toUpperCase() : 'U';
-
-                const initialDiv = document.createElement('div');
-                initialDiv.className = 'avatar-initial-text';
-                initialDiv.textContent = initial;
-                initialDiv.style.cssText = `
-                    width: 100%; height: 100%; display: flex; align-items: center; 
-                    justify-content: center; background-color: #1a73e8; color: white; 
-                    font-size: 48px; font-weight: bold; border-radius: 50%;
-                `;
-                avatarWrapper.appendChild(initialDiv);
+                createInitialAvatar(avatarWrapper, name);
             }
 
             originalThemeSettings = currentUser.theme_settings ? { ...currentUser.theme_settings } : { font: 'system', background_url: null };
@@ -5220,29 +5235,22 @@ async function closeProfileSettingsModal(options = {}) {
         try {
             const avatarPreview = document.getElementById('avatar-preview');
             const avatarWrapper = document.getElementById('avatar-preview-wrapper');
-            const existingInitial = avatarWrapper ? avatarWrapper.querySelector('.avatar-initial-text') : null;
-            if (existingInitial) existingInitial.remove();
 
             if (avatarPreview) {
                 if (originalAvatarUrl) {
                     avatarPreview.style.display = 'block';
                     avatarPreview.src = originalAvatarUrl;
+                    avatarPreview.onerror = () => {
+                        // 图片加载失败时，隐藏图片并显示字母头像
+                        avatarPreview.style.display = 'none';
+                        const name = originalUsername || (currentUser ? currentUser.email : '');
+                        createInitialAvatar(avatarWrapper, name);
+                    };
                 } else {
                     // 无原头像：隐藏预览，显示首字母
                     avatarPreview.style.display = 'none';
-                    if (avatarWrapper) {
-                        const name = (originalUsername || (currentUser ? currentUser.email : ''));
-                        const initial = name ? name.charAt(0).toUpperCase() : 'U';
-                        const initialDiv = document.createElement('div');
-                        initialDiv.className = 'avatar-initial-text';
-                        initialDiv.textContent = initial;
-                        initialDiv.style.cssText = `
-                            width: 100%; height: 100%; display: flex; align-items: center;
-                            justify-content: center; background-color: #1a73e8; color: white;
-                            font-size: 48px; font-weight: bold; border-radius: 50%;
-                        `;
-                        avatarWrapper.appendChild(initialDiv);
-                    }
+                    const name = originalUsername || (currentUser ? currentUser.email : '');
+                    createInitialAvatar(avatarWrapper, name);
                 }
             }
         } catch (_) { }
@@ -6302,35 +6310,41 @@ async function handlePasswordResetToken(initialToken = null) {
     }
 
     if (token) {
-        openAuthOverlay('route', { mode: 'reset', token }, { syncRoute: true, routeOptions: { replace: true } });
         if (elements.chatContainer) {
             elements.chatContainer.style.display = 'none';
         }
+
+        const handleResetTokenError = (errorMessage) => {
+            switchToLoginForm({ syncRoute: true, routeOptions: { replace: true } });
+            if (elements.chatContainer) {
+                elements.chatContainer.style.display = 'none';
+            }
+            if (elements.authOverlay) {
+                elements.authOverlay.classList.add('visible');
+            }
+            setTimeout(() => {
+                showToast(errorMessage, 'error');
+            }, 100);
+        };
+
         try {
             const result = await makeAuthRequest('validate-reset-token', { token });
 
             if (!result.success) {
-                openAuthOverlay('auto', { mode: 'login' }, { syncRoute: true, routeOptions: { replace: true } });
+                handleResetTokenError(result.error || 'Reset link invalid');
+            } else {
+                openAuthOverlay('route', { mode: 'reset', token }, { syncRoute: true, routeOptions: { replace: true } });
                 if (elements.chatContainer) {
                     elements.chatContainer.style.display = 'none';
                 }
-                setTimeout(() => {
-                    showToast(result.error || 'Reset link invalid', 'error');
-                }, 100);
             }
         } catch (error) {
-            openAuthOverlay('auto', { mode: 'login' }, { syncRoute: true, routeOptions: { replace: true } });
-            if (elements.chatContainer) {
-                elements.chatContainer.style.display = 'none';
-            }
-            setTimeout(() => {
-                showToast(error.message || 'Reset link invalid', 'error');
-            }, 100);
+            handleResetTokenError(error.message || 'Reset link invalid');
         }
     }
 }
-let sessionValidationPromise = null;
 
+let sessionValidationPromise = null;
 async function checkSession() {
     if (!sessionId) {
         return false;
