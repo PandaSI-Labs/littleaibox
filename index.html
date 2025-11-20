@@ -930,7 +930,7 @@
                     <div id="privacy-policy-settings-page" class="settings-page">
                         <div class="privacy-policy-content">
                             <h2 data-i18n-key="ui.privacyPolicy">隐私协议</h2>
-                            <p><strong data-i18n-key="privacyPolicy.effectiveDate">生效日期：2025年10月5日</strong></p>
+                            <p><strong data-i18n-key="privacyPolicy.effectiveDate">生效日期：2025年11月20日</strong></p>
                             <p data-i18n-key="privacyPolicy.welcome">欢迎您使用
                                 LittleAIBox！我们深知隐私对您的重要性，并致力于保护您的个人信息。本隐私协议旨在向您清晰地说明，当您使用我们的服务时，我们如何收集、使用、存储、共享和保护您的信息。请在使用我们的服务前，仔细阅读并充分理解本协议。
                             </p>
@@ -977,6 +977,15 @@
                                         data-i18n-key="privacyPolicy.sessionInfo">当您登录后，我们会在您的本地浏览器
                                         localStorage 中存储一个会话ID
                                         (sessionId)，用于在您保持登录状态时验证您的身份。</span></li>
+                                <li><strong data-i18n-key="privacyPolicy.oauthInfoLabel">社交登录信息：</strong><span
+                                        data-i18n-key="privacyPolicy.oauthInfo">当您使用 Google 或 GitHub 等社交账号登录时，我们会收集并存储您的
+                                        OAuth
+                                        提供商用户ID、邮箱地址、用户名、头像URL，以及用于维护登录状态的访问令牌和刷新令牌。这些信息将安全地存储在数据库中，用于账户关联和身份验证。</span>
+                                </li>
+                                <li><strong data-i18n-key="privacyPolicy.mfaInfoLabel">多因素认证（MFA）信息：</strong><span
+                                        data-i18n-key="privacyPolicy.mfaInfo">如果您启用了多因素认证功能，我们会存储您的
+                                        TOTP（基于时间的一次性密码）密钥（经过加密处理）以及生成的备份代码（经过哈希处理）。这些信息仅用于增强您账户的安全性，我们无法获取您的明文密钥或备份代码。</span>
+                                </li>
                             </ul>
 
                             <h4 data-i18n-key="privacyPolicy.section1_3Title">1.3 您主动提供的信息</h4>
@@ -989,9 +998,9 @@
                                         data-i18n-key="privacyPolicy.voiceInput">当您在支持的桌面浏览器上使用语音输入功能时，您的语音数据会由您的浏览器或操作系统原生的语音识别服务进行处理，并转换为文本。我们的服务器仅接收转换后的文本，不处理或存储您的原始语音数据。</span>
                                 </li>
                                 <li><strong data-i18n-key="privacyPolicy.customApiKeyLabel">自定义 API
-                                        Key：</strong><span data-i18n-key="privacyPolicy.customApiKey">如果您在设置中提供了您自己的
-                                        Google Gemini API
-                                        Key，我们会将其安全地存储在数据库中并用于处理您的请求。我们只会使用这个Key向Google发出请求，不会与任何其他第三方共享。</span>
+                                        Key：</strong><span data-i18n-key="privacyPolicy.customApiKey">如果您在设置中提供了您自己的 API
+                                        Key（最多可配置两个），我们会将其安全地存储在数据库中并用于处理您的请求。您可以选择混合模式（mixed）或单一模式（single）来使用这些 API
+                                        Key。我们只会使用这些 Key 向相应的 AI 服务提供商发出请求，不会与任何其他第三方共享。</span>
                                 </li>
                             </ul>
 
@@ -1013,19 +1022,12 @@
                                         根据您的问题检索最相关的信息块；(4)
                                         将这些相关信息块提交给AI以生成精准回答。此过程涉及多次、小批量地将您的文档内容发送给AI。</span></li>
                                 <li><strong data-i18n-key="privacyPolicy.enhanceTimelinessLabel">增强信息时效性：</strong><span
-                                        data-i18n-key="privacyPolicy.enhanceTimeliness">我们通过两种方式为您获取实时信息：</span>
-                                    <ul>
-                                        <li style="margin-top: 8px;" data-i18n-key="privacyPolicy.searchMode">
-                                            当您启用"搜索模式"时，我们会将您的查询发送给第三方搜索服务（Brave
-                                            Search）以获取网页摘要，并将其作为上下文提供给AI模型，从而生成基于最新网络信息的回答。
-                                        </li>
-                                        <li style="margin-top: 8px;" data-i18n-key="privacyPolicy.newsMode">
-                                            当您的提问包含新闻或时事性关键词（如"今天的新闻"）时，我们会自动将关键词发送给第三方新闻服务（GNews）以获取最新资讯，并将其融入AI的回答中。
-                                        </li>
-                                    </ul>
+                                        data-i18n-key="privacyPolicy.enhanceTimeliness">当您启用"搜索模式"时，我们会将您的查询发送给第三方搜索服务（Brave
+                                        Search）以获取网页摘要，并将其作为上下文提供给AI模型，从而生成基于最新网络信息的回答。</span>
                                 </li>
                                 <li><strong data-i18n-key="privacyPolicy.accountManagementLabel">账户管理与通讯：</strong><span
-                                        data-i18n-key="privacyPolicy.accountManagement">处理您的注册、登录、密码修改/重置等请求，并在必要时通过您的邮箱向您发送验证邮件。</span>
+                                        data-i18n-key="privacyPolicy.accountManagement">处理您的注册、登录、密码修改/重置、MFA
+                                        设置与管理、OAuth 账户关联等请求，并在必要时通过您的邮箱向您发送验证邮件。</span>
                                 </li>
                             </ul>
 
@@ -1084,12 +1086,6 @@
                                             Search API</strong></a>：<span
                                         data-i18n-key="privacyPolicy.braveSearch">当您使用"搜索模式"时，您的查询将被发送至 Brave
                                         Search 以获取网络搜索结果。</span></li>
-                                <li><a href="https://gnews.io/" target="_blank" rel="noopener noreferrer"><strong
-                                            data-i18n-key="privacyPolicy.gnewsName">GNews
-                                            API</strong></a>：<span
-                                        data-i18n-key="privacyPolicy.gnews">当您的提问涉及实时新闻或事件时，您的查询关键词将被发送至
-                                        GNews
-                                        以获取相关新闻摘要。</span></li>
                                 <li><a href="https://resend.com/" target="_blank" rel="noopener noreferrer"><strong
                                             data-i18n-key="privacyPolicy.resendName">Resend</strong></a>：<span
                                         data-i18n-key="privacyPolicy.resend">在您注册需要邮箱验证或申请重置密码时，您的邮箱地址将被共享给
@@ -1103,6 +1099,17 @@
                                 <li><a href="https://fingerprint.com/" target="_blank" rel="noopener noreferrer"><strong
                                             data-i18n-key="privacyPolicy.fingerprintjsName">FingerprintJS</strong></a>：<span
                                         data-i18n-key="privacyPolicy.fingerprintjs">我们使用此技术为未登录的访客生成匿名浏览器ID，用于实现使用限制和安全防范。</span>
+                                </li>
+                                <li><a href="https://accounts.google.com/" target="_blank"
+                                        rel="noopener noreferrer"><strong
+                                            data-i18n-key="privacyPolicy.googleOAuthName">Google
+                                            OAuth</strong></a>：<span data-i18n-key="privacyPolicy.googleOAuth">当您选择使用
+                                        Google 账号登录时，我们会通过 Google OAuth 服务获取您的基本账户信息（邮箱、用户名、头像等），用于创建或关联您的账户。</span>
+                                </li>
+                                <li><a href="https://github.com/" target="_blank" rel="noopener noreferrer"><strong
+                                            data-i18n-key="privacyPolicy.githubOAuthName">GitHub
+                                            OAuth</strong></a>：<span data-i18n-key="privacyPolicy.githubOAuth">当您选择使用
+                                        GitHub 账号登录时，我们会通过 GitHub OAuth 服务获取您的基本账户信息（邮箱、用户名、头像等），用于创建或关联您的账户。</span>
                                 </li>
                             </ul>
 
@@ -1154,7 +1161,7 @@
                             <p data-i18n-key="privacyPolicy.contactUs">如果您对本隐私协议有任何疑问、意见或建议，请通过以下方式与我们联系：</p>
                             <ul>
                                 <li><span data-i18n-key="privacyPolicy.email">Email: </span><a
-                                        href="mailto:support@littletea.xyz">support@littletea.xyz</a></li>
+                                        href="mailto:support@littleaibox.com">support@littleaibox.com</a></li>
                             </ul>
                         </div>
                     </div>

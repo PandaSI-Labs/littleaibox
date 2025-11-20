@@ -28,26 +28,4 @@ Thumbs.db
 # Local environment
 .env
 .env.local
-.env.*.local
-
-# Mobile app binaries (if you don't want to upload them)
-*.apk
-*.ipa
-*.aab
-
-# Logs
-*.log
-logs/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Temporary files
-*.tmp
-*.temp
-.cache/
-
-# Coverage reports
-coverage/
-.nyc_output/
 

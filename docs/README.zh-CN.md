@@ -43,7 +43,7 @@ LittleAIBox 非常适合：
 
 **立即访问:**  
 
-[![访问应用](https://img.shields.io/badge/打开%20LittleAIBox-点击这里-brightgreen?style=for-the-badge)](https://ai.littletea.xyz)
+[![访问应用](https://img.shields.io/badge/打开%20LittleAIBox-点击这里-brightgreen?style=for-the-badge)](https://littleaibox.com)
 
 </div>
 
@@ -437,7 +437,7 @@ npm run build
    - 复制密钥以供应用使用
 
 2. **在应用中配置**：
-   - 打开应用：[LittleAIBox](https://ai.littletea.xyz)
+   - 打开应用：[LittleAIBox](https://littleaibox.com)
    - 进入设置页面
    - 输入您的 Gemini API 密钥
    - 保存并开始使用！

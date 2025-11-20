@@ -43,7 +43,7 @@ LittleAIBox は以下の方に最適です：
 
 **今すぐ試す:**  
 
-[![アプリにアクセス](https://img.shields.io/badge/LittleAIBox%20を開く-クリック- brightgreen?style=for-the-badge)](https://ai.littletea.xyz)
+[![アプリにアクセス](https://img.shields.io/badge/LittleAIBox%20を開く-クリック- brightgreen?style=for-the-badge)](https://littleaibox.com)
 
 </div>
 
@@ -437,7 +437,7 @@ npm run build
    - アプリケーションで使用するためにキーをコピー
 
 2. **アプリでの設定**：
-   - アプリを開く：[LittleAIBox](https://ai.littletea.xyz)
+   - アプリを開く：[LittleAIBox](https://littleaibox.com)
    - 設定ページに移動
    - Gemini API キーを入力
    - 保存してチャットを開始！

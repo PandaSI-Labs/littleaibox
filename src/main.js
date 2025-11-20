@@ -1072,10 +1072,6 @@ class RouteManager {
         this.initialRouteHandled = true;
         try {
             const initialRoute = router.getCurrentRoute();
-            if (!currentUser && initialRoute?.name === 'settings') {
-                this.redirectGuestToAuth({ hideSettings: true });
-                return;
-            }
             await this.handleRouteIntent(initialRoute);
         } catch (error) {
             console.error('Failed to handle initial route:', error);
@@ -1365,7 +1361,7 @@ function revokeScriptBlobUrl(src) {
     }
 }
 
-const PRIVACY_POLICY_VERSION = '2025-10-04';
+const PRIVACY_POLICY_VERSION = '2025-11-20';
 const GUEST_FILE_SIZE_LIMIT = 5 * 1024 * 1024;
 const LOGGED_IN_FILE_SIZE_LIMIT = 10 * 1024 * 1024;
 const MAX_TABLE_ROWS = 80;
@@ -5338,6 +5334,17 @@ function hideAuthOverlay(manageHistory = true, options = {}) {
     const shouldPop = manageHistory && authOverlayReason === 'user';
     if (shouldPop) {
         navigationEngine.requestProgrammaticBack({ skipHandleBack });
+
+        requestAnimationFrame(() => {
+            const currentRoute = router.getCurrentRoute();
+            if (currentRoute?.name === 'auth') {
+                const fallbackRoute = currentChatId ? {
+                    name: String(currentChatId).startsWith('temp_') ? 'tempChat' : 'chat',
+                    params: { chatId: currentChatId }
+                } : { name: 'home', params: {} };
+                router.navigate(fallbackRoute.name, fallbackRoute.params || {}, { replace: true, silent: true });
+            }
+        });
     } else if (!options.routeHandled) {
         routeManager.navigateToHome({ replace: true });
     }
@@ -6772,8 +6779,10 @@ function updateUI(showLoginPage = true) {
     } else {
         const currentRoute = router.getCurrentRoute();
         const isChatContext = currentRoute?.name === 'chat' || currentRoute?.name === 'tempChat';
+        const isHomeRoute = !currentRoute || currentRoute.name === 'home';
+        const isAuthRoute = currentRoute?.name === 'auth';
 
-        if (showLoginPage && !isChatContext) {
+        if (showLoginPage && !isChatContext && (isHomeRoute || isAuthRoute)) {
             const initialAuthRoutePending = !routeManager.isInitialRouteProcessed() && currentRoute?.name === 'auth';
             const desiredState = initialAuthRoutePending
                 ? routeManager.normalizeAuthState({ mode: currentRoute.params?.mode, token: currentRoute.params?.token })
@@ -6790,8 +6799,13 @@ function updateUI(showLoginPage = true) {
             if (elements.chatContainer) {
                 elements.chatContainer.style.display = 'none';
             }
-        } else if (elements.chatContainer) {
-            elements.chatContainer.style.display = 'flex';
+        } else {
+            if (elements.chatContainer) {
+                elements.chatContainer.style.display = 'flex';
+            }
+            if (!isChatContext && isHomeRoute && !showLoginPage) {
+                showEmptyState();
+            }
         }
 
         elements.rightSidebarToggleBtn.style.display = 'none';
@@ -11454,6 +11468,16 @@ async function handleLargeTextAnalysis(userContent, originalQuery, existingAssis
     });
     const chunks = allChunks;
 
+    // 警告但不阻止
+    const WARNING_THRESHOLD = 10;
+    if (chunks.length > WARNING_THRESHOLD) {
+        showToast(
+            getToastMessage('toast.manyChunksWarning', { count: chunks.length, threshold: WARNING_THRESHOLD }) ||
+            `Processing ${chunks.length} chunks (recommended: ${WARNING_THRESHOLD}). This may take longer.`,
+            'info'
+        );
+    }
+
     let cumulativeSummary = "";
 
     try {
@@ -11461,9 +11485,14 @@ async function handleLargeTextAnalysis(userContent, originalQuery, existingAssis
             const chunk = chunks[i];
             contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.analyzingPart', { current: i + 1, total: chunks.length })}</div>`;
 
+            const MAX_PROMPT_LENGTH = 30000;
             let prompt = i === 0
                 ? `Summarize this text part (${i + 1}/${chunks.length}):\n${chunk}`
                 : `Update summary with new content. Previous: ${cumulativeSummary}\n\nNew part (${i + 1}/${chunks.length}):\n${chunk}`;
+
+            if (prompt.length > MAX_PROMPT_LENGTH) {
+                prompt = prompt.substring(0, MAX_PROMPT_LENGTH) + '\n\n[Content truncated due to length limit]';
+            }
 
             const chunkSummary = await callAISynchronously(prompt);
             cumulativeSummary = chunkSummary;
@@ -11543,24 +11572,38 @@ async function handleDeepAnalysis(userContent, originalQuery, existingAssistantE
         });
 
         const chunks = allChunks;
+
+        // 警告但不阻止
+        const WARNING_THRESHOLD = 15;
+        if (chunks.length > WARNING_THRESHOLD) {
+            showToast(
+                getToastMessage('toast.manyChunksWarning', { count: chunks.length, threshold: WARNING_THRESHOLD }) ||
+                `Processing ${chunks.length} chunks (recommended: ${WARNING_THRESHOLD}). This may take longer.`,
+                'info'
+            );
+        }
+
         contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step2Indexing', { count: chunks.length })}</div>`;
 
-        const processChunkForIndex = (chunk) => {
-            const indexPrompt = `Extract keywords and create a summary from the following text block.\n\nText Block Content:\n"""${chunk.text}"""\n\nReturn in JSON format only, no other text, format: {"keywords": ["keyword1", "keyword2"], "summary": "summary content"}`;
-            return callAISynchronously(indexPrompt)
-                .then(indexDataStr => {
-                    try {
-                        const indexData = safeJsonParse(indexDataStr);
-                        if (indexData && Array.isArray(indexData.keywords) && typeof indexData.summary === 'string') {
-                            return { chunkId: chunk.id, content: chunk.text, keywords: indexData.keywords, summary: indexData.summary, sourceFile: chunk.sourceFile };
-                        }
-                        throw new Error(getToastMessage('errors.parsedDataIsNullOrInvalid'));
-                    } catch (e) {
-                        const basicSummary = chunk.text.substring(0, 80).replace(/\s+/g, ' ') + '...';
-                        const basicKeywords = chunk.text.match(/\b\w{3,}\b/g)?.slice(0, 5) || [];
-                        return { chunkId: chunk.id, content: chunk.text, keywords: basicKeywords, summary: `[${getToastMessage('ui.basicIndex')}] ${basicSummary}`, sourceFile: chunk.sourceFile };
-                    }
-                });
+        const processChunkForIndex = async (chunk) => {
+            const MAX_CHUNK_LENGTH = 20000;
+            const chunkText = chunk.text.length > MAX_CHUNK_LENGTH
+                ? chunk.text.substring(0, MAX_CHUNK_LENGTH) + '\n\n[Content truncated due to length limit]'
+                : chunk.text;
+
+            const indexPrompt = `Extract keywords and create a summary from the following text block.\n\nText Block Content:\n"""${chunkText}"""\n\nReturn in JSON format only, no other text, format: {"keywords": ["keyword1", "keyword2"], "summary": "summary content"}`;
+            try {
+                const indexDataStr = await callAISynchronously(indexPrompt);
+                const indexData = safeJsonParse(indexDataStr);
+                if (indexData && Array.isArray(indexData.keywords) && typeof indexData.summary === 'string') {
+                    return { chunkId: chunk.id, content: chunk.text, keywords: indexData.keywords, summary: indexData.summary, sourceFile: chunk.sourceFile };
+                }
+                throw new Error(getToastMessage('errors.parsedDataIsNullOrInvalid'));
+            } catch (e) {
+                const basicSummary = chunk.text.substring(0, 80).replace(/\s+/g, ' ') + '...';
+                const basicKeywords = chunk.text.match(/\b\w{3,}\b/g)?.slice(0, 5) || [];
+                return { chunkId: chunk.id, content: chunk.text, keywords: basicKeywords, summary: `[${getToastMessage('ui.basicIndex')}] ${basicSummary}`, sourceFile: chunk.sourceFile };
+            }
         };
 
         const results = await processInBatches(chunks, processChunkForIndex, 1, 1500);
@@ -12380,7 +12423,7 @@ function setupEventListeners() {
 
         LocalNotifications.addListener('localNotificationActionPerformed', (notification) => {
             if (notification.notification.extra?.apkVersion) {
-                Browser.open({ url: 'https://ai.littletea.xyz/download-app' });
+                Browser.open({ url: 'https://littleaibox.com/download-app' });
             }
         });
     }
@@ -13415,8 +13458,17 @@ function setupEventListeners() {
             }
         });
 
-        if (router.getCurrentRoute()?.name !== 'settings') {
-            lastSettingsOriginRoute = router.getCurrentRoute();
+        const currentRoute = router.getCurrentRoute();
+
+        if (currentRoute?.name !== 'settings') {
+            if (currentRoute?.name === 'auth') {
+                lastSettingsOriginRoute = currentChatId ? {
+                    name: String(currentChatId).startsWith('temp_') ? 'tempChat' : 'chat',
+                    params: { chatId: currentChatId }
+                } : { name: 'home', params: {} };
+            } else {
+                lastSettingsOriginRoute = currentRoute;
+            }
         }
 
         // 立即显示UI并更新URL
@@ -14441,7 +14493,7 @@ function setupEventListeners() {
             const currentLang = currentUser?.language || getCurrentLanguage() || 'zh-CN';
             const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
             const downloadUrl = isNativeApp
-                ? `https://ai.littletea.xyz/download-app?lang=${currentLang}&theme=${currentTheme}`
+                ? `https://littleaibox.com/download-app?lang=${currentLang}&theme=${currentTheme}`
                 : `/download-app?lang=${currentLang}&theme=${currentTheme}`;
 
             if (isNativeApp) {
@@ -15647,7 +15699,21 @@ async function initialize() {
             if (elements.chatContainer) elements.chatContainer.style.display = 'none';
             await handlePasswordResetToken(pathResetToken || queryResetToken);
         } else {
-            updateUI(true);
+            const currentRoute = router.getCurrentRoute();
+            const isHomeRoute = !currentRoute || currentRoute.name === 'home';
+            const isFirstVisit = !sessionStorage.getItem('hasVisited');
+
+            const navEntry = performance.getEntriesByType?.('navigation')?.[0];
+            const isPageRefresh = navEntry?.type === 'reload';
+            const shouldShowLogin = isHomeRoute && isFirstVisit && !isPageRefresh;
+
+            if (!isPageRefresh) {
+                try {
+                    sessionStorage.setItem('hasVisited', 'true');
+                } catch (_) { }
+            }
+
+            updateUI(shouldShowLogin);
         }
 
         prefetchKeyValidationStatus().catch(e => console.warn('Prefetch key validation failed:', e));

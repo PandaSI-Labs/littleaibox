@@ -1,6 +1,6 @@
 {
   "name": "littleaibox",
-  "version": "2.6.0",
+  "version": "2.6.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -28,7 +28,7 @@
     "jose": "^5.2.0",
     "qrcode-generator": "^2.0.4",
     "tslib": "^2.8.1",
-    "wrangler": "^4.37.0"
+    "wrangler": "^4.49.0"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",

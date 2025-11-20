@@ -135,7 +135,7 @@ export default defineConfig({
                 short_name: 'LittleAIBox',
                 description: '智能AI对话助手',
                 lang: 'zh-CN',
-                version: '2.6.0',
+                version: '2.6.4',
 
                 // --- 外观与显示 ---
                 theme_color: '#ffffff',
@@ -152,8 +152,7 @@ export default defineConfig({
                 start_url: '/',
                 id: '/',
                 "scope_extensions": [
-                    { "origin": "https://ai.littletea.xyz" },
-                    { "origin": "https://littletea.xyz" }
+                    { "origin": "https://littleaibox.com" }
                 ],
                 "launch_handler": {
                     "client_mode": "focus-existing"

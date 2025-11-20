@@ -43,7 +43,7 @@ LittleAIBox는 다음 사용자에게 완벽합니다:
 
 **지금 사용해보세요:**  
 
-[![앱 접근](https://img.shields.io/badge/LittleAIBox%20열기-클릭하기-brightgreen?style=for-the-badge)](https://ai.littletea.xyz)
+[![앱 접근](https://img.shields.io/badge/LittleAIBox%20열기-클릭하기-brightgreen?style=for-the-badge)](https://littleaibox.com)
 
 </div>
 
@@ -437,7 +437,7 @@ npm run build
    - 앱에서 사용할 키 복사
 
 2. **앱에서 구성**:
-   - 앱 열기: [LittleAIBox](https://ai.littletea.xyz)
+   - 앱 열기: [LittleAIBox](https://littleaibox.com)
    - 설정 페이지로 이동
    - Gemini API 키 입력
    - 저장하고 채팅 시작!

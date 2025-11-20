@@ -2,7 +2,7 @@ import { Capacitor } from '@capacitor/core';
 
 export const isNativeApp = Capacitor.isNativePlatform();
 
-const DEFAULT_API_ORIGIN = 'https://ai.littletea.xyz';
+const DEFAULT_API_ORIGIN = 'https://littleaibox.com';
 const DEV_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
 const shouldRewriteRequests = isNativeApp || DEV_HOSTNAMES.has(window.location.hostname);
 const originalFetch = window.fetch.bind(window);

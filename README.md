@@ -43,7 +43,7 @@ LittleAIBox is perfect for:
 
 **Try it now:**  
 
-[![Visit App](https://img.shields.io/badge/Open%20LittleAIBox-Click%20Here-brightgreen?style=for-the-badge)](https://ai.littletea.xyz)
+[![Visit App](https://img.shields.io/badge/Open%20LittleAIBox-Click%20Here-brightgreen?style=for-the-badge)](https://littleaibox.com)
 
 </div>
 
@@ -437,7 +437,7 @@ npm run build
    - Copy the key for use in the app
 
 2. **Configure in App**:
-   - Open the app: [LittleAIBox](https://ai.littletea.xyz)
+   - Open the app: [LittleAIBox](https://littleaibox.com)
    - Go to Settings
    - Enter your Gemini API key
    - Save and start chatting!
