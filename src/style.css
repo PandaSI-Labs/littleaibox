@@ -117,9 +117,8 @@ html[data-theme='dark'] .file-chip-display:hover {
 
 html[data-theme='dark'] #add-file-btn:hover,
 html[data-theme='dark'] .input-right-buttons .input-action-btn:hover:not([disabled]),
-html[data-theme='dark'] #search-mode-btn:hover,
-html[data-theme='dark'] #image-mode-btn:hover,
-html[data-theme='dark'] #voice-btn:hover {
+html[data-theme='dark'] #voice-btn:hover,
+html[data-theme='dark'] #tools-menu-btn:hover {
     background-color: var(--hover-bg);
 }
 
@@ -439,6 +438,11 @@ html[data-theme='dark'] #upload-menu {
 
 html[data-theme='dark'] #upload-menu .upload-menu-item:hover {
     background-color: var(--hover-bg);
+}
+
+html[data-theme='dark'] #tools-menu {
+    background-color: var(--chat-bg);
+    border-color: var(--border-color);
 }
 
 html[data-theme='dark'] .table-wrapper thead th {
@@ -2012,15 +2016,15 @@ html[data-theme='dark'] .copy-btn:hover {
 .model-row-controls.left {
     justify-content: flex-start;
     align-items: center;
+    position: relative;
 }
 
 .model-row-controls.right {
     justify-content: flex-end;
 }
 
-#search-mode-btn,
-#image-mode-btn,
-#voice-btn {
+#voice-btn,
+#tools-menu-btn {
     background: transparent;
     border: 1px solid transparent;
     cursor: pointer;
@@ -2036,9 +2040,8 @@ html[data-theme='dark'] .copy-btn:hover {
     transform: scale(1);
 }
 
-#search-mode-btn:active,
-#image-mode-btn:active,
-#voice-btn:active {
+#voice-btn:active,
+#tools-menu-btn:active {
     transform: scale(0.95);
 }
 
@@ -2049,28 +2052,24 @@ html[data-theme='dark'] .copy-btn:hover {
     }
 }
 
-#search-mode-btn:hover,
-#image-mode-btn:hover,
-#voice-btn:hover {
+#voice-btn:hover,
+#tools-menu-btn:hover {
     background-color: #f0f0f0;
 }
 
-#image-mode-btn svg,
-#search-mode-btn svg {
+#tools-menu-btn svg {
     width: 20px;
     height: 20px;
     fill: var(--icon-color);
     transition: fill 0.2s ease;
 }
 
-#search-mode-btn.active,
-#image-mode-btn.active {
+#tools-menu-btn.active {
     border-color: var(--accent-color);
     background-color: var(--hover-bg);
 }
 
-#search-mode-btn.active svg,
-#image-mode-btn.active svg {
+#tools-menu-btn.active svg {
     fill: var(--accent-color);
 }
 
@@ -2260,6 +2259,90 @@ html[data-theme='dark'] .copy-btn:hover {
     visibility: visible;
 }
 
+/* 工具菜单容器 */
+#tools-menu {
+    position: absolute;
+    bottom: calc(100% + 12px);
+    left: 0;
+    background-color: #fff;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    padding: 6px;
+    z-index: 102;
+    width: 180px;
+    max-width: 200px;
+    min-width: 160px;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(10px);
+    transition: all 0.2s ease;
+}
+
+#tools-menu.visible {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+/* 菜单项 */
+.tools-menu-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text-color);
+    transition: background-color 0.2s;
+    gap: 10px;
+}
+
+.tools-menu-item:hover {
+    background-color: var(--hover-bg);
+}
+
+.tools-menu-item .tool-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.tools-menu-item .tool-icon svg {
+    width: 18px;
+    height: 18px;
+    fill: var(--icon-color);
+}
+
+.tools-menu-item span {
+    flex-grow: 1;
+    min-width: 0;
+    word-break: break-word;
+    line-height: 1.4;
+}
+
+.tools-menu-item .tool-check {
+    width: 16px;
+    height: 16px;
+    fill: var(--accent-color);
+    opacity: 0;
+    transition: opacity 0.2s;
+    flex-shrink: 0;
+}
+
+/* 激活状态 */
+.tools-menu-item.active {
+    background-color: rgba(26, 115, 232, 0.08);
+}
+
+.tools-menu-item.active .tool-icon svg {
+    fill: var(--accent-color);
+}
+
+.tools-menu-item.active .tool-check {
+    opacity: 1;
+}
 
 /**
  * =============================================================================
@@ -5233,7 +5316,10 @@ body.is-drag-scrolling {
         width: 180px;
     }
 
-    /* 设置模态框 - 手机端全屏显示 */
+    #tools-menu {
+        left: -10px;
+    }
+
     #settings-modal-overlay {
         align-items: stretch;
     }

@@ -206,20 +206,14 @@
                         <!-- 模型选择行 -->
                         <div class="input-model-row">
                             <div class="model-row-controls left">
-                                <button id="search-mode-btn" class="input-action-btn" title="切换搜索模式"
-                                    data-i18n-title="ui.searchMode">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                                        <path
-                                            d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
-                                    </svg>
-                                </button>
-                                <button id="image-mode-btn" class="input-action-btn" title="切换图片生成模式"
-                                    data-i18n-title="ui.imageMode">
+                                <button id="tools-menu-btn" class="input-action-btn" title="工具箱"
+                                    data-i18n-title="ui.tools">
                                     <svg viewBox="0 0 24 24">
                                         <path
-                                            d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
+                                            d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z" />
                                     </svg>
                                 </button>
+
                                 <button id="voice-btn" class="input-action-btn" title="语音输入"
                                     data-i18n-title="ui.voiceInput">
                                     <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
@@ -228,6 +222,46 @@
                                         </path>
                                     </svg>
                                 </button>
+
+                                <div id="tools-menu" class="popup-menu">
+                                    <div class="tools-menu-item" id="tool-search-option">
+                                        <div class="tool-icon">
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                                                <path
+                                                    d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+                                            </svg>
+                                        </div>
+                                        <span data-i18n-key="ui.searchMode">搜索模式</span>
+                                        <svg class="tool-check" viewBox="0 0 24 24">
+                                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                                        </svg>
+                                    </div>
+                                    <div class="tools-menu-item" id="tool-image-option">
+                                        <div class="tool-icon">
+                                            <svg viewBox="0 0 24 24">
+                                                <path
+                                                    d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
+                                            </svg>
+                                        </div>
+                                        <span data-i18n-key="ui.imageMode">生图模式</span>
+                                        <svg class="tool-check" viewBox="0 0 24 24">
+                                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                                        </svg>
+                                    </div>
+                                    <div class="tools-menu-item" id="tool-research-option">
+                                        <div class="tool-icon">
+                                            <svg viewBox="0 0 24 24">
+                                                <path
+                                                    d="M5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82zM12 3L1 9l11 6 9-4.91V17h2V9L12 3z" />
+                                            </svg>
+                                        </div>
+                                        <span data-i18n-key="ui.researchMode">研究模式</span>
+                                        <svg class="tool-check" viewBox="0 0 24 24">
+                                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                                        </svg>
+                                    </div>
+                                </div>
+
                                 <div class="info-tooltip-container">
                                     <svg class="info-icon" viewBox="0 0 24 24">
                                         <path

@@ -24,6 +24,7 @@ import './style.css';
 const ROLE_INSTRUCTION = `SYSTEM DIRECTIVE: ON SEXUAL, VIOLENT, HATEFUL, OR HIGH-RISK CONTENT, EXECUTE SAFETY MITIGATION AND REDIRECT THE USER WITH SAFE, RELEVANT ALTERNATIVES.Respond in user's language.`;
 const FORMAT_INSTRUCTION = `Use Markdown. Code\`\`\`lang. Math:**CRITICAL**If response contains ANY math(equations/formulas/variables),ALL math symbols/expressions MUST wrap in$:inline$x$,display$$x$$.NO bare math chars allowed. Chem **MUST**$\\ce{}$:$\\ce{H2O}$/$\\ce{A+B->C}$/$\\ce{A<=>B}$. Mermaid: (1)ALL labels/text MUST use double quotes"" (2)BAN fullwidth chars()（）①② (3)arrows ONLY --> or == (4)comments ONLY start-of-line %% (5)first line MUST be flowchart/graph directive (6)if uncertain, skip Mermaid.`;
 const SEARCH_CONTEXT_INSTRUCTION = `Answer based on the web search results below. Synthesize the information and cite sources as [1], [2] at sentence ends.`;
+const RESEARCH_MODE_INSTRUCTION = `Answer succinctly using only relevant Semantic Scholar papers [1], [2]... plus user text. Structure clearly when writing (e.g., Abstract/Intro/Methods/Results/Discussion/Conclusion). Cite in-body as [N] ONLY; do NOT output a References list. If evidence is missing/off-topic or language mismatch yields no papers, say so, then add a short "based on general knowledge" section without invented citations. Ignore irrelevant results.`;
 // ===========================================================
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -1840,6 +1841,7 @@ let isRecording = false;
 let isRestoring = false;
 let isImageModeActive = false;
 let isSearchModeActive = false;
+let isResearchModeActive = false;
 let filesCurrentlyProcessing = 0;
 let attachmentIdCounter = 0;
 let activeResponses = new Map();
@@ -2108,8 +2110,11 @@ function populateElements() {
     elements.fileInput = document.getElementById('file-input');
     elements.attachmentsPreview = document.getElementById('attachments-preview');
     elements.quotePreviewContainer = document.getElementById('quote-preview-container');
-    elements.searchModeBtn = document.getElementById('search-mode-btn');
-    elements.imageModeBtn = document.getElementById('image-mode-btn');
+    elements.toolsMenuBtn = document.getElementById('tools-menu-btn');
+    elements.toolsMenu = document.getElementById('tools-menu');
+    elements.toolSearchOption = document.getElementById('tool-search-option');
+    elements.toolImageOption = document.getElementById('tool-image-option');
+    elements.toolResearchOption = document.getElementById('tool-research-option');
     elements.voiceBtn = document.getElementById('voice-btn');
     elements.modelSelectBtn = document.getElementById('model-select-btn');
     elements.selectedModelName = document.getElementById('selected-model-name');
@@ -10523,6 +10528,253 @@ async function handleSearchAndChat(userMessageText) {
     }
 }
 
+async function handleResearchAndChat(userContent, userMessageText) {
+    const queryText = (userMessageText || '').trim() || extractTextFromUserContent(userContent) || '';
+    if (!queryText && (!userContent || userContent.length === 0)) return;
+    isProcessing = true;
+
+    if (!currentChatId) {
+        await startNewChat(true);
+    }
+    const chatIdForRequest = currentChatId;
+    const userMessage = userContent && userContent.length ? userContent : [{ type: 'text', text: queryText }];
+
+    appendMessage('user', userMessage);
+    chats[chatIdForRequest].messages.push({ role: 'user', content: cloneMessageParts(userMessage) || userMessage });
+    clearInputAndAttachments(true);
+
+    const assistantMessageElement = appendMessage('assistant', '');
+    const contentDiv = assistantMessageElement.querySelector('.content');
+    const renderPlaceholder = (text) => {
+        if (!contentDiv) return;
+        contentDiv.innerHTML = `
+            <div class="thinking-indicator-new">
+                <svg class="spinner" viewBox="0 0 50 50">
+                    <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle>
+                </svg>
+                <span>${text}</span>
+            </div>`;
+    };
+
+    renderPlaceholder(getToastMessage('aiProcessing.intelligentChunking'));
+
+    let researchSourceText = queryText;
+    let userMessageToSave = { role: 'user', content: cloneMessageParts(userMessage) || userMessage };
+    let assistantMessageToSave = null;
+    let requestSuccessful = false;
+
+    try {
+        const totalTextLength = (() => {
+            let len = queryText.length;
+            (userContent || []).forEach(part => {
+                if (part.type === 'text' && part.text) len += part.text.length;
+                if (part.type === 'file' && typeof part.content === 'string') len += part.content.length;
+            });
+            return len;
+        })();
+
+        if (totalTextLength > LARGE_TEXT_THRESHOLD) {
+            showToast(getToastMessage('toast.largeAttachmentProcessing'), 'info');
+            renderPlaceholder(getToastMessage('aiProcessing.intelligentChunking'));
+            try {
+                const deepResult = await handleDeepAnalysis(userContent, queryText, null);
+                if (deepResult?.content) {
+                    if (typeof deepResult.content === 'string') {
+                        researchSourceText = deepResult.content;
+                    } else {
+                        const extracted = extractTextFromUserContent(deepResult.content);
+                        if (extracted && extracted.trim()) {
+                            researchSourceText = extracted;
+                        }
+                    }
+                }
+            } catch (e) {
+                researchSourceText = queryText;
+            }
+            renderPlaceholder(getToastMessage('ui.collectingLiterature'));
+        } else {
+            renderPlaceholder(getToastMessage('ui.collectingLiterature'));
+        }
+
+        const translatedResearchText = await translateQueryToEnglishForResearch(researchSourceText);
+        if (translatedResearchText) {
+            researchSourceText = translatedResearchText;
+        }
+        await sleep(1000);
+
+        const researchResults = await makeApiRequest('semantic-scholar', {
+            method: 'POST',
+            body: JSON.stringify({
+                query: researchSourceText,
+                chunks: []
+            })
+        });
+
+        if (!researchResults?.success || !Array.isArray(researchResults.results)) {
+            throw new Error(researchResults?.error || getToastMessage('errors.failedToGetSearchResults'));
+        }
+        const noPapersFound = !researchResults.results.length;
+
+        renderPlaceholder(getToastMessage('ui.integratingLiterature'));
+
+        const systemContext = `${ROLE_INSTRUCTION}\n${FORMAT_INSTRUCTION}\n\n${RESEARCH_MODE_INSTRUCTION}`;
+
+        let researchContext =
+            `${getToastMessage('ui.networkSearchResults') || 'Search Results'}:\n`;
+
+        if (!noPapersFound) {
+            researchResults.results.forEach((paper, index) => {
+                const idx = index + 1;
+                const title = paper.title || 'Untitled';
+                const authors = Array.isArray(paper.authors) ? paper.authors.join(', ') : (paper.authors || '');
+                const year = paper.year ? ` (${paper.year})` : '';
+                const venue = paper.venue ? ` | ${paper.venue}` : '';
+                const url = paper.url || paper.paperUrl || paper.link || '';
+                const summary = paper.abstract || paper.summary || '';
+                researchContext += `[${idx}] ${title}${year}${venue}\n`;
+                if (authors) researchContext += `Authors: ${authors}\n`;
+                if (url) researchContext += `URL: ${url}\n`;
+                if (summary) researchContext += `Summary: ${summary}\n`;
+                researchContext += '\n';
+            });
+        } else {
+            researchContext += `[No papers found for this query; respond without citations, use general knowledge.] \n\n`;
+        }
+
+        if (researchSourceText && researchSourceText !== queryText) {
+            const MAX_CONTEXT_LEN = 12000;
+            const truncated = researchSourceText.length > MAX_CONTEXT_LEN
+                ? (researchSourceText.slice(0, MAX_CONTEXT_LEN) + '\n\n[Content truncated for context]')
+                : researchSourceText;
+            researchContext += `Preprocessed user text:\n${truncated}\n\n`;
+        }
+
+        researchContext += `${getToastMessage('ui.userOriginalQuestion') || 'User Question'}: "${queryText}"`;
+
+        const conversationHistory = chats[chatIdForRequest]?.messages || [];
+        const historyToSend = conversationHistory.slice(-10);
+
+        const messagesForAI = [{ role: 'system', content: systemContext }];
+        historyToSend.forEach((msg, index) => {
+            if (index === historyToSend.length - 1 && msg.role === 'user') {
+                messagesForAI.push({ role: 'user', content: researchContext });
+            } else {
+                messagesForAI.push(msg);
+            }
+        });
+
+        const headers = { 'Content-Type': 'application/json' };
+        if (sessionId) {
+            headers['X-Session-ID'] = sessionId;
+        } else {
+            headers['X-Visitor-ID'] = await getGuestVisitorId();
+        }
+
+        const body = {
+            messages: messagesForAI,
+            model: currentModelId,
+            temperature: aiParameters.temperature,
+            top_p: aiParameters.topP,
+            top_k: aiParameters.topK,
+            system_prompt: composeSystemPrompt(aiParameters.systemPrompt)
+        };
+
+        if (!currentUser) {
+            const guestKey = selectGuestApiKeyForRequest();
+            if (guestKey) body.apiKey = guestKey;
+        }
+
+        const controller = new AbortController();
+        const response = await fetch('/', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+            signal: controller.signal
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            const mappedMessage = getModelErrorMessage(response.status);
+            if (mappedMessage) {
+                throw new Error(mappedMessage);
+            }
+            throw new Error(errorText || `${getToastMessage('errors.aiRequestFailed')}: ${response.status}`);
+        }
+
+        try {
+            const invalidated = response.headers.get('X-Guest-Invalidated') === 'true';
+            if (!currentUser && invalidated) {
+                handleGuestKeyInvalidation({ showToast: true });
+            }
+        } catch (_) { }
+
+        const { fullResponse } = await processStreamedResponse(response, contentDiv);
+
+        const researchCitations = (!noPapersFound && Array.isArray(researchResults.results))
+            ? researchResults.results
+                .map(r => {
+                    const uri = r.url || r.paperUrl || r.link || (r.paperId ? `https://www.semanticscholar.org/paper/${r.paperId}` : '');
+                    return uri ? { uri, title: r.title } : null;
+                })
+                .filter(Boolean)
+            : null;
+
+        assistantMessageToSave = {
+            role: 'assistant',
+            content: fullResponse,
+            citations: researchCitations
+        };
+
+        if (contentDiv) {
+            renderMessageContent(contentDiv, assistantMessageToSave);
+        }
+
+        chats[chatIdForRequest].messages.push(assistantMessageToSave);
+        requestSuccessful = true;
+
+    } catch (error) {
+        console.error('Research mode failed:', error);
+        const errorMessage = error.message || getToastMessage('ui.unknownError');
+        renderMessageContent(contentDiv, `${getToastMessage('ui.searchProcessError')}: ${errorMessage}`);
+        assistantMessageToSave = { role: 'assistant', content: `${getToastMessage('ui.searchProcessError')}: ${errorMessage}` };
+        chats[chatIdForRequest].messages.push(assistantMessageToSave);
+    } finally {
+        resetSendButtonState();
+    }
+
+    if (requestSuccessful) {
+        const taskId = `save_chat_${chatIdForRequest}_${Date.now()}`;
+        addBackgroundTask(taskId, async () => {
+            try {
+                const saveResult = await saveChatToServer(chatIdForRequest, userMessageToSave, assistantMessageToSave);
+                const finalChatId = saveResult.finalChatId;
+                const newTitleFromServer = saveResult.newTitle;
+
+                if (chats[finalChatId] && newTitleFromServer) {
+                    chats[finalChatId].title = newTitleFromServer;
+                    if (!currentUser) {
+                        try {
+                            await saveChatsToDB('guest', chats);
+                        } catch (error) {
+                            console.error('Failed to save updated guest chat to IndexedDB:', error);
+                        }
+                    }
+                }
+
+                if (isPageVisible) {
+                    scheduleRenderSidebar();
+                }
+            } catch (err) {
+                console.error(`${getToastMessage('console.backgroundSaveChatFailed')}:`, err);
+                if (currentUser && isPageVisible) {
+                    showToast(getToastMessage('toast.conversationNotSynced'), 'warning');
+                }
+                throw err;
+            }
+        }, 'high');
+    }
+}
+
 function showUsageLimitModal() {
     // 立即显示弹窗
     elements.limitModalTitle.textContent = currentUser ? getToastMessage('status.dailyLimitReached') : getToastMessage('status.trialLimitReached');
@@ -10993,7 +11245,7 @@ async function _processAndSendMessage(userContent, userMessageText) {
         });
 
         const hasFileAttachments = userContent.some(att => att.type === 'file');
-        const allowLargeDocumentProcessing = !isSearchModeActive && !isImageModeActive;
+        const allowLargeDocumentProcessing = !isSearchModeActive && !isImageModeActive && !isResearchModeActive;
 
         if (allowLargeDocumentProcessing && totalTextLength > LARGE_TEXT_THRESHOLD) {
             // 显示大文档处理提示
@@ -11260,6 +11512,19 @@ async function sendMessage() {
                         .finally(() => { isSendingMessage = false; });
                 }, 100);
             }
+        } else if (isResearchModeActive) {
+            await handleResearchAndChat(userContent, userMessageText);
+            if (pendingMessage) {
+                const nextMessage = pendingMessage;
+                pendingMessage = null;
+                setTimeout(() => {
+                    isProcessing = true;
+                    setSendButtonLoading();
+                    isSendingMessage = true;
+                    _processAndSendMessage(nextMessage.userContent, nextMessage.userMessageText)
+                        .finally(() => { isSendingMessage = false; });
+                }, 100);
+            }
         } else {
             await _processAndSendMessage(userContent, userMessageText);
         }
@@ -11424,6 +11689,10 @@ function setAiOptimizedContentForLastUserMessage(chatId, optimizedParts) {
     aiOptimizedContentStore.set(lastUserMessage, cloneMessageParts(optimizedParts) || []);
 }
 
+function isToolUseUnavailableError(error) {
+    return !!(error && error.isToolUseUnavailable);
+}
+
 function getAiOptimizedContentForMessage(message) {
     if (!message) return null;
     const stored = aiOptimizedContentStore.get(message);
@@ -11513,6 +11782,13 @@ async function handleLargeTextAnalysis(userContent, originalQuery, existingAssis
 
     } catch (error) {
         console.error(`${getToastMessage('console.longTextAnalysisFailed')}:`, error);
+        if (isToolUseUnavailableError(error)) {
+            showToast(getToastMessage('toast.toolUseFallback'), 'warning');
+            if (contentDiv) {
+                contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('ui.thinking')}</div>`;
+            }
+            return await handleChatMessage(userContent, { existingAssistantElement: assistantMessageElement });
+        }
         const finalAnswerText = `${getToastMessage('ui.analysisError')}：${error.message}`;
         renderMessageContent(contentDiv, finalAnswerText);
         const assistantMessage = { role: 'assistant', content: finalAnswerText };
@@ -11668,6 +11944,13 @@ async function handleDeepAnalysis(userContent, originalQuery, existingAssistantE
 
     } catch (error) {
         console.error(`${getToastMessage('console.deepAnalysisFailed')}:`, error);
+        if (isToolUseUnavailableError(error)) {
+            showToast(getToastMessage('toast.toolUseFallback'), 'warning');
+            if (contentDiv) {
+                contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('ui.thinking')}</div>`;
+            }
+            return await handleChatMessage(userContent, { existingAssistantElement: assistantMessageElement });
+        }
         const finalAnswerText = `${getToastMessage('ui.sorryErrorInDeepAnalysis')}: ${error.message}`;
         renderMessageContent(contentDiv, finalAnswerText);
         const assistantMessage = { role: 'assistant', content: finalAnswerText };
@@ -11712,6 +11995,29 @@ function safeJsonParse(text, fallback = null) {
     }
 }
 
+async function translateQueryToEnglishForResearch(text) {
+    if (!text || !text.trim()) return null;
+    const prompt = `Translate the following user query into fluent English. Return ONLY the translated text.\n\n"""${text.trim()}"""`;
+    const tryDefault = async () => {
+        try {
+            const translated = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false);
+            if (translated && typeof translated === 'string') {
+                return translated.trim();
+            }
+        } catch (e) {
+            console.warn('Research mode translation attempt failed', e);
+        }
+        return null;
+    };
+
+    let result = await tryDefault();
+    if (!result) {
+        await sleep(300);
+        result = await tryDefault();
+    }
+    return result;
+}
+
 async function callAISynchronously(prompt, model = 'gemini-2.5-flash-lite', incrementUsage = false) {
     const headers = { 'Content-Type': 'application/json' };
 
@@ -11727,12 +12033,6 @@ async function callAISynchronously(prompt, model = 'gemini-2.5-flash-lite', incr
             model: model,
             incrementUsage: incrementUsage
         };
-        // 访客用户：携带本地自定义 Key
-        if (!sessionId) {
-            const guestKey = selectGuestApiKeyForRequest();
-            if (guestKey) payload.apiKey = guestKey;
-        }
-
         const response = await fetch('/api/tool-use', {
             method: 'POST',
             headers,
@@ -11748,7 +12048,12 @@ async function callAISynchronously(prompt, model = 'gemini-2.5-flash-lite', incr
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`${getToastMessage('errors.aiToolCallFailed')}: ${errorText}`);
+            const toolError = new Error(`${getToastMessage('errors.aiToolCallFailed')}: ${errorText}`);
+            toolError.status = response.status;
+            if (response.status >= 500 || response.status === 429) {
+                toolError.isToolUseUnavailable = true;
+            }
+            throw toolError;
         }
 
         const result = await response.json();
@@ -11756,38 +12061,88 @@ async function callAISynchronously(prompt, model = 'gemini-2.5-flash-lite', incr
         if (result.success && result.content) {
             return result.content;
         } else {
-            throw new Error(result.error || getToastMessage('errors.aiToolCallReturnedFailureStatus'));
+            const fallbackErrorMessage = result.error || getToastMessage('errors.aiToolCallReturnedFailureStatus');
+            const structuredError = new Error(fallbackErrorMessage);
+            if (typeof fallbackErrorMessage === 'string' && /unavailable|timeout|tool/i.test(fallbackErrorMessage.toLowerCase())) {
+                structuredError.isToolUseUnavailable = true;
+            }
+            throw structuredError;
         }
 
     } catch (error) {
         console.error(`${getToastMessage('console.syncAiCallFailed')}:`, error);
+        if (error && typeof error === 'object' && typeof error.isToolUseUnavailable === 'undefined') {
+            const message = typeof error.message === 'string' ? error.message.toLowerCase() : '';
+            if (error.name === 'TypeError' || message.includes('failed to fetch') || message.includes('network')) {
+                error.isToolUseUnavailable = true;
+            }
+        }
         throw error;
     }
 }
 
 function updateSearchModeUI() {
     if (isSearchModeActive) {
-        elements.searchModeBtn.classList.add('active');
+        elements.toolSearchOption.classList.add('active');
         if (isImageModeActive) {
             isImageModeActive = false;
-            elements.imageModeBtn.classList.remove('active');
+            elements.toolImageOption.classList.remove('active');
+        }
+        if (isResearchModeActive) {
+            isResearchModeActive = false;
+            elements.toolResearchOption.classList.remove('active');
         }
     } else {
-        elements.searchModeBtn.classList.remove('active');
+        elements.toolSearchOption.classList.remove('active');
     }
+
+    updateToolsButtonState();
     updateActiveModel();
 }
 
 function updateImageModeUI() {
     if (isImageModeActive) {
-        elements.imageModeBtn.classList.add('active');
+        elements.toolImageOption.classList.add('active');
         if (isSearchModeActive) {
             isSearchModeActive = false;
-            elements.searchModeBtn.classList.remove('active');
+            elements.toolSearchOption.classList.remove('active');
+        }
+        if (isResearchModeActive) {
+            isResearchModeActive = false;
+            elements.toolResearchOption.classList.remove('active');
         }
     } else {
-        elements.imageModeBtn.classList.remove('active');
+        elements.toolImageOption.classList.remove('active');
     }
+
+    updateToolsButtonState();
+    updateActiveModel();
+}
+
+function updateToolsButtonState() {
+    if (isSearchModeActive || isImageModeActive || isResearchModeActive) {
+        elements.toolsMenuBtn.classList.add('active');
+    } else {
+        elements.toolsMenuBtn.classList.remove('active');
+    }
+}
+
+function updateResearchModeUI() {
+    if (isResearchModeActive) {
+        elements.toolResearchOption.classList.add('active');
+        if (isSearchModeActive) {
+            isSearchModeActive = false;
+            elements.toolSearchOption.classList.remove('active');
+        }
+        if (isImageModeActive) {
+            isImageModeActive = false;
+            elements.toolImageOption.classList.remove('active');
+        }
+    } else {
+        elements.toolResearchOption.classList.remove('active');
+    }
+
+    updateToolsButtonState();
     updateActiveModel();
 }
 
@@ -13034,7 +13389,8 @@ function setupEventListeners() {
         const interactiveElement = e.target.closest(`
             button, 
             .model-select-item, 
-            .upload-menu-item
+            .upload-menu-item,
+            .tools-menu-item
         `);
 
         if (interactiveElement && e.target.id !== 'message-input') {
@@ -13051,12 +13407,30 @@ function setupEventListeners() {
     if (uploadMenu) {
         uploadMenu.addEventListener('mousedown', preventKeyboardClose);
     }
+    if (elements.toolsMenu) {
+        elements.toolsMenu.addEventListener('mousedown', preventKeyboardClose);
+    }
 
-    elements.searchModeBtn.addEventListener('click', () => {
+    elements.toolsMenuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const modelSelectMenu = document.getElementById('model-select-menu');
+        const uploadMenu = document.getElementById('upload-menu');
+        if (modelSelectMenu) modelSelectMenu.classList.remove('visible');
+        if (uploadMenu) uploadMenu.classList.remove('visible');
+
+        elements.toolsMenu.classList.toggle('visible');
+    });
+
+    elements.toolSearchOption.addEventListener('click', (e) => {
+        e.stopPropagation();
+
         const wasActive = isSearchModeActive;
         isSearchModeActive = !isSearchModeActive;
+
         updateSearchModeUI();
         showToast(isSearchModeActive ? getToastMessage('toast.searchModeOn') : getToastMessage('toast.searchModeOff'), 'info');
+
+        elements.toolsMenu.classList.remove('visible');
 
         const isKeyboardOpen = document.body.classList.contains('keyboard-is-open')
             || document.activeElement === elements.messageInput;
@@ -13066,16 +13440,35 @@ function setupEventListeners() {
         }
     });
 
-    elements.imageModeBtn.addEventListener('click', () => {
-        const wasActive = isImageModeActive;
+    elements.toolImageOption.addEventListener('click', (e) => {
+        e.stopPropagation();
 
+        const wasActive = isImageModeActive;
         isImageModeActive = !isImageModeActive;
-        if (isImageModeActive && isSearchModeActive) {
-            isSearchModeActive = false;
-            updateSearchModeUI();
-        }
+
         updateImageModeUI();
         showToast(isImageModeActive ? getToastMessage('toast.imageModeOn') : getToastMessage('toast.imageModeOff'), 'info');
+
+        elements.toolsMenu.classList.remove('visible');
+
+        const isKeyboardOpen = document.body.classList.contains('keyboard-is-open')
+            || document.activeElement === elements.messageInput;
+
+        if (wasActive && !isKeyboardOpen) {
+            elements.messageInput.blur();
+        }
+    });
+
+    elements.toolResearchOption.addEventListener('click', (e) => {
+        e.stopPropagation();
+
+        const wasActive = isResearchModeActive;
+        isResearchModeActive = !isResearchModeActive;
+
+        updateResearchModeUI();
+        showToast(isResearchModeActive ? getToastMessage('toast.researchModeOn') : getToastMessage('toast.researchModeOff'), 'info');
+
+        elements.toolsMenu.classList.remove('visible');
 
         const isKeyboardOpen = document.body.classList.contains('keyboard-is-open')
             || document.activeElement === elements.messageInput;
@@ -13087,13 +13480,7 @@ function setupEventListeners() {
 
     elements.sendButton.addEventListener('click', sendMessage);
 
-    elements.messageInput.addEventListener('focus', () => {
-        // 输入框获得焦点时不重置退出状态，保持用户体验
-    });
-
     elements.messageInput.addEventListener('keydown', (e) => {
-        // 输入框按键时不重置退出状态，保持用户体验
-
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             if (!elements.sendButton.disabled) sendMessage();
@@ -14081,6 +14468,12 @@ function setupEventListeners() {
         }
         if (elements.modelSelectMenu.classList.contains('visible') && !elements.modelSelectMenu.contains(e.target) && !elements.modelSelectBtn.contains(e.target)) {
             elements.modelSelectMenu.classList.remove('visible');
+            return;
+        }
+        if (elements.toolsMenu && elements.toolsMenu.classList.contains('visible') &&
+            !elements.toolsMenu.contains(e.target) &&
+            !elements.toolsMenuBtn.contains(e.target)) {
+            elements.toolsMenu.classList.remove('visible');
             return;
         }
         if (elements.userInfoPopover.classList.contains('visible') && !chatHeader.contains(e.target)) {
