@@ -11049,14 +11049,14 @@ async function handleChatMessage(userContent, options = {}) {
                     return;
                 }
 
-                // 检查是否是用量限制错误（支持多语言）
+                // 检查是否是用量限制错误
                 const usageLimitKeywords = [
                     getToastMessage('errors.usageLimitReached'),
                     getToastMessage('errors.dailyUsageLimitReached'),
                     getToastMessage('errors.searchFeatureDailyLimitReached'),
                     'usage', 'limit', 'quota', 'daily', 'limit reached'
                 ];
-                const isUsageLimitError = usageLimitKeywords.some(keyword =>
+                const isUsageLimitError = response.status === 429 && usageLimitKeywords.some(keyword =>
                     rawErrorMessage.toLowerCase().includes(keyword.toLowerCase())
                 );
 
@@ -12588,6 +12588,18 @@ async function forceClearCacheAndReload() {
             localStorage.setItem('forceReloadLanguage', 'true');
         }
 
+        // 登录用户：清空本地聊天缓存并强制下次从服务器拉取
+        if (currentUser?.id) {
+            try {
+                await deleteChatsFromDB(currentUser.id);
+            } catch (err) {
+                console.warn('Failed to delete cached chats during cache clear:', err);
+            }
+            try {
+                localStorage.setItem('forceServerChatsReload', '1');
+            } catch (_) { }
+        }
+
         try {
             await toastCtrl.whenShown;
         } catch (_) { }
@@ -13860,7 +13872,7 @@ function setupEventListeners() {
 
         // 立即显示UI并更新URL
         if (elements.settingsModal) {
-            hideAuthOverlay();
+            hideAuthOverlay(false, { routeHandled: true, skipHandleBack: true });
             elements.settingsModal.classList.add('visible');
             elements.chatContainer.style.display = 'flex';
             updateLoginButtonVisibility();
