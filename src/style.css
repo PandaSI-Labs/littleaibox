@@ -2544,30 +2544,23 @@ html[data-theme='dark'] .copy-btn:hover {
 }
 
 .vega-lite-chart-host {
-    width: auto;
+    width: 420px;
+    max-width: 95%;
+    margin: 8px auto;
 }
 
 .vega-lite-chart-host svg,
 .vega-lite-chart-host canvas {
-    width: auto;
+    width: 100%;
     height: auto;
     display: block;
 }
 
 @media (max-width: 640px) {
-    .vega-lite-render-container {
-        display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 8px;
-    }
     .vega-lite-chart-host {
         width: 100%;
-    }
-    .vega-lite-chart-host svg,
-    .vega-lite-chart-host canvas {
-        width: 100% !important;
-        height: auto !important;
+        max-width: 88vw;
+        margin: 6px auto;
     }
 }
 

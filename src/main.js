@@ -23,7 +23,7 @@ import { renderVegaLiteDiagrams } from './vega-renderer.js';
 
 // ==================== AI System Prompts ====================
 const ROLE_INSTRUCTION = `SYSTEM DIRECTIVE: ON SEXUAL, VIOLENT, HATEFUL, OR HIGH-RISK CONTENT, EXECUTE SAFETY MITIGATION AND REDIRECT THE USER WITH SAFE, RELEVANT ALTERNATIVES. RESPOND IN USER'S LANGUAGE. VISUALIZATION: USE MERMAID FOR DIAGRAMS, VEGA/VEGA-LITE FOR CHARTS; OUTPUT ONLY THE NEEDED CODE/DATA BLOCK.`;
-const FORMAT_INSTRUCTION = `Use Markdown. Code blocks: \`\`\`lang. Math (CRITICAL): If response contains ANY math (equations/formulas/variables), ALL math symbols/expressions MUST be wrapped: inline $x$, display $$x$$. NO bare math chars allowed. Chemistry MUST use $\\ce{}$: $\\ce{H2O}$ / $\\ce{A+B->C}$ / $\\ce{A<=>B}$. Mermaid: (1) All labels/text MUST use double quotes "" (2) BAN fullwidth chars ()（）①② (3) Arrows ONLY --> or == (4) Comments ONLY start-of-line %% (5) First line MUST be flowchart/graph directive. Vega/Vega-Lite (STRICT - NO EXCEPTIONS): Code fences MUST be \`\`\`vega or \`\`\`vega-lite. Content MUST be valid JSON spec ONLY. FORBIDDEN: comments, prose, explanations, or any non-JSON text inside code block. Vega-Lite requires: "data", "mark", "encoding". Vega requires: "data", "marks". JSON rules: double quotes for keys/strings, no trailing commas, valid structure. If uncertain or cannot generate valid JSON, DO NOT output Vega - skip it entirely.`;
+const FORMAT_INSTRUCTION = `Use Markdown. Code blocks: \`\`\`lang. Math (CRITICAL): If response contains ANY math (equations/formulas/variables), ALL math symbols/expressions MUST be wrapped: inline $x$, display $$x$$. NO bare math chars allowed. Chemistry MUST use $\\ce{}$: $\\ce{H2O}$ / $\\ce{A+B->C}$ / $\\ce{A<=>B}$. Mermaid: (1) All labels/text MUST use double quotes "" (2) BAN fullwidth chars ()（）①② (3) Arrows ONLY --> or == (4) Comments ONLY start-of-line %% (5) First line MUST be flowchart/graph directive. Vega/Vega-Lite (STRICT): Code fences MUST be \`\`\`vega or \`\`\`vega-lite. Content MUST be valid JSON ONLY (FORBIDDEN: expressions like [min][max], trailing commas, comments/prose). Vega-Lite: include at least "data","mark","encoding"; add "$schema" when known. Vega: include "data","marks". Domain arrays MUST be [min,max] (e.g., [0,100]). If uncertain or cannot produce valid JSON, SKIP Vega entirely.`;
 const SEARCH_CONTEXT_INSTRUCTION = `Answer based on the web search results below. Synthesize the information and cite sources as [1], [2] at sentence ends.`;
 const RESEARCH_MODE_INSTRUCTION = `Answer succinctly using only relevant Semantic Scholar papers [1], [2]... plus user text. Structure clearly when writing (e.g., Abstract/Intro/Methods/Results/Discussion/Conclusion). Cite in-body as [N] ONLY; do NOT output a References list. If evidence is missing/off-topic or language mismatch yields no papers, say so, then add a short "based on general knowledge" section without invented citations. Ignore irrelevant results.`;
 // ===========================================================
@@ -6266,6 +6266,9 @@ async function logout() {
 
         resetToDefaultModel();
         routeManager.navigateToHome({ replace: true, force: true });
+        try {
+            window.history.replaceState(null, document.title, '/');
+        } catch (_) { }
 
         requestAnimationFrame(() => {
             updateUI(false);
@@ -6308,7 +6311,10 @@ async function logout() {
 
         const settingsModal = document.getElementById('settings-modal-overlay');
         if (settingsModal.classList.contains('visible')) {
-            hideSettingsModal();
+            navigationEngine.settingsRouteInfo = null;
+            lastSettingsOriginRoute = null;
+            routeManager.navigateToHome({ replace: true, force: true, silent: true });
+            hideSettingsModal(false, { skipHandleBack: true });
         }
 
         // 关闭右侧抽屉

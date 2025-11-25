@@ -9,7 +9,34 @@ if ('storage' in navigator && 'persist' in navigator.storage) {
 }
 
 cleanupOutdatedCaches();
-precacheAndRoute(self.__WB_MANIFEST);
+
+const ADDITIONAL_PRECACHE = [
+    { url: '/libs/mermaid.min.js', revision: null },
+    { url: '/libs/vega.min.js', revision: null },
+    { url: '/libs/vega-lite.min.js', revision: null },
+    { url: '/libs/vega-embed.min.js', revision: null },
+    { url: '/data/cars.json', revision: null }
+];
+
+const manifestEntries = self.__WB_MANIFEST || [];
+const normalizePath = (url) => {
+    try {
+        return new URL(url, self.location.origin).pathname;
+    } catch (_) {
+        const safe = (url || '').split('?')[0];
+        return safe.startsWith('/') ? safe : `/${safe}`;
+    }
+};
+const normalizedManifestUrls = new Set(
+    manifestEntries.map((entry) => normalizePath(typeof entry === 'string' ? entry : entry.url))
+);
+
+const filteredAdditional = ADDITIONAL_PRECACHE.filter((entry) => {
+    const baseUrl = normalizePath(entry.url || '');
+    return !normalizedManifestUrls.has(baseUrl);
+});
+
+precacheAndRoute(manifestEntries.concat(filteredAdditional));
 
 self.addEventListener('install', (event) => {
     event.waitUntil(self.skipWaiting());
@@ -95,6 +122,11 @@ registerRoute(
 registerRoute(
     ({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/libs/') && (request.destination === 'script' || url.pathname.endsWith('.js')),
     new CacheFirst({ cacheName: 'libs-script-cache' })
+);
+
+registerRoute(
+    ({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/data/') && url.pathname.endsWith('.json'),
+    new CacheFirst({ cacheName: 'data-cache' })
 );
 
 // PDF.js CMaps（文字映射表）

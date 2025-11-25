@@ -12,6 +12,15 @@ function parseRouteFromLocation() {
     const { pathname, search } = window.location;
     const segments = normalizePathname(pathname).split('/').filter(Boolean);
 
+    if (segments.length >= 3 &&
+        (segments[0] === 'chat' || segments[0] === 'temp_chat') &&
+        segments[2] === 'settings') {
+        const chatRoute = segments[0] === 'temp_chat' ? 'tempChat' : 'chat';
+        const chatId = decodeURIComponent(segments[1]);
+        const section = segments[3] ? decodeURIComponent(segments[3]) : DEFAULT_SETTINGS_SECTION;
+        return { name: 'settings', params: { section, chatId, chatRoute } };
+    }
+
     if (segments.length >= 2 && segments[0] === 'chat') {
         return { name: 'chat', params: { chatId: decodeURIComponent(segments[1]) } };
     }
@@ -52,6 +61,10 @@ function buildPath(routeName, params = {}) {
             return params.chatId ? `/temp_chat/${safeId(params.chatId)}` : '/';
         case 'settings': {
             const section = params.section || DEFAULT_SETTINGS_SECTION;
+            if (params.chatId) {
+                const chatRoute = params.chatRoute === 'tempChat' ? 'temp_chat' : 'chat';
+                return `/${chatRoute}/${safeId(params.chatId)}/settings/${safeId(section)}`;
+            }
             return `/settings/${safeId(section)}`;
         }
         case 'auth': {

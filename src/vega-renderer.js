@@ -129,6 +129,14 @@ function safeParseSpec(raw) {
     }
 }
 
+function normalizeVegaSpecString(raw) {
+    if (typeof raw !== 'string') return raw;
+    let text = raw;
+    // Fix invalid domain patterns like [0][65] -> [0, 65]
+    text = text.replace(/"domain"\s*:\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]/g, '"domain": [$1, $2]');
+    return text;
+}
+
 const DATA_URL_REWRITES = [
     {
         pattern: /https?:\/\/raw\.githubusercontent\.com\/vega\/vega-datasets\/(?:next\/)?data\/([^?#]+)/i,
@@ -228,7 +236,9 @@ export function renderVegaLiteDiagrams(rootElement, { loadScript, isFinalRender 
 
             codeElement.dataset.vegaLitePending = 'true';
             const rawSpec = (codeElement.textContent || '').trim();
-            if (!rawSpec || !looksLikeVegaSpecText(rawSpec)) {
+            const normalizedSpecText = normalizeVegaSpecString(rawSpec);
+
+            if (!normalizedSpecText || !looksLikeVegaSpecText(normalizedSpecText)) {
                 if (isFinalRender) {
                     codeElement.dataset.vegaLiteProcessed = 'skipped';
                 } else {
@@ -240,7 +250,11 @@ export function renderVegaLiteDiagrams(rootElement, { loadScript, isFinalRender 
 
             let spec;
             try {
-                spec = safeParseSpec(rawSpec);
+                spec = safeParseSpec(normalizedSpecText);
+                if (normalizedSpecText !== rawSpec) {
+                    codeElement.textContent = normalizedSpecText;
+                    codeElement.dataset.vegaLiteSanitized = 'true';
+                }
             } catch (error) {
                 if (isFinalRender) {
                     codeElement.dataset.vegaLiteProcessed = 'error';
@@ -258,6 +272,7 @@ export function renderVegaLiteDiagrams(rootElement, { loadScript, isFinalRender 
                     ? structuredClone(spec)
                     : JSON.parse(JSON.stringify(spec));
                 rewriteDataUrls(specCopy);
+                parentPre.replaceWith(container);
 
                 const preClone = parentPre.cloneNode(true);
                 preClone.classList.add('vega-lite-source');
@@ -301,8 +316,6 @@ export function renderVegaLiteDiagrams(rootElement, { loadScript, isFinalRender 
                 details.appendChild(summary);
                 details.appendChild(preClone);
                 container.appendChild(details);
-
-                parentPre.replaceWith(container);
                 codeElement.dataset.vegaLiteProcessed = 'true';
             } catch (error) {
                 if (isFinalRender) {
