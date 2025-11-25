@@ -2520,22 +2520,59 @@ html[data-theme='dark'] .copy-btn:hover {
 
 /**
  * =============================================================================
- * Mermaid 渲染工具栏
+ * Mermaid/Vega-Lite 渲染工具栏
  * =============================================================================
  */
 
-.mermaid-render-container {
+.mermaid-render-container,
+.vega-lite-render-container {
     margin: 16px 0;
 }
 
-.mermaid-render-toolbar {
+.mermaid-source-toggle,
+.vega-lite-source-toggle {
+    display: block;
+    margin: 8px 0;
+}
+
+.mermaid-render-toolbar,
+.vega-lite-toolbar {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
     margin-bottom: 8px;
 }
 
-.mermaid-download-btn {
+.vega-lite-chart-host {
+    width: auto;
+}
+
+.vega-lite-chart-host svg,
+.vega-lite-chart-host canvas {
+    width: auto;
+    height: auto;
+    display: block;
+}
+
+@media (max-width: 640px) {
+    .vega-lite-render-container {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+    .vega-lite-chart-host {
+        width: 100%;
+    }
+    .vega-lite-chart-host svg,
+    .vega-lite-chart-host canvas {
+        width: 100% !important;
+        height: auto !important;
+    }
+}
+
+.mermaid-download-btn,
+.vega-lite-download-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2550,24 +2587,28 @@ html[data-theme='dark'] .copy-btn:hover {
     transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
-.mermaid-download-btn:hover {
+.mermaid-download-btn:hover,
+.vega-lite-download-btn:hover {
     background-color: var(--hover-bg, #e8f0fe);
     border-color: var(--accent-color, #1a73e8);
 }
 
-.mermaid-download-btn svg {
+.mermaid-download-btn svg,
+.vega-lite-download-btn svg {
     width: 18px;
     height: 18px;
     fill: currentColor;
 }
 
-html[data-theme='dark'] .mermaid-download-btn {
+html[data-theme='dark'] .mermaid-download-btn,
+html[data-theme='dark'] .vega-lite-download-btn {
     background-color: var(--gpt-input-bg, #2c2c2f);
     color: var(--primary-text-color, #f0f0f0);
     border-color: var(--border-color, #444444);
 }
 
-html[data-theme='dark'] .mermaid-download-btn:hover {
+html[data-theme='dark'] .mermaid-download-btn:hover,
+html[data-theme='dark'] .vega-lite-download-btn:hover {
     background-color: var(--hover-bg, #3a3a3a);
     border-color: var(--accent-color, #3b82f6);
 }
@@ -2583,7 +2624,6 @@ html[data-theme='dark'] .mermaid-download-btn:hover {
     white-space: nowrap;
     border: 0;
 }
-
 
 /**
  * =============================================================================

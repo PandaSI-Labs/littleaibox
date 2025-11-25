@@ -19,10 +19,11 @@ import { cancelMfaVerificationFlow, clearMfaChallengeState, configureMfaLogin, e
 import { clearPendingOAuthState, handleOAuthCallbackRoute as handleOAuthCallbackRouteImpl, setupNativeOAuthDeepLinkHandler as setupNativeOAuthDeepLinkHandlerImpl, setupOAuthButtons as setupOAuthButtonsImpl } from './oauth-flow.js';
 import router, { DEFAULT_SETTINGS_SECTION } from './router.js';
 import './style.css';
+import { renderVegaLiteDiagrams } from './vega-renderer.js';
 
 // ==================== AI System Prompts ====================
-const ROLE_INSTRUCTION = `SYSTEM DIRECTIVE: ON SEXUAL, VIOLENT, HATEFUL, OR HIGH-RISK CONTENT, EXECUTE SAFETY MITIGATION AND REDIRECT THE USER WITH SAFE, RELEVANT ALTERNATIVES.Respond in user's language.`;
-const FORMAT_INSTRUCTION = `Use Markdown. Code\`\`\`lang. Math:**CRITICAL**If response contains ANY math(equations/formulas/variables),ALL math symbols/expressions MUST wrap in$:inline$x$,display$$x$$.NO bare math chars allowed. Chem **MUST**$\\ce{}$:$\\ce{H2O}$/$\\ce{A+B->C}$/$\\ce{A<=>B}$. Mermaid: (1)ALL labels/text MUST use double quotes"" (2)BAN fullwidth chars()（）①② (3)arrows ONLY --> or == (4)comments ONLY start-of-line %% (5)first line MUST be flowchart/graph directive (6)if uncertain, skip Mermaid.`;
+const ROLE_INSTRUCTION = `SYSTEM DIRECTIVE: ON SEXUAL, VIOLENT, HATEFUL, OR HIGH-RISK CONTENT, EXECUTE SAFETY MITIGATION AND REDIRECT THE USER WITH SAFE, RELEVANT ALTERNATIVES. RESPOND IN USER'S LANGUAGE. VISUALIZATION: USE MERMAID FOR DIAGRAMS, VEGA/VEGA-LITE FOR CHARTS; OUTPUT ONLY THE NEEDED CODE/DATA BLOCK.`;
+const FORMAT_INSTRUCTION = `Use Markdown. Code blocks: \`\`\`lang. Math (CRITICAL): If response contains ANY math (equations/formulas/variables), ALL math symbols/expressions MUST be wrapped: inline $x$, display $$x$$. NO bare math chars allowed. Chemistry MUST use $\\ce{}$: $\\ce{H2O}$ / $\\ce{A+B->C}$ / $\\ce{A<=>B}$. Mermaid: (1) All labels/text MUST use double quotes "" (2) BAN fullwidth chars ()（）①② (3) Arrows ONLY --> or == (4) Comments ONLY start-of-line %% (5) First line MUST be flowchart/graph directive. Vega/Vega-Lite (STRICT - NO EXCEPTIONS): Code fences MUST be \`\`\`vega or \`\`\`vega-lite. Content MUST be valid JSON spec ONLY. FORBIDDEN: comments, prose, explanations, or any non-JSON text inside code block. Vega-Lite requires: "data", "mark", "encoding". Vega requires: "data", "marks". JSON rules: double quotes for keys/strings, no trailing commas, valid structure. If uncertain or cannot generate valid JSON, DO NOT output Vega - skip it entirely.`;
 const SEARCH_CONTEXT_INSTRUCTION = `Answer based on the web search results below. Synthesize the information and cite sources as [1], [2] at sentence ends.`;
 const RESEARCH_MODE_INSTRUCTION = `Answer succinctly using only relevant Semantic Scholar papers [1], [2]... plus user text. Structure clearly when writing (e.g., Abstract/Intro/Methods/Results/Discussion/Conclusion). Cite in-body as [N] ONLY; do NOT output a References list. If evidence is missing/off-topic or language mismatch yields no papers, say so, then add a short "based on general knowledge" section without invented citations. Ignore irrelevant results.`;
 // ===========================================================
@@ -1309,13 +1310,20 @@ function rerenderDynamicContent(root) {
         try {
             renderMermaidDiagrams(container, { loadScript, isFinalRender: true });
         } catch (_) { }
+        try {
+            renderVegaLiteDiagrams(container, { loadScript, isFinalRender: true });
+        } catch (_) { }
 
         if (window.hljs) {
             ensurePlaintextHighlightLanguage();
             const blocks = Array.from(container.querySelectorAll('pre code'))
                 .filter(block => !block.classList.contains('hljs')
                     && (block.dataset.mermaidProcessed !== 'true')
-                    && !((block.className || '').includes('language-mermaid')));
+                    && (block.dataset.vegaLiteProcessed !== 'true')
+                    && (block.dataset.vegaLitePending !== 'true')
+                    && !((block.className || '').includes('language-mermaid'))
+                    && !((block.className || '').includes('language-vega-lite'))
+                    && !((block.className || '').includes('language-vega')));
             blocks.forEach(block => { try { hljs.highlightElement(block); } catch (_) { } });
         }
     } catch (_) { }
@@ -8705,6 +8713,20 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         const mermaidRenderPromise = renderMermaidDiagrams(element, { loadScript, isFinalRender });
         if (mermaidRenderPromise) {
             element.__mermaidRenderPromise = mermaidRenderPromise;
+            mermaidRenderPromise.catch(() => { }).finally(() => {
+                if (!userHasScrolledUp && elements?.chatContainer) {
+                    elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+                }
+            });
+        }
+        const vegaRenderPromise = renderVegaLiteDiagrams(element, { loadScript, isFinalRender });
+        if (vegaRenderPromise) {
+            element.__vegaLiteRenderPromise = vegaRenderPromise;
+            vegaRenderPromise.catch(() => { }).finally(() => {
+                if (!userHasScrolledUp && elements?.chatContainer) {
+                    elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+                }
+            });
         }
 
         mathRenderer.renderMath(element, { isFinalRender });
@@ -8714,9 +8736,14 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 const candidateBlocks = Array.from(element.querySelectorAll('pre code'))
                     .filter(block => block.dataset.mermaidPending !== 'true' &&
                         block.dataset.mermaidProcessed !== 'true' &&
+                        block.dataset.vegaLitePending !== 'true' &&
+                        block.dataset.vegaLiteProcessed !== 'true' &&
                         block.closest('.mermaid-render-container') === null &&
+                        block.closest('.vega-lite-render-container') === null &&
                         !(block.className || '').includes('language-plaintext') &&
-                        !(block.className || '').includes('language-mermaid'));
+                        !(block.className || '').includes('language-mermaid') &&
+                        !(block.className || '').includes('language-vega-lite') &&
+                        !(block.className || '').includes('language-vega'));
 
                 const totalCodeBlocks = candidateBlocks.length;
                 const highlightedBlocks = candidateBlocks.filter(block => block.classList.contains('hljs')).length;
@@ -8734,9 +8761,14 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 element.querySelectorAll('pre code:not(.hljs)').forEach(block => {
                     if (block.dataset.mermaidPending === 'true' ||
                         block.dataset.mermaidProcessed === 'true' ||
+                        block.dataset.vegaLitePending === 'true' ||
+                        block.dataset.vegaLiteProcessed === 'true' ||
                         block.closest('.mermaid-render-container') ||
+                        block.closest('.vega-lite-render-container') ||
                         (block.className || '').includes('language-plaintext') ||
-                        (block.className || '').includes('language-mermaid')) {
+                        (block.className || '').includes('language-mermaid') ||
+                        (block.className || '').includes('language-vega-lite') ||
+                        (block.className || '').includes('language-vega')) {
                         return;
                     }
                     try {
@@ -8806,7 +8838,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         if (renderTimeout) {
             clearTimeout(renderTimeout);
         }
-        return element.__mermaidRenderPromise || null;
+        return vegaRenderPromise || element.__mermaidRenderPromise || null;
 
     } catch (error) {
         if (renderTimeout) {

@@ -360,16 +360,16 @@ export function renderMermaidDiagrams(rootElement, { loadScript, isFinalRender }
                         }
                     } catch (_) { }
                 }
-                details.appendChild(summary);
-                details.appendChild(preClone);
+        details.appendChild(summary);
+        details.appendChild(preClone);
 
-                const container = document.createElement('div');
-                container.className = 'mermaid-render-container';
-                const svgElement = wrapper.querySelector('svg');
-                if (svgElement) {
-                    const toolbar = createMermaidToolbar(svgElement, uniqueId);
-                    container.appendChild(toolbar);
-                }
+        const container = document.createElement('div');
+        container.className = 'mermaid-render-container';
+        const svgElement = wrapper.querySelector('svg');
+        if (svgElement) {
+            const toolbar = createMermaidToolbar(svgElement, uniqueId);
+            container.appendChild(toolbar);
+        }
                 container.appendChild(wrapper);
                 container.appendChild(details);
 
