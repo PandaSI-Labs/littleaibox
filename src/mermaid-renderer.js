@@ -1,3 +1,6 @@
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+
 const MERMAID_SCRIPT_SOURCES = [
     '/libs/mermaid.min.js'
 ];
@@ -151,7 +154,11 @@ function configureMermaid(mermaid) {
         mermaid.initialize({
             startOnLoad: false,
             securityLevel: 'loose',
-            theme: document.documentElement.classList.contains('dark') ? 'dark' : 'default'
+            theme: document.documentElement.classList.contains('dark') ? 'dark' : 'default',
+            
+            htmlLabels: false,
+            flowchart: { htmlLabels: false },
+            sequence: { useMaxWidth: true }
         });
     } catch (error) {
         console.warn('Mermaid initialization failed:', error);
@@ -192,6 +199,45 @@ function getLocalizedLabel(key, fallback) {
     return fallback;
 }
 
+function getToastText(key, fallback) {
+    try {
+        const getter = (typeof window !== 'undefined' && typeof window['getToastMessage'] === 'function')
+            ? window['getToastMessage']
+            : null;
+        if (getter) {
+            const text = getter(key);
+            if (text && typeof text === 'string' && text.trim()) {
+                return text;
+            }
+        }
+    } catch (_) { }
+    return fallback;
+}
+
+function showToastSafe(key, fallback, type = 'info') {
+    const text = getToastText(key, fallback);
+    if (!text) return;
+    if (typeof window?.showToast === 'function') {
+        window.showToast(text, type);
+    }
+}
+
+async function ensureStoragePermission() {
+    const isAndroid = typeof Capacitor?.getPlatform === 'function' && Capacitor.getPlatform() === 'android';
+    if (!isAndroid) return;
+    try {
+        const perm = await Filesystem.checkPermissions?.();
+        if (perm?.publicStorage === 'granted') return;
+        const req = await Filesystem.requestPermissions?.();
+        if (req?.publicStorage === 'granted') return;
+    } catch (_) { }
+    const msg = getToastText('toast.grantStoragePermission', 'Storage permission required');
+    if (typeof window?.showToast === 'function') {
+        window.showToast(msg, 'error');
+    }
+    throw new Error(msg);
+}
+
 function createToolbarButton(label, onClick) {
     const button = document.createElement('button');
     button.type = 'button';
@@ -205,12 +251,67 @@ function createToolbarButton(label, onClick) {
     `;
     button.addEventListener('click', (event) => {
         event.stopPropagation();
-        onClick();
+        try {
+            const maybePromise = onClick();
+            if (maybePromise && typeof maybePromise.catch === 'function') {
+                maybePromise.catch(err => console.warn('Mermaid toolbar action failed:', err));
+            }
+        } catch (error) {
+            console.warn('Mermaid toolbar action failed:', error);
+        }
     });
     return button;
 }
 
-function triggerDownloadFromBlob(blob, filename) {
+async function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = reject;
+        reader.onload = () => {
+            const base64String = String(reader.result || '');
+            const pure = base64String.includes(',')
+                ? base64String.split(',')[1]
+                : base64String;
+            resolve(pure);
+        };
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function triggerDownloadFromBlob(blob, filename) {
+    const isNative = typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();
+    if (isNative) {
+        try {
+            await ensureStoragePermission();
+            const base64 = await blobToBase64(blob);
+            const mediaStore = Capacitor.Plugins?.MediaStore;
+            if (mediaStore) {
+                await mediaStore.saveImage({ base64, filename });
+                showToastSafe('toast.imageSavedToAlbum', 'Saved', 'success');
+                return;
+            }
+
+            const folder = 'Pictures/LittleAIBox';
+            try {
+                await Filesystem.mkdir({
+                    path: folder,
+                    directory: Directory.ExternalStorage,
+                    recursive: true
+                });
+            } catch (_) { }
+            await Filesystem.writeFile({
+                path: `${folder}/${filename}`,
+                data: base64,
+                directory: Directory.ExternalStorage,
+                recursive: true
+            });
+            showToastSafe('toast.imageSavedToAlbum', 'Saved', 'success');
+            return;
+        } catch (err) {
+            showToastSafe('toast.downloadFailedRetry', 'Download failed', 'error');
+        }
+    }
+
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -219,6 +320,8 @@ function triggerDownloadFromBlob(blob, filename) {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+
+    showToastSafe('toast.downloadSuccess', '图片下载成功', 'success');
 }
 
 function downloadSvgFile(svgElement, filenameBase) {
@@ -238,17 +341,196 @@ function downloadSvgFile(svgElement, filenameBase) {
     triggerDownloadFromBlob(svgBlob, `${filenameBase}.svg`);
 }
 
+function stripUnsafeUrlsInStyles(svgRoot) {
+    if (!svgRoot || typeof svgRoot.querySelectorAll !== 'function') return;
+
+    const isSafeUrl = (urlText) => {
+        const cleaned = (urlText || '').trim().replace(/^['"]|['"]$/g, '');
+        if (!cleaned) return true;
+        if (/^data:/i.test(cleaned)) return true;
+        try {
+            const parsed = new URL(cleaned, window.location.href);
+            return parsed.origin === window.location.origin;
+        } catch (_) {
+            return false;
+        }
+    };
+
+    const replaceUnsafeUrls = (text) => text.replace(/url\(([^)]+)\)/gi, (match, group) => {
+        return isSafeUrl(group) ? match : 'none';
+    });
+
+    svgRoot.querySelectorAll('*[style]').forEach((el) => {
+        const style = el.getAttribute('style');
+        if (style && /url\(/i.test(style)) {
+            el.setAttribute('style', replaceUnsafeUrls(style));
+        }
+    });
+
+    svgRoot.querySelectorAll('style').forEach((styleEl) => {
+        const css = styleEl.textContent;
+        if (css && /url\(/i.test(css)) {
+            styleEl.textContent = replaceUnsafeUrls(css);
+        }
+    });
+}
+
+function stripExternalImages(svgRoot) {
+    if (!svgRoot || typeof svgRoot.querySelectorAll !== 'function') return;
+    const images = svgRoot.querySelectorAll('image, img, use[href], use[xlink\\:href]');
+    images.forEach((node) => {
+        const href = node.getAttribute('href') || node.getAttribute('xlink:href');
+        if (href && !href.startsWith('data:')) {
+            node.remove();
+        }
+    });
+}
+
+function stripForeignObjects(svgRoot) {
+    if (!svgRoot || typeof svgRoot.querySelectorAll !== 'function') return;
+    const nodes = svgRoot.querySelectorAll('foreignObject');
+    nodes.forEach((node) => {
+        node.remove();
+    });
+}
+
+function getSvgSize(svgElement) {
+    if (!svgElement) {
+        return { width: 800, height: 600 };
+    }
+
+    const viewBox = svgElement.viewBox && svgElement.viewBox.baseVal;
+    if (viewBox && viewBox.width && viewBox.height) {
+        return { width: viewBox.width, height: viewBox.height };
+    }
+
+    const widthAttr = parseFloat(svgElement.getAttribute('width'));
+    const heightAttr = parseFloat(svgElement.getAttribute('height'));
+    if (!Number.isNaN(widthAttr) && !Number.isNaN(heightAttr)) {
+        return { width: widthAttr, height: heightAttr };
+    }
+
+    try {
+        const bbox = typeof svgElement.getBBox === 'function' ? svgElement.getBBox() : null;
+        if (bbox && bbox.width && bbox.height) {
+            return { width: bbox.width, height: bbox.height };
+        }
+    } catch (_) { }
+
+    const rect = typeof svgElement.getBoundingClientRect === 'function'
+        ? svgElement.getBoundingClientRect()
+        : null;
+    if (rect && rect.width && rect.height) {
+        return { width: rect.width, height: rect.height };
+    }
+
+    return { width: 800, height: 600 };
+}
+
+async function downloadRasterFromSvg(svgElement, filenameBase, {
+    mimeType = 'image/png',
+    extension = 'png',
+    scale = 2,
+    backgroundColor = '#ffffff'
+} = {}) {
+    if (!svgElement) {
+        throw new Error('SVG element is missing');
+    }
+
+    const { width, height } = getSvgSize(svgElement);
+    const serializer = new XMLSerializer();
+    const cloned = svgElement.cloneNode(true);
+
+    stripUnsafeUrlsInStyles(cloned);
+    stripExternalImages(cloned);
+    stripForeignObjects(cloned);
+    if (!cloned.getAttribute('xmlns')) {
+        cloned.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    }
+    if (!cloned.getAttribute('xmlns:xlink')) {
+        cloned.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+    }
+    const source = serializer.serializeToString(cloned);
+    const svgBlob = new Blob(
+        [`<?xml version="1.0" encoding="UTF-8"?>\n${source}`],
+        { type: 'image/svg+xml;charset=utf-8' }
+    );
+    const url = URL.createObjectURL(svgBlob);
+
+    try {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+
+        await new Promise((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = (error) => reject(error || new Error('Failed to load SVG into image'));
+            img.src = url;
+        });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.ceil(width * scale);
+        canvas.height = Math.ceil(height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            throw new Error('Canvas context is unavailable');
+        }
+        ctx.setTransform(scale, 0, 0, scale, 0, 0);
+        if (backgroundColor) {
+            ctx.fillStyle = backgroundColor;
+            ctx.fillRect(0, 0, width, height);
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const blob = await new Promise((resolve, reject) => {
+            canvas.toBlob((b) => {
+                if (b) resolve(b);
+                else reject(new Error('Canvas export failed'));
+            }, mimeType);
+        });
+
+        triggerDownloadFromBlob(blob, `${filenameBase}.${extension}`);
+    } catch (error) {
+        try {
+            const fallbackClone = svgElement.cloneNode(true);
+            stripUnsafeUrlsInStyles(fallbackClone);
+            stripForeignObjects(fallbackClone);
+            stripExternalImages(fallbackClone);
+            const fallbackSerializer = new XMLSerializer();
+            const fallbackSource = fallbackSerializer.serializeToString(fallbackClone);
+            const fallbackBlob = new Blob(
+                [`<?xml version="1.0" encoding="UTF-8"?>\n${fallbackSource}`],
+                { type: 'image/svg+xml;charset=utf-8' }
+            );
+            triggerDownloadFromBlob(fallbackBlob, `${filenameBase}.svg`);
+        } catch (fallbackError) {
+            console.warn('Mermaid PNG fallback failed, downloading original SVG:', fallbackError);
+            downloadSvgFile(svgElement, filenameBase);
+        }
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+}
+
 function createMermaidToolbar(svgElement, filenameBase) {
     const toolbar = document.createElement('div');
     toolbar.className = 'mermaid-render-toolbar';
-    const downloadSvgLabel = getLocalizedLabel('ui.downloadSvg', 'Download SVG');
-    const svgButton = createToolbarButton(downloadSvgLabel, () => downloadSvgFile(svgElement, filenameBase));
-    toolbar.appendChild(svgButton);
+    const downloadImageLabel = getLocalizedLabel('ui.downloadImage', 'Download Image');
+    const imageButton = createToolbarButton(downloadImageLabel, () => downloadRasterFromSvg(svgElement, filenameBase, {
+        mimeType: 'image/png',
+        extension: 'png',
+        scale: 2
+    }));
+    toolbar.appendChild(imageButton);
     return toolbar;
 }
 
 function shouldRenderMermaid(codeElement, { isFinalRender, rootElement }) {
-    if (!codeElement || codeElement.dataset.mermaidProcessed === 'true') {
+    if (!codeElement) {
+        return false;
+    }
+
+    const processed = codeElement.dataset.mermaidProcessed;
+    if (processed === 'true' || processed === 'error' || processed === 'skipped') {
         return false;
     }
 
@@ -360,16 +642,16 @@ export function renderMermaidDiagrams(rootElement, { loadScript, isFinalRender }
                         }
                     } catch (_) { }
                 }
-        details.appendChild(summary);
-        details.appendChild(preClone);
+                details.appendChild(summary);
+                details.appendChild(preClone);
 
-        const container = document.createElement('div');
-        container.className = 'mermaid-render-container';
-        const svgElement = wrapper.querySelector('svg');
-        if (svgElement) {
-            const toolbar = createMermaidToolbar(svgElement, uniqueId);
-            container.appendChild(toolbar);
-        }
+                const container = document.createElement('div');
+                container.className = 'mermaid-render-container';
+                const svgElement = wrapper.querySelector('svg');
+                if (svgElement) {
+                    const toolbar = createMermaidToolbar(svgElement, uniqueId);
+                    container.appendChild(toolbar);
+                }
                 container.appendChild(wrapper);
                 container.appendChild(details);
 
@@ -379,7 +661,6 @@ export function renderMermaidDiagrams(rootElement, { loadScript, isFinalRender }
                     delete codeElement.dataset.mermaidPending;
                 }
             } catch (error) {
-                console.warn('Failed to render Mermaid diagram:', error);
                 codeElement.dataset.mermaidProcessed = 'error';
                 if (codeElement.dataset.mermaidPending === 'true') {
                     delete codeElement.dataset.mermaidPending;

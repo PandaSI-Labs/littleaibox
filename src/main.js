@@ -89,6 +89,17 @@ let nativeVersionSyncInFlight = null;
 let autoVersionCheckPromise = null;
 let appStateVersionListenerAttached = false;
 
+function buildSettingsPathFromParams(params = {}) {
+    const section = params.section ? encodeURIComponent(params.section) : DEFAULT_SETTINGS_SECTION;
+    if (params.chatId) {
+        const chatRoute = params.chatRoute === 'tempChat' || String(params.chatId).startsWith('temp_')
+            ? 'temp_chat'
+            : 'chat';
+        return `/${chatRoute}/${encodeURIComponent(params.chatId)}/settings/${section}`;
+    }
+    return `/settings/${section}`;
+}
+
 function resetCodeInputs(targetId) {
     if (!targetId) return;
     const record = codeInputRegistry.get(targetId);
@@ -394,7 +405,10 @@ class NavigationEngine {
                         try {
                             if (this.settingsRouteInfo) {
                                 const section = this.settingsRouteInfo.params?.section || DEFAULT_SETTINGS_SECTION;
-                                const settingsUrl = `/settings/${encodeURIComponent(section)}`;
+                                const settingsUrl = buildSettingsPathFromParams({
+                                    ...this.settingsRouteInfo.params,
+                                    section
+                                });
                                 const currentPath = window.location.pathname;
                                 if (currentPath !== settingsUrl) {
                                     // 使用 pushState 恢复 URL，但保持当前的历史状态
@@ -433,8 +447,7 @@ class NavigationEngine {
         if (this.isHandlingSettingsHistoryPop) {
             return true;
         }
-        this.handleSettingsHistoryPopAttempt();
-        return true;
+        return false;
     }
 
     handleSettingsHistoryPopAttempt() {
@@ -590,6 +603,10 @@ class NavigationEngine {
         }
 
         if (this.isOnMainPage()) {
+            if (this.isHistoryNavigation) {
+                router.navigate('home', {}, { replace: true, silent: true });
+                this.markHistoryHandled?.();
+            }
             this.clearAllStateStacks(!this.isNativeApp, {
                 preserveExitState: this.isNativeApp
             });
@@ -822,6 +839,7 @@ class NavigationEngine {
             }
         } catch (_) { }
         if (currentChatId) {
+            persistCurrentDraft(currentChatId);
             if (currentChatId.startsWith('temp_')) {
                 const canLeave = await handleLeaveTemporaryChat(false);
                 if (!canLeave) {
@@ -837,6 +855,7 @@ class NavigationEngine {
         if (!currentChatId) {
             routeManager.navigateToHome({ replace: true });
             this.clearAllStateStacks(!this.isNativeApp);
+            clearInputAndAttachments(true);
         }
     }
 
@@ -937,8 +956,13 @@ class RouteManager {
         const finalSection = section || this.getActiveSettingsSection();
         if (!finalSection) return;
         // 保存设置页面的路由信息，以便在阻止后退时恢复 URL
-        navigationEngine.settingsRouteInfo = { name: 'settings', params: { section: finalSection } };
-        router.navigate('settings', { section: finalSection }, {
+        const chatContext = currentChatId ? {
+            chatId: currentChatId,
+            chatRoute: String(currentChatId).startsWith('temp_') ? 'tempChat' : 'chat'
+        } : {};
+        const params = { section: finalSection, ...chatContext };
+        navigationEngine.settingsRouteInfo = { name: 'settings', params };
+        router.navigate('settings', params, {
             replace: options.replace === true,
             silent: options.silent === true
         });
@@ -1031,22 +1055,21 @@ class RouteManager {
         if (!chatId) return;
         await this.waitForChatsToLoad();
         if (!chats || !chats[chatId]) {
-            if (String(chatId).startsWith('temp_')) {
-                currentChatId = null;
-                try {
-                    showEmptyState();
-                } catch (_) { }
-                scheduleRenderSidebar();
-                if (!currentUser) {
-                    this.redirectGuestToAuth({
-                        origin: 'auto',
-                        onlyManageUi: true,
-                        showImmediateOverlay: false,
-                        hideSettings: false
-                    });
-                }
-                this.navigateToHome({ replace: true, force: true });
+            const isTempChat = String(chatId).startsWith('temp_');
+            currentChatId = null;
+            try {
+                showEmptyState();
+            } catch (_) { }
+            scheduleRenderSidebar();
+            if (isTempChat && !currentUser) {
+                this.redirectGuestToAuth({
+                    origin: 'auto',
+                    onlyManageUi: true,
+                    showImmediateOverlay: false,
+                    hideSettings: false
+                });
             }
+            this.navigateToHome({ replace: true, force: true });
             return;
         }
         try {
@@ -1061,7 +1084,21 @@ class RouteManager {
         if ((route.name === 'chat' || route.name === 'tempChat') && route.params?.chatId) {
             await this.openChatFromRoute(route.params.chatId);
         } else if (route.name === 'settings') {
-            await this.openSettingsFromRoute(route.params?.section);
+            const section = route.params?.section;
+            const routeChatId = route.params?.chatId;
+            if (routeChatId) {
+                await this.waitForChatsToLoad();
+                const chatExists = chats && chats[routeChatId];
+                if (!chatExists) {
+                    const fallbackSection = section || DEFAULT_SETTINGS_SECTION;
+                    const params = { section: fallbackSection };
+                    navigationEngine.settingsRouteInfo = { name: 'settings', params };
+                    router.navigate('settings', params, { replace: true, silent: true });
+                    await this.openSettingsFromRoute(fallbackSection);
+                    return;
+                }
+            }
+            await this.openSettingsFromRoute(section);
         } else if (route.name === 'auth') {
             await this.openAuthFromRoute(route.params?.mode);
         } else if (route.name === 'oauthCallback') {
@@ -1840,6 +1877,8 @@ let chats = {};
 let currentChatId = null;
 let currentQuote = null;
 let attachments = [];
+const chatDraftStore = new Map();
+const CHAT_DRAFT_DEFAULT_KEY = '__default__';
 const aiOptimizedContentStore = new WeakMap();
 let removeFileViewerLinkHandler = null;
 let isProcessing = false;
@@ -3965,6 +4004,13 @@ function showToast(message, type = 'info', error = null, options = {}) {
     });
     return { whenShown, whenHidden, element: toast, wrapper };
 }
+
+try {
+    if (typeof window !== 'undefined') {
+        window['getToastMessage'] = getToastMessage;
+        window['showToast'] = showToast;
+    }
+} catch (_) { }
 
 function renderQuotePreview() {
     if (!currentQuote) {
@@ -6246,6 +6292,7 @@ async function logout() {
         chats = {};
         currentChatId = null;
         attachments = [];
+        chatDraftStore.clear();
         activeResponses.clear();
         currentUserUsage = { count: 0, limit: LOGGED_IN_LIMIT, apiMode: 'mixed' };
         weeklyFeatureStatus = { can_use: true, expires_at: null, loaded: false };
@@ -6908,6 +6955,9 @@ async function loadChat(chatId) {
 
     const wasAlreadyInChat = !!currentChatId;
     const wasSameChat = currentChatId === chatId;
+    if (currentChatId && !wasSameChat) {
+        persistCurrentDraft(currentChatId);
+    }
     currentChatId = chatId;
 
     navigationEngine.resetExitState();
@@ -6915,6 +6965,7 @@ async function loadChat(chatId) {
 
     if (!wasSameChat) {
         routeManager.navigateToChat(chatId);
+        restoreDraftForChat(chatId);
     }
 
     elements.chatContainer.style.opacity = '0';
@@ -9306,6 +9357,57 @@ function removeAttachment(attachmentId) {
     const element = document.querySelector(`[data-attachment-id="${attachmentId}"]`);
     if (element) element.remove();
     if (attachments.length === 0) elements.attachmentsPreview.classList.remove('has-files');
+
+    updateCharacterCountUI();
+    updateSendButton();
+    resetCharCountTimer();
+}
+
+function getDraftKey(chatId) {
+    return chatId || CHAT_DRAFT_DEFAULT_KEY;
+}
+
+function persistCurrentDraft(chatId = currentChatId) {
+    if (!elements?.messageInput) return;
+    const key = getDraftKey(chatId);
+    const text = elements.messageInput.value || '';
+    const clonedAttachments = attachments.map(att => ({
+        file: att.file || null,
+        type: att.type,
+        content: att.content || null
+    }));
+    chatDraftStore.set(key, { text, attachments: clonedAttachments });
+}
+
+function restoreDraftForChat(chatId = currentChatId) {
+    const key = getDraftKey(chatId);
+    const draft = chatDraftStore.get(key);
+
+    clearInputAndAttachments(true);
+
+    if (!draft) {
+        updateSendButton();
+        resetCharCountTimer();
+        updateCharacterCountUI();
+        return;
+    }
+
+    if (elements.messageInput) {
+        elements.messageInput.value = draft.text || '';
+        elements.messageInput.style.height = 'auto';
+        elements.messageInput.style.height = `${elements.messageInput.scrollHeight}px`;
+    }
+
+    if (Array.isArray(draft.attachments)) {
+        draft.attachments.forEach((att) => {
+            if (!att || (!att.file && !att.content)) return;
+            const isImage = att.type === 'image' || (att.file?.type || '').startsWith('image/');
+            const newId = addAttachment(att.file, isImage ? 'image' : (att.type || 'file'));
+            if (att.content) {
+                completeUpload(newId, att.content);
+            }
+        });
+    }
 
     updateCharacterCountUI();
     updateSendButton();

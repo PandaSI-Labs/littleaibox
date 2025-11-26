@@ -135,7 +135,7 @@ export default defineConfig({
                 short_name: 'LittleAIBox',
                 description: '智能AI对话助手',
                 lang: 'zh-CN',
-                version: '2.6.5',
+                version: '2.7.0',
 
                 // --- 外观与显示 ---
                 theme_color: '#ffffff',

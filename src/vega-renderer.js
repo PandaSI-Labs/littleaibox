@@ -1,3 +1,6 @@
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+
 const VEGA_SCRIPT_SOURCES = ['/libs/vega.min.js'];
 const VEGA_LITE_SCRIPT_SOURCES = ['/libs/vega-lite.min.js'];
 const VEGA_EMBED_SCRIPT_SOURCES = ['/libs/vega-embed.min.js'];
@@ -99,8 +102,10 @@ function looksLikeVegaSpecText(text) {
 }
 
 function shouldRenderVegaLite(codeElement, { isFinalRender, rootElement } = {}) {
-    if (!codeElement || codeElement.dataset.vegaLiteProcessed === 'true') return false;
-    if (codeElement.dataset.vegaLiteProcessed === 'error') return false;
+    if (!codeElement) return false;
+
+    const processed = codeElement.dataset.vegaLiteProcessed;
+    if (processed === 'true' || processed === 'error' || processed === 'skipped') return false;
     if (codeElement.dataset.vegaLiteSource === 'true') return false;
 
     const sourceWrapper = codeElement.closest('.vega-lite-source');
@@ -132,7 +137,10 @@ function safeParseSpec(raw) {
 function normalizeVegaSpecString(raw) {
     if (typeof raw !== 'string') return raw;
     let text = raw;
-    // Fix invalid domain patterns like [0][65] -> [0, 65]
+    text = text.replace(/^\uFEFF/, '');
+    text = text.replace(/[\u00A0\u200B\u200C\u200D]/g, ' ');
+    text = text.replace(/(^|[ \t])\/\/[^\n\r]*/gm, '$1');
+    text = text.replace(/\/\*[\s\S]*?\*\//g, '');
     text = text.replace(/"domain"\s*:\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]/g, '"domain": [$1, $2]');
     return text;
 }
@@ -173,7 +181,10 @@ function createErrorBanner(error, pre) {
     const banner = document.createElement('div');
     banner.className = 'vega-lite-error-banner';
     banner.textContent = `Vega-Lite render failed: ${error.message || error}`;
-    pre.parentNode.insertBefore(banner, pre);
+    const parent = pre && pre.parentNode;
+    if (parent && typeof parent.insertBefore === 'function') {
+        parent.insertBefore(banner, pre);
+    }
 }
 
 function getLocalizedLabel(key, fallback) {
@@ -191,30 +202,138 @@ function getLocalizedLabel(key, fallback) {
     return fallback;
 }
 
+function getToastText(key, fallback) {
+    try {
+        const getter = (typeof window !== 'undefined' && typeof window['getToastMessage'] === 'function')
+            ? window['getToastMessage']
+            : null;
+        if (getter) {
+            const text = getter(key);
+            if (text && typeof text === 'string' && text.trim()) {
+                return text;
+            }
+        }
+    } catch (_) { }
+    return fallback;
+}
+
+function showToastSafe(key, fallback, type = 'info') {
+    const text = getToastText(key, fallback);
+    if (!text) return;
+    if (typeof window?.showToast === 'function') {
+        window.showToast(text, type);
+    }
+}
+
+async function ensureStoragePermission() {
+    const isAndroid = typeof Capacitor?.getPlatform === 'function' && Capacitor.getPlatform() === 'android';
+    if (!isAndroid) return;
+    try {
+        const perm = await Filesystem.checkPermissions?.();
+        if (perm?.publicStorage === 'granted') return;
+        const req = await Filesystem.requestPermissions?.();
+        if (req?.publicStorage === 'granted') return;
+    } catch (_) { }
+    const msg = getToastText('toast.grantStoragePermission', 'Storage permission required');
+    if (typeof window?.showToast === 'function') {
+        window.showToast(msg, 'error');
+    }
+    throw new Error(msg);
+}
+
+async function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = reject;
+        reader.onload = () => {
+            const base64String = String(reader.result || '');
+            const pure = base64String.includes(',')
+                ? base64String.split(',')[1]
+                : base64String;
+            resolve(pure);
+        };
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function triggerDownloadFromBlob(blob, filename) {
+    const isNative = typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();
+    if (isNative) {
+        try {
+            await ensureStoragePermission();
+            const base64 = await blobToBase64(blob);
+            const mediaStore = Capacitor.Plugins?.MediaStore;
+            if (mediaStore) {
+                await mediaStore.saveImage({ base64, filename });
+                showToastSafe('toast.imageSavedToAlbum', 'Saved', 'success');
+                return;
+            }
+
+            const folder = 'Pictures/LittleAIBox';
+            try {
+                await Filesystem.mkdir({
+                    path: folder,
+                    directory: Directory.ExternalStorage,
+                    recursive: true
+                });
+            } catch (_) { }
+            await Filesystem.writeFile({
+                path: `${folder}/${filename}`,
+                data: base64,
+                directory: Directory.ExternalStorage,
+                recursive: true
+            });
+            showToastSafe('toast.imageSavedToAlbum', 'Saved', 'success');
+            return;
+        } catch (err) {
+            showToastSafe('toast.downloadFailedRetry', 'Download failed', 'error');
+        }
+    }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+    showToastSafe('toast.downloadSuccess', '图片下载成功', 'success');
+}
+
 function createDownloadButton(view, filenameBase = 'vega-chart') {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'vega-lite-download-btn';
-    btn.title = getLocalizedLabel('ui.downloadSvg', 'Download SVG');
+    btn.title = getLocalizedLabel('ui.downloadImage', 'Download Image');
     btn.innerHTML = `
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
             <path d="M5 20h14a1 1 0 0 0 1-1v-2h-2v1H6v-1H4v2a1 1 0 0 0 1 1zm7-3 5-5h-3V4h-4v8H7l5 5z"/>
         </svg>
-        <span class="sr-only">${getLocalizedLabel('ui.downloadSvg', 'Download SVG')}</span>
+        <span class="sr-only">${getLocalizedLabel('ui.downloadImage', 'Download Image')}</span>
     `;
     btn.addEventListener('click', async (event) => {
         event.stopPropagation();
         try {
-            const svg = await view.toSVG();
-            const blob = new Blob([svg], { type: 'image/svg+xml' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${filenameBase}.svg`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url), 2000);
+            if (!view) {
+                throw new Error('Chart view is unavailable');
+            }
+            if (typeof view.toCanvas !== 'function') {
+                throw new Error('Canvas export is not supported in this environment');
+            }
+
+            const canvas = await view.toCanvas(2);
+            if (!canvas) {
+                throw new Error('Canvas export failed');
+            }
+            const blob = await new Promise((resolve, reject) => {
+                canvas.toBlob((b) => {
+                    if (b) resolve(b);
+                    else reject(new Error('Canvas export failed'));
+                }, 'image/png');
+            });
+            triggerDownloadFromBlob(blob, `${filenameBase}.png`);
         } catch (error) {
             console.warn('Vega-Lite export failed:', error);
         }
@@ -303,9 +422,9 @@ export function renderVegaLiteDiagrams(rootElement, { loadScript, isFinalRender 
 
                 const toolbar = document.createElement('div');
                 toolbar.className = 'vega-lite-toolbar';
-                const downloadBtn = createDownloadButton(embedResult?.view, uniqueId);
-                if (downloadBtn) {
-                    toolbar.appendChild(downloadBtn);
+                const imageDownloadBtn = createDownloadButton(embedResult?.view, uniqueId);
+                if (imageDownloadBtn) {
+                    toolbar.appendChild(imageDownloadBtn);
                 }
                 container.insertBefore(toolbar, chartHost);
 
