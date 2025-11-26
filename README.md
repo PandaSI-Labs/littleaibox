@@ -72,8 +72,12 @@ LittleAIBox is perfect for:
 > LittleAIBox is a full-stack, cross-platform Gemini AI chat application (built with Vite/Capacitor/Cloudflare) featuring an intelligent API pooling and proxy backend that bypasses regional restrictions for stable global access. Key features include:
 >
 > - Client-side parsing (PDF/DOCX/PPTX support)
-> - Mermaid/LaTeX rendering
-> - Real-time web search
+> - Mermaid/LaTeX/Vega-Lite rendering with chart export
+> - Real-time web search & Semantic Scholar research mode
+> - Conversation timeline navigation
+> - Dual API key management with intelligent load balancing
+> - Customizable AI parameters and task presets
+> - Voice input support
 >
 > Unlike traditional AI applications, LittleAIBox runs locally, ensuring your files and messages never leave your device. It emphasizes privacy with intelligent API key rotation, provides stable global access, and allows custom AI parameters to optimize your chat experience. Users can optionally register for cloud sync, but the platform works fully without an account and doesn't expose your location or request origin. LittleAIBox is open-source, lightweight, and designed for users who value privacy, control, and freedom.
 >
@@ -97,15 +101,18 @@ LittleAIBox is perfect for:
 - **Office Documents**: Parse Word (.docx), PDF, Excel (.xlsx, .xls, .csv), and **PowerPoint (.pptx)** files directly in the browser
 - **Rich Media**: Support for images and Markdown files
 - **Plain Text Files**: Support for various text file formats
+- **File Viewer**: Built-in file viewer with syntax highlighting for code files, image preview, and rich text rendering
 - **Zero Upload Required**: All file processing happens client-side for maximum privacy
 
 ### 🔐 **Privacy-First Design**
 - **No Registration Required**: Start using immediately without creating an account
 - **Multiple Login Options**: Email/password, OAuth (Google, GitHub), or guest mode
 - **Multi-Factor Authentication (MFA)**: Optional TOTP authenticator app support with backup codes
+- **Dual API Key Management**: Configure two API keys with intelligent mixed mode (load balancing) or single mode (backup fallback)
 - **Self-Configure API Key**: Use your own Gemini API key, with complete data control
 - **Flexible Storage**: Registered users' API keys are persisted for multi-device sync; guest users' keys are stored locally only and automatically cleared on page refresh, ensuring privacy
 - **Password Management**: Secure password reset via email verification
+- **Custom Avatar**: Upload and manage your profile avatar
 
 ### 🌍 **Universal Access**
 - **Regional Restriction Solution**: Built-in service relay routing to bypass geographical limitations
@@ -115,8 +122,22 @@ LittleAIBox is perfect for:
 ### 💬 **Advanced Markdown Rendering**
 - **Code Highlighting**: Support for 40+ programming languages
 - **Mathematical Expressions**: Beautiful math rendering with KaTeX
-- **Diagrams**: Interactive Mermaid diagram support
+- **Diagrams**: Interactive Mermaid diagram support with PNG/SVG export
+- **Data Visualization**: Vega-Lite chart rendering with interactive charts and PNG export
+- **Chart Export**: Download generated charts (Mermaid diagrams and Vega-Lite visualizations) as PNG or SVG files
 - **GitHub Flavored Markdown**: Full GFM support with syntax highlighting
+
+### 🛠️ **Advanced AI Features**
+- **Multiple Interaction Modes**: 
+  - **Search Mode**: Real-time web search integration for up-to-date information
+  - **Research Mode**: Academic research powered by Semantic Scholar API - automatically searches and cites relevant academic papers, structures responses with Abstract/Introduction/Methods/Results/Discussion/Conclusion format, and provides in-text citations [1], [2]...
+  - **Image Generation Mode**: AI-powered image creation
+- **Voice Input**: Speech-to-text input support (best on Chrome desktop)
+- **Custom AI Parameters**: Fine-tune AI behavior with:
+  - System prompts for role customization
+  - Temperature control (creativity vs. consistency)
+  - Advanced parameters (topK, topP)
+  - Task presets (coding assistant, writing assistant, translation, classical Chinese research, travel guide, roleplay creative)
 
 ### 🌐 **Multi-Language Support**
 - **5 Languages**: Chinese (Simplified/Traditional), English, Japanese, Korean, Spanish
@@ -125,8 +146,10 @@ LittleAIBox is perfect for:
 
 ### 🎨 **Beautiful UI/UX**
 - **Dark/Light Mode**: Seamless theme switching
+- **Custom Fonts**: Choose from system default, serif, monospace, or elegant cursive fonts
 - **Responsive Design**: Perfect on desktop, tablet, and mobile
 - **Native Feel**: Capacitor integration for native mobile experience
+- **Conversation Timeline**: Floating timeline navigation for quick access to assistant messages
 
 ### ⚡ **Performance Optimized**
 - **Fast Loading**: Vite-powered build with code splitting
@@ -244,8 +267,9 @@ graph TB
 - **Markdown**: marked.js + DOMPurify
 - **Code Highlighting**: highlight.js (40+ languages)
 - **Math Rendering**: KaTeX
-- **Charts**: Mermaid
+- **Charts**: Mermaid, Vega-Lite
 - **File Parsing**: mammoth (Word), PDF.js, xlsx, pptx2html
+- **Speech Recognition**: Web Speech API
 - **Storage**: IndexedDB + localStorage
 - **Authentication**: JWT-based auth with OAuth 2.0 support (Google, GitHub)
 - **Security**: MFA/TOTP support with backup codes
@@ -376,6 +400,9 @@ LittleAIBox/
 │   ├── db.js              # IndexedDB wrapper
 │   ├── i18n.js            # Internationalization
 │   ├── mermaid-renderer.js # Diagram rendering
+│   ├── vega-renderer.js    # Vega-Lite chart rendering
+│   ├── floating-timeline.js # Conversation timeline navigation
+│   ├── floating-timeline.css # Timeline styles
 │   ├── mfa-login.js       # Multi-factor authentication
 │   ├── oauth-flow.js      # OAuth flow handling
 │   ├── router.js           # Client-side routing
