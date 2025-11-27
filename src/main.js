@@ -23,7 +23,7 @@ import { renderVegaLiteDiagrams } from './vega-renderer.js';
 
 // ==================== AI System Prompts ====================
 const ROLE_INSTRUCTION = `SYSTEM DIRECTIVE: ON SEXUAL, VIOLENT, HATEFUL, OR HIGH-RISK CONTENT, EXECUTE SAFETY MITIGATION AND REDIRECT THE USER WITH SAFE, RELEVANT ALTERNATIVES. RESPOND IN USER'S LANGUAGE. VISUALIZATION: USE MERMAID FOR DIAGRAMS, VEGA/VEGA-LITE FOR CHARTS; OUTPUT ONLY THE NEEDED CODE/DATA BLOCK.`;
-const FORMAT_INSTRUCTION = `Use Markdown. Code blocks: \`\`\`lang. Math (CRITICAL): If response contains ANY math (equations/formulas/variables), ALL math symbols/expressions MUST be wrapped: inline $x$, display $$x$$. NO bare math chars allowed. Chemistry MUST use $\\ce{}$: $\\ce{H2O}$ / $\\ce{A+B->C}$ / $\\ce{A<=>B}$. Mermaid: (1) All labels/text MUST use double quotes "" (2) BAN fullwidth chars ()（）①② (3) Arrows ONLY --> or == (4) Comments ONLY start-of-line %% (5) First line MUST be flowchart/graph directive. Vega/Vega-Lite (STRICT): Code fences MUST be \`\`\`vega or \`\`\`vega-lite. Content MUST be valid JSON ONLY (FORBIDDEN: expressions like [min][max], trailing commas, comments/prose). Vega-Lite: include at least "data","mark","encoding"; add "$schema" when known. Vega: include "data","marks". Domain arrays MUST be [min,max] (e.g., [0,100]). If uncertain or cannot produce valid JSON, SKIP Vega entirely.`;
+const FORMAT_INSTRUCTION = `MANDATORY: Use Markdown. Code blocks: \`\`\`lang. Math (STRICTLY REQUIRED): All math MUST be wrapped: inline $x$, display $$x$$. ABSOLUTELY FORBIDDEN: bare math chars. Chemistry: MANDATORY $\\ce{}$ format: $\\ce{H2O}$, $\\ce{A+B->C}$, $\\ce{A<=>B}$. Mermaid (STRICT): (1) Labels/text MUST use double quotes "" (2) FORBIDDEN: fullwidth chars ()（）①② (3) Arrows ONLY --> or == (4) Comments ONLY start-of-line %% (5) First line MUST be flowchart/graph directive. Vega/Vega-Lite (ABSOLUTELY STRICT): Code fences MUST be \`\`\`vega or \`\`\`vega-lite. Content MUST be valid JSON ONLY. FORBIDDEN: [min][max], trailing commas, comments/prose. Vega-Lite: REQUIRED "data","mark","encoding"; add "$schema" when known. Vega: REQUIRED "data","marks". Domain arrays MUST be [min,max]. If uncertain, SKIP Vega entirely.`;
 const SEARCH_CONTEXT_INSTRUCTION = `Answer based on the web search results below. Synthesize the information and cite sources as [1], [2] at sentence ends.`;
 const RESEARCH_MODE_INSTRUCTION = `Answer succinctly using only relevant Semantic Scholar papers [1], [2]... plus user text. Structure clearly when writing (e.g., Abstract/Intro/Methods/Results/Discussion/Conclusion). Cite in-body as [N] ONLY; do NOT output a References list. If evidence is missing/off-topic or language mismatch yields no papers, say so, then add a short "based on general knowledge" section without invented citations. Ignore irrelevant results.`;
 // ===========================================================
@@ -8466,6 +8466,18 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
     try {
         const resourcesReady = window.marked && window.DOMPurify && window.hljs && window.renderMathInElement;
         if (!resourcesReady) {
+            if (!window.renderMathInElement && typeof loadScript === 'function' && !element.__mathScriptLoading && !element.__mathScriptAttempted) {
+                element.__mathScriptLoading = true;
+                element.__mathScriptAttempted = true;
+                Promise.resolve()
+                    .then(() => loadScript('/libs/katex.min.js', 'katex'))
+                    .then(() => loadScript('/libs/auto-render.min.js', 'renderMathInElement'))
+                    .catch(() => { })
+                    .finally(() => {
+                        element.__mathScriptLoading = false;
+                        renderMessageContent(element, content, citations, isFinalRender);
+                    });
+            }
             element.textContent = messageText;
             if (renderTimeout) clearTimeout(renderTimeout);
             clearRenderState();
@@ -11253,30 +11265,47 @@ async function handleChatMessage(userContent, options = {}) {
             } else if (error.message) {
                 showToast(error.message, 'error');
             }
+        }
 
-            cleanupEmptyMessagePlaceholders();
+        cleanupEmptyMessagePlaceholders();
+        const container = elements.chatContainer;
+        if (container) {
+            const messages = Array.from(container.querySelectorAll('.message')).reverse();
 
-            const messages = elements.chatContainer.querySelectorAll('.message');
-            const lastUserMessage = Array.from(messages).reverse().find(msg => msg.classList.contains('user'));
-            if (lastUserMessage) {
-                lastUserMessage.remove();
-            }
-
-            if (chats[chatIdForRequest] && chats[chatIdForRequest].messages.length > 0) {
-                const lastMsg = chats[chatIdForRequest].messages[chats[chatIdForRequest].messages.length - 1];
-                if (lastMsg && lastMsg.role === 'user') {
-                    chats[chatIdForRequest].messages.pop();
+            // Remove pending assistant placeholder (spinner/empty bubble)
+            const lastAssistant = messages.find(msg => msg.classList.contains('assistant'));
+            if (lastAssistant) {
+                const contentDiv = lastAssistant.querySelector('.content');
+                const hasSpinner = contentDiv?.querySelector('.thinking-indicator-new');
+                const isEmpty = !contentDiv || !(contentDiv.textContent || '').trim();
+                if (hasSpinner || isEmpty) {
+                    lastAssistant.remove();
                 }
             }
 
-            if (userMessageText) {
-                elements.messageInput.value = userMessageText;
-                elements.messageInput.dispatchEvent(new Event('input'));
-                updateSendButton();
+            // Roll back pending user bubble in DOM
+            const lastUserMessage = messages.find(msg => msg.classList.contains('user'));
+            if (lastUserMessage) {
+                lastUserMessage.remove();
             }
-
-            fullResponse = '';
         }
+
+        // Roll back pending user message in memory
+        if (chats[chatIdForRequest] && chats[chatIdForRequest].messages.length > 0) {
+            const lastMsg = chats[chatIdForRequest].messages[chats[chatIdForRequest].messages.length - 1];
+            if (lastMsg && lastMsg.role === 'user') {
+                chats[chatIdForRequest].messages.pop();
+            }
+        }
+
+        // Restore input so user can resend
+        if (userMessageText && elements.messageInput) {
+            elements.messageInput.value = userMessageText;
+            elements.messageInput.dispatchEvent(new Event('input'));
+            updateSendButton();
+        }
+
+        fullResponse = '';
     } finally {
         if (typeof progressTimer === 'number') {
             clearTimeout(progressTimer);
@@ -11762,6 +11791,22 @@ async function processInBatches(items, processFn, batchSize, delay) {
     return results;
 }
 
+const CHUNK_TOOL_COOLDOWN_MS = 2500;
+const CHUNK_FINAL_COOLDOWN_MS = 3000;
+const CHUNK_COOLDOWN_JITTER_MS = 500;
+let lastChunkedAiRequestAt = 0;
+
+async function applyChunkProcessingCooldown(isFinalRequest = false) {
+    const baseDelay = isFinalRequest ? CHUNK_FINAL_COOLDOWN_MS : CHUNK_TOOL_COOLDOWN_MS;
+    const elapsed = Date.now() - lastChunkedAiRequestAt;
+    const jitter = Math.floor(Math.random() * CHUNK_COOLDOWN_JITTER_MS);
+    const waitMs = Math.max(0, baseDelay + jitter - elapsed);
+    if (waitMs > 0) {
+        await sleep(waitMs);
+    }
+    lastChunkedAiRequestAt = Date.now();
+}
+
 function smartChunking(text, maxChunkSize = 8000, overlap = 200) {
     const sentences = text.match(/[^。！？\.\!\?]+[。！？\.\!\?\n\n]*|[^。！？\.\!\?]+$/g) || [];
     if (sentences.length === 0) return [text];
@@ -11903,6 +11948,7 @@ async function handleLargeTextAnalysis(userContent, originalQuery, existingAssis
                 prompt = prompt.substring(0, MAX_PROMPT_LENGTH) + '\n\n[Content truncated due to length limit]';
             }
 
+            await applyChunkProcessingCooldown(false);
             const chunkSummary = await callAISynchronously(prompt);
             cumulativeSummary = chunkSummary;
 
@@ -11917,7 +11963,7 @@ async function handleLargeTextAnalysis(userContent, originalQuery, existingAssis
         const finalUserContent = [{ type: 'text', text: finalPromptForUserChoiceModel }];
         setAiOptimizedContentForLastUserMessage(chatIdForRequest, finalUserContent);
 
-        await sleep(2000);
+        await applyChunkProcessingCooldown(true);
         return await handleChatMessage(finalUserContent, { existingAssistantElement: assistantMessageElement });
 
     } catch (error) {
@@ -12009,6 +12055,7 @@ async function handleDeepAnalysis(userContent, originalQuery, existingAssistantE
 
             const indexPrompt = `Extract keywords and create a summary from the following text block.\n\nText Block Content:\n"""${chunkText}"""\n\nReturn in JSON format only, no other text, format: {"keywords": ["keyword1", "keyword2"], "summary": "summary content"}`;
             try {
+                await applyChunkProcessingCooldown(false);
                 const indexDataStr = await callAISynchronously(indexPrompt);
                 const indexData = safeJsonParse(indexDataStr);
                 if (indexData && Array.isArray(indexData.keywords) && typeof indexData.summary === 'string') {
@@ -12032,12 +12079,14 @@ async function handleDeepAnalysis(userContent, originalQuery, existingAssistantE
         contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step3Extracting')}</div>`;
 
         const extractionPrompt = `Extract search keywords from the user query: "${originalQuery}"\n\nReturn ONLY a JSON object in this exact format: {"keywords": ["keyword1", "keyword2"]}`;
+        await applyChunkProcessingCooldown(false);
         const keywordsResult = await callAISynchronously(extractionPrompt);
         const searchKeywords = safeJsonParse(keywordsResult, { keywords: [originalQuery.substring(0, 20)] }).keywords;
 
         contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step3Searching')}</div>`;
 
         const retrievalPrompt = `Find the most relevant document chunks based on the search keywords.\n\nSearch Keywords: "${searchKeywords.join(', ')}"\n\nDocument Index:\n${JSON.stringify(documentIndex.map(d => ({ id: d.chunkId, keywords: d.keywords, summary: d.summary })), null, 2)}\n\nPlease return ONLY a JSON array of chunk IDs, like: ["chunk1", "chunk2", "chunk3"]`;
+        await applyChunkProcessingCooldown(false);
         const relevantIdsStr = await callAISynchronously(retrievalPrompt);
 
         let relevantChunks = [];
@@ -12079,7 +12128,7 @@ async function handleDeepAnalysis(userContent, originalQuery, existingAssistantE
         const finalUserContent = [{ type: 'text', text: finalPromptForUserChoiceModel }];
         setAiOptimizedContentForLastUserMessage(chatIdForRequest, finalUserContent);
 
-        await sleep(2000);
+        await applyChunkProcessingCooldown(true);
         return await handleChatMessage(finalUserContent, { existingAssistantElement: assistantMessageElement });
 
     } catch (error) {

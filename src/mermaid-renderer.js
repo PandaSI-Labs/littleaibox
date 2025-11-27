@@ -155,9 +155,8 @@ function configureMermaid(mermaid) {
             startOnLoad: false,
             securityLevel: 'loose',
             theme: document.documentElement.classList.contains('dark') ? 'dark' : 'default',
-            
-            htmlLabels: false,
-            flowchart: { htmlLabels: false },
+            htmlLabels: true,
+            flowchart: { htmlLabels: true },
             sequence: { useMaxWidth: true }
         });
     } catch (error) {
