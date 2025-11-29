@@ -1565,7 +1565,6 @@ body.is-native-app .message:first-child {
     border: 1px solid #e8eaed;
     border-radius: 8px;
     padding: 16px;
-    margin: 0;
     position: relative;
     white-space: pre;
     color: var(--code-color);
@@ -1573,9 +1572,17 @@ body.is-native-app .message:first-child {
     -webkit-overflow-scrolling: touch;
 }
 
+.code-block-wrapper {
+    position: relative;
+}
+
+.code-block-wrapper > pre {
+    margin: 8px 0;
+}
+
 .code-block-container {
     position: relative;
-    margin: 12px 0;
+    margin: 8px 0;
 }
 
 .content code {
@@ -1600,7 +1607,10 @@ code:not([class*="katex"]),
     font-family: 'Monaco', 'Cascadia Code', 'Roboto Mono', 'Consolas', 'Courier New', monospace;
 }
 
-/* 复制按钮包装器 */
+.message .content pre {
+    position: relative;
+}
+
 .copy-btn-wrapper {
     position: absolute;
     top: 8px;
@@ -1633,7 +1643,6 @@ code:not([class*="katex"]),
     border-color: rgba(0, 0, 0, 0.2);
 }
 
-/* 深色主题下的复制按钮样式 */
 html[data-theme='dark'] .copy-btn {
     background: rgba(255, 255, 255, 0.1);
     color: white;

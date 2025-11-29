@@ -134,7 +134,7 @@ class AppRouter {
                 return;
             }
             const state = event.state;
-            if (state && state.route && this.managedDepth > 0) {
+            if (state && (state.route || state.__labKeep) && this.managedDepth > 0) {
                 this.managedDepth = Math.max(0, this.managedDepth - 1);
             }
             if (state && state.route) {
@@ -183,6 +183,7 @@ class AppRouter {
         }
         try {
             window.history.pushState({ __labKeep: Date.now() }, document.title, window.location.href);
+            this.managedDepth += 1;
         } catch (error) {
             console.warn('Router placeholder push failed:', error);
         }

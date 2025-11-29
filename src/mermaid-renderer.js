@@ -393,6 +393,43 @@ function stripForeignObjects(svgRoot) {
     });
 }
 
+function replaceForeignObjectsForExport(svgRoot) {
+    if (!svgRoot || typeof svgRoot.querySelectorAll !== 'function') return;
+    const foreignObjects = Array.from(svgRoot.querySelectorAll('foreignObject'));
+    const ns = 'http://www.w3.org/2000/svg';
+
+    foreignObjects.forEach((node) => {
+        const parent = node.parentNode;
+        if (!parent) return;
+        const textContent = (node.textContent || '').trim();
+        const textEl = svgRoot.ownerDocument.createElementNS(ns, 'text');
+
+        const x = parseFloat(node.getAttribute('x')) || 0;
+        const y = parseFloat(node.getAttribute('y')) || 0;
+        const width = parseFloat(node.getAttribute('width')) || 0;
+        const height = parseFloat(node.getAttribute('height')) || 0;
+        const cx = Number.isFinite(width) ? x + width / 2 : x;
+        const cy = Number.isFinite(height) ? y + height / 2 : y;
+
+        textEl.setAttribute('x', Number.isFinite(cx) ? cx : 0);
+        textEl.setAttribute('y', Number.isFinite(cy) ? cy : 0);
+        textEl.setAttribute('dominant-baseline', 'middle');
+        textEl.setAttribute('text-anchor', 'middle');
+
+        const styleStr = (node.querySelector('[style]')?.getAttribute('style') || '') + (node.getAttribute('style') || '');
+        const fontSizeMatch = /font-size:\s*([^;]+)/i.exec(styleStr);
+        const colorMatch = /(?:color|fill):\s*([^;]+)/i.exec(styleStr);
+        if (fontSizeMatch && fontSizeMatch[1]) {
+            textEl.setAttribute('font-size', fontSizeMatch[1].trim());
+        } else {
+            textEl.setAttribute('font-size', '14px');
+        }
+        textEl.setAttribute('fill', colorMatch && colorMatch[1] ? colorMatch[1].trim() : '#111827');
+        textEl.textContent = textContent || '';
+        parent.replaceChild(textEl, node);
+    });
+}
+
 function getSvgSize(svgElement) {
     if (!svgElement) {
         return { width: 800, height: 600 };
@@ -442,7 +479,7 @@ async function downloadRasterFromSvg(svgElement, filenameBase, {
 
     stripUnsafeUrlsInStyles(cloned);
     stripExternalImages(cloned);
-    stripForeignObjects(cloned);
+    replaceForeignObjectsForExport(cloned);
     if (!cloned.getAttribute('xmlns')) {
         cloned.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
     }
@@ -492,7 +529,7 @@ async function downloadRasterFromSvg(svgElement, filenameBase, {
         try {
             const fallbackClone = svgElement.cloneNode(true);
             stripUnsafeUrlsInStyles(fallbackClone);
-            stripForeignObjects(fallbackClone);
+            replaceForeignObjectsForExport(fallbackClone);
             stripExternalImages(fallbackClone);
             const fallbackSerializer = new XMLSerializer();
             const fallbackSource = fallbackSerializer.serializeToString(fallbackClone);
@@ -632,17 +669,30 @@ export function renderMermaidDiagrams(rootElement, { loadScript, isFinalRender }
                 preClone.querySelectorAll('code').forEach(code => {
                     code.dataset.mermaidSource = 'true';
                 });
-                preClone.querySelectorAll('.copy-btn-wrapper').forEach(wrapper => wrapper.remove());
-                if (typeof window.addCopyButtonToCodeBlock === 'function') {
-                    try {
-                        const codeInClone = preClone.querySelector('code');
-                        if (codeInClone) {
-                            window.addCopyButtonToCodeBlock(preClone, codeInClone);
-                        }
-                    } catch (_) { }
-                }
                 details.appendChild(summary);
                 details.appendChild(preClone);
+                preClone.querySelectorAll('.copy-btn-wrapper').forEach(wrapper => wrapper.remove());
+                try {
+                    const codeInClone = preClone.querySelector('code');
+                    if (codeInClone) {
+                        if (typeof window.addCopyButtonToCodeBlock === 'function') {
+                            window.addCopyButtonToCodeBlock(preClone, codeInClone);
+                        } else {
+                            const btn = document.createElement('button');
+                            btn.textContent = 'Copy';
+                            btn.style.position = 'absolute';
+                            btn.style.top = '8px';
+                            btn.style.right = '8px';
+                            btn.addEventListener('click', (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                navigator.clipboard.writeText(codeInClone.textContent || '').catch(() => { });
+                            });
+                            preClone.style.position = 'relative';
+                            preClone.appendChild(btn);
+                        }
+                    }
+                } catch (_) { }
 
                 const container = document.createElement('div');
                 container.className = 'mermaid-render-container';
@@ -654,7 +704,12 @@ export function renderMermaidDiagrams(rootElement, { loadScript, isFinalRender }
                 container.appendChild(wrapper);
                 container.appendChild(details);
 
-                parentPre.replaceWith(container);
+                const copyWrapper = parentPre.closest('.code-block-wrapper');
+                if (copyWrapper && copyWrapper.parentNode) {
+                    copyWrapper.parentNode.replaceChild(container, copyWrapper);
+                } else {
+                    parentPre.replaceWith(container);
+                }
                 codeElement.dataset.mermaidProcessed = 'true';
                 if (codeElement.dataset.mermaidPending === 'true') {
                     delete codeElement.dataset.mermaidPending;
@@ -668,7 +723,15 @@ export function renderMermaidDiagrams(rootElement, { loadScript, isFinalRender }
                 const errorBanner = document.createElement('div');
                 errorBanner.className = 'mermaid-error-banner';
                 errorBanner.textContent = `Mermaid diagram rendering failed: ${error.message || error}`;
-                parentPre.parentNode.insertBefore(errorBanner, parentPre);
+
+                const wrapper = parentPre.parentNode?.classList?.contains('code-block-wrapper')
+                    ? parentPre.parentNode
+                    : null;
+                const insertTarget = wrapper || parentPre;
+
+                if (insertTarget.parentNode && typeof insertTarget.parentNode.insertBefore === 'function') {
+                    insertTarget.parentNode.insertBefore(errorBanner, insertTarget);
+                }
             }
         }
     }).catch(error => {

@@ -114,16 +114,23 @@ function shouldRenderVegaLite(codeElement, { isFinalRender, rootElement } = {}) 
     const cls = codeElement.className || '';
     const looksLikeVega = cls.includes('language-vega-lite') || cls.includes('lang-vega-lite') ||
         cls.includes('language-vega') || cls.includes('lang-vega');
+    const text = (codeElement.textContent || '').trim();
+    const likelyVegaContent = looksLikeVega || looksLikeVegaSpecText(text);
+
     if (!isFinalRender) {
-        codeElement.dataset.vegaLitePending = 'true';
+        if (likelyVegaContent) {
+            codeElement.dataset.vegaLitePending = 'true';
+        } else {
+            delete codeElement.dataset.vegaLitePending;
+        }
         return false;
     }
-    if (looksLikeVega) return true;
+    if (!likelyVegaContent) {
+        delete codeElement.dataset.vegaLitePending;
+        return false;
+    }
 
-    const text = (codeElement.textContent || '').trim();
-    if (!text) return false;
-
-    return looksLikeVegaSpecText(codeElement.textContent);
+    return true;
 }
 
 function safeParseSpec(raw) {
@@ -181,9 +188,13 @@ function createErrorBanner(error, pre) {
     const banner = document.createElement('div');
     banner.className = 'vega-lite-error-banner';
     banner.textContent = `Vega-Lite render failed: ${error.message || error}`;
-    const parent = pre && pre.parentNode;
+    const wrapper = pre?.parentNode?.classList?.contains('code-block-wrapper')
+        ? pre.parentNode
+        : null;
+    const insertTarget = wrapper || pre;
+    const parent = insertTarget && insertTarget.parentNode;
     if (parent && typeof parent.insertBefore === 'function') {
-        parent.insertBefore(banner, pre);
+        parent.insertBefore(banner, insertTarget);
     }
 }
 
@@ -391,23 +402,18 @@ export function renderVegaLiteDiagrams(rootElement, { loadScript, isFinalRender 
                     ? structuredClone(spec)
                     : JSON.parse(JSON.stringify(spec));
                 rewriteDataUrls(specCopy);
-                parentPre.replaceWith(container);
+                const copyWrapper = parentPre.closest('.code-block-wrapper');
+                if (copyWrapper && copyWrapper.parentNode) {
+                    copyWrapper.parentNode.replaceChild(container, copyWrapper);
+                } else {
+                    parentPre.replaceWith(container);
+                }
 
                 const preClone = parentPre.cloneNode(true);
                 preClone.classList.add('vega-lite-source');
                 preClone.querySelectorAll('code').forEach(code => {
                     code.dataset.vegaLiteSource = 'true';
                 });
-                preClone.querySelectorAll('.copy-btn-wrapper').forEach(wrapper => wrapper.remove());
-                if (typeof window.addCopyButtonToCodeBlock === 'function') {
-                    try {
-                        const codeInClone = preClone.querySelector('code');
-                        if (codeInClone) {
-                            window.addCopyButtonToCodeBlock(preClone, codeInClone);
-                        }
-                    } catch (_) { }
-                }
-
                 const chartHost = document.createElement('div');
                 chartHost.className = 'vega-lite-chart-host';
                 container.appendChild(chartHost);
@@ -434,6 +440,28 @@ export function renderVegaLiteDiagrams(rootElement, { loadScript, isFinalRender 
                 summary.textContent = 'Vega source';
                 details.appendChild(summary);
                 details.appendChild(preClone);
+                preClone.querySelectorAll('.copy-btn-wrapper').forEach(wrapper => wrapper.remove());
+                try {
+                    const codeInClone = preClone.querySelector('code');
+                    if (codeInClone) {
+                        if (typeof window.addCopyButtonToCodeBlock === 'function') {
+                            window.addCopyButtonToCodeBlock(preClone, codeInClone);
+                        } else {
+                            const btn = document.createElement('button');
+                            btn.textContent = 'Copy';
+                            btn.style.position = 'absolute';
+                            btn.style.top = '8px';
+                            btn.style.right = '8px';
+                            btn.addEventListener('click', (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                navigator.clipboard.writeText(codeInClone.textContent || '').catch(() => { });
+                            });
+                            preClone.style.position = 'relative';
+                            preClone.appendChild(btn);
+                        }
+                    }
+                } catch (_) { }
                 container.appendChild(details);
                 codeElement.dataset.vegaLiteProcessed = 'true';
             } catch (error) {

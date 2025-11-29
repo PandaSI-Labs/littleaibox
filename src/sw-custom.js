@@ -154,7 +154,7 @@ registerRoute(
     }
 );
 
-// 构建产物（哈希静态资源）
+// 构建产物
 registerRoute(
     ({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/assets/'),
     new CacheFirst({ cacheName: 'assets-cache' })
@@ -180,7 +180,12 @@ registerRoute(
 
 // API
 registerRoute(
-    ({ url }) => url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/'),
+    ({ url }) => {
+        if (url.pathname.startsWith('/api/image-proxy') || url.pathname.startsWith('/api/image-get')) {
+            return false;
+        }
+        return url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/');
+    },
     networkOnlyWithFallback
 );
 

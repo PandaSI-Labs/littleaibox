@@ -13,13 +13,105 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="format-detection" content="telephone=no">
     <meta name="mobile-web-app-capable" content="yes">
-    <title>LittleAIBox</title>
+    <title>LittleAIBox - Privacy-first multimodal AI platform</title>
+    <meta name="description"
+        content="LittleAIBox - Privacy-first multimodal AI platform with global Gemini access, local/offline mode, voice & OCR, files/code, and built-in chart/diagram rendering.">
+    <link rel="canonical" href="https://littleaibox.com/">
+    <meta name="application-name" content="LittleAIBox">
+    <meta name="apple-mobile-web-app-title" content="LittleAIBox">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://littleaibox.com/">
+    <meta property="og:site_name" content="LittleAIBox">
+    <meta property="og:title" content="LittleAIBox - Privacy-first multimodal AI platform">
+    <meta property="og:description"
+        content="LittleAIBox - Privacy-first multimodal AI platform with global Gemini access, local/offline mode, voice & OCR, files/code, and built-in chart/diagram rendering.">
+    <meta property="og:image" content="https://littleaibox.com/images/pwa-512x512.png">
     <meta name="theme-color" content="#ffffff">
     <meta name="color-scheme" content="light dark">
+    <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@type": "WebSite",
+            "name": "LittleAIBox",
+            "url": "https://littleaibox.com/",
+            "description": "LittleAIBox - Privacy-first multimodal AI platform with global Gemini access, local/offline mode, voice & OCR, files/code, and built-in chart/diagram rendering.",
+            "potentialAction": {
+                "@type": "SearchAction",
+                "target": "https://littleaibox.com/?q={search_term_string}",
+                "query-input": "required name=search_term_string"
+            }
+        }
+    </script>
+    <script>
+        (() => {
+            const descMap = {
+                'en': 'LittleAIBox - Privacy-first multimodal AI platform with global Gemini access, local/offline mode, voice & OCR, files/code, and built-in chart/diagram rendering.',
+                'zh-CN': 'LittleAIBox —— 隐私优先的多模态 AI 平台，全球无障碍直连 Gemini，支持离线/本地运行、语音、OCR、文档/代码，并内置图表与流程图渲染。',
+                'zh-TW': 'LittleAIBox —— 隱私優先的多模態 AI 平台，全球無障礙直連 Gemini，支援離線/本地運行、語音、OCR、文件/程式碼，並內建圖表與流程圖渲染。',
+                'ja': 'LittleAIBoxはプライバシー重視のマルチモーダルAIプラットフォーム。Geminiへ世界中から直接アクセスでき、ローカル/オフライン動作、音声、OCR、ドキュメント/コード、図表・フローチャート描画を備えます。',
+                'ko': 'LittleAIBox는 프라이버시 우선 멀티모달 AI 플랫폼으로 전 세계 어디서나 Gemini에 바로 연결되며, 로컬/오프라인 모드, 음성·OCR, 문서/코드, 차트·플로우차트 렌더링을 제공합니다.',
+                'es': 'LittleAIBox: plataforma de IA multimodal centrada en la privacidad, con acceso global directo a Gemini, modo local/offline, voz y OCR, archivos/código y renderizado integrado de gráficos/diagramas.'
+            };
+
+            const normalizeLang = (langRaw) => {
+                if (!langRaw) return null;
+                const val = langRaw.toLowerCase();
+                if (val.startsWith('zh-tw') || val.startsWith('zh-hk')) return 'zh-TW';
+                if (val.startsWith('zh')) return 'zh-CN';
+                if (val.startsWith('ja')) return 'ja';
+                if (val.startsWith('ko')) return 'ko';
+                if (val.startsWith('es')) return 'es';
+                if (val.startsWith('en')) return 'en';
+                return null;
+            };
+
+            const pickLang = () => {
+                try {
+                    const stored = localStorage.getItem('selectedLanguage');
+                    if (stored && descMap[stored]) return stored;
+                } catch (_) { }
+                const navLangs = Array.isArray(navigator.languages) && navigator.languages.length
+                    ? navigator.languages
+                    : [navigator.language];
+                for (const lang of navLangs) {
+                    const normalized = normalizeLang(lang);
+                    if (normalized && descMap[normalized]) return normalized;
+                }
+                return 'en';
+            };
+
+            const lang = pickLang();
+            const desc = descMap[lang] || descMap.en;
+            const applyContent = (selector) => {
+                const el = document.querySelector(selector);
+                if (el) el.setAttribute('content', desc);
+            };
+
+            applyContent('meta[name="description"]');
+            applyContent('meta[property="og:description"]');
+            applyContent('meta[name="twitter:description"]');
+
+            const ld = document.querySelector('script[type="application/ld+json"]');
+            if (ld) {
+                try {
+                    const data = JSON.parse(ld.textContent || '{}');
+                    data.description = desc;
+                    ld.textContent = JSON.stringify(data);
+                } catch (_) { }
+            }
+
+            if (document.documentElement && lang) {
+                document.documentElement.setAttribute('lang', lang);
+            }
+        })();
+    </script>
 
     <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="icon" href="/images/favicon.ico">
-    <link rel="apple-touch-icon" href="/images/pwa-192x192.png">
+    <link rel="icon" type="image/x-icon" href="/images/favicon.ico">
+    <link rel="icon" type="image/png" sizes="48x48" href="/images/favicon-48.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/images/pwa-192x192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="/images/pwa-512x512.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-180.png">
 
     <link rel="stylesheet" href="/libs/katex.min.css">
     <link rel="stylesheet" href="/libs/github-dark.min.css">

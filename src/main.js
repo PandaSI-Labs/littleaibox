@@ -29,6 +29,107 @@ const RESEARCH_MODE_INSTRUCTION = `Answer succinctly using only relevant Semanti
 // ===========================================================
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const IMAGE_ACCEL_BASES = [
+    'https://littleaibox.oss-accelerate.aliyuncs.com'
+];
+const ACCEL_FETCH_TIMEOUT_MS = 8000;
+const ANDROID_PICTURES_DIR = 'Pictures/LittleAIBox';
+
+function toAbsoluteImageUrl(url) {
+    if (!url) return url;
+
+    const trimmedUrl = url.trim();
+    if (/^(data:|blob:)/i.test(trimmedUrl)) return trimmedUrl;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmedUrl)) {
+        return trimmedUrl;
+    }
+
+    const baseOrigin =
+        API_BASE_URL ||
+        (window.location.origin && window.location.origin.startsWith('http')
+            ? window.location.origin
+            : 'https://littleaibox.com');
+
+    if (trimmedUrl.startsWith('//')) {
+        const protocol = (window.location.protocol === 'http:' ? 'http:' : 'https:');
+        return `${protocol}${trimmedUrl}`;
+    }
+
+    const normalizedPath = trimmedUrl.startsWith('/') ? trimmedUrl : `/${trimmedUrl}`;
+    return `${baseOrigin}${normalizedPath}`;
+}
+
+function buildAcceleratedImageUrls(url) {
+    const absoluteUrl = toAbsoluteImageUrl(url) || url;
+    if (!absoluteUrl || /^(data:|blob:)/i.test(absoluteUrl)) {
+        return [absoluteUrl];
+    }
+
+    const candidates = [absoluteUrl];
+    IMAGE_ACCEL_BASES.forEach((base) => {
+        if (!base) return;
+        try {
+            const parsed = new URL(absoluteUrl);
+            const normalizedBase = base.replace(/\/+$/, '');
+            const accelerated = `${normalizedBase}${parsed.pathname}${parsed.search}${parsed.hash}`;
+            if (!candidates.includes(accelerated)) {
+                candidates.push(accelerated);
+            }
+        } catch {
+            // skip malformed base
+        }
+    });
+    return candidates;
+}
+
+async function fetchWithCdnFallback(url, options = {}) {
+    const candidates = buildAcceleratedImageUrls(url);
+    let lastError = null;
+
+    for (const candidate of candidates) {
+        if (!candidate) continue;
+        const controller = new AbortController();
+        const timeout = options.timeoutMs
+            ? setTimeout(() => controller.abort(), options.timeoutMs)
+            : null;
+
+        try {
+            const response = await fetch(candidate, {
+                ...options,
+                signal: controller.signal,
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            if (timeout) clearTimeout(timeout);
+            return { response, urlUsed: candidate };
+        } catch (error) {
+            lastError = error;
+            if (timeout) clearTimeout(timeout);
+        }
+    }
+
+    throw lastError || new Error('Image fetch failed');
+}
+
+async function ensureDisplayableImageUrl(url, headers = {}) {
+    const absoluteUrl = toAbsoluteImageUrl(url);
+    if (!isNativeApp || !absoluteUrl || absoluteUrl.startsWith('data:') || absoluteUrl.startsWith('blob:')) {
+        return { displayUrl: absoluteUrl, originalUrl: absoluteUrl };
+    }
+
+    try {
+        const { response, urlUsed } = await fetchWithCdnFallback(absoluteUrl, {
+            headers,
+            timeoutMs: ACCEL_FETCH_TIMEOUT_MS
+        });
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        return { displayUrl: objectUrl, originalUrl: absoluteUrl, resolvedUrl: urlUsed };
+    } catch (error) {
+        return { displayUrl: absoluteUrl, originalUrl: absoluteUrl };
+    }
+}
 
 const ApkInstaller = Capacitor.isNativePlatform()
     ? registerPlugin('ApkInstaller', {
@@ -843,7 +944,6 @@ class NavigationEngine {
             if (currentChatId.startsWith('temp_')) {
                 const canLeave = await handleLeaveTemporaryChat(false);
                 if (!canLeave) {
-                    routeManager.ensureChatRouteSynced();
                     return;
                 }
             } else {
@@ -897,7 +997,8 @@ class RouteManager {
         const currentRoute = router.getCurrentRoute();
         const isCurrentChatContext = currentRoute?.name === 'chat' || currentRoute?.name === 'tempChat';
         const isTargetChatContext = routeName === 'chat' || routeName === 'tempChat';
-        const shouldReplace = options.replace === true || (isTargetChatContext && isCurrentChatContext);
+        const shouldReplace = options.replace === true ||
+            (isTargetChatContext && isCurrentChatContext);
         router.navigate(routeName, { chatId }, {
             replace: shouldReplace,
             silent: options.silent === true
@@ -1167,6 +1268,7 @@ class RouteManager {
         if (route.name === 'chat' || route.name === 'tempChat') {
             hideSettingsModal(false, { skipHandleBack: true });
             hideAuthOverlay(false, { routeHandled: true });
+
             const chatId = route.params?.chatId;
 
             if (chatId && chatId !== currentChatId) {
@@ -1616,7 +1718,12 @@ function showCustomPrompt(title, label, defaultValue = '') {
     return promise;
 }
 
-function showImageModal(imageUrl, description) {
+function showImageModal(imageUrl, description, originalUrl = imageUrl) {
+    if (imageViewerBackCleanup) {
+        imageViewerBackCleanup();
+        imageViewerBackCleanup = null;
+    }
+
     const existingModal = document.getElementById('image-viewer-modal');
     if (existingModal) existingModal.remove();
 
@@ -1687,6 +1794,11 @@ function showImageModal(imageUrl, description) {
                 }
             }, 200);
         }
+        if (imageViewerBackCleanup) {
+            const cleanup = imageViewerBackCleanup;
+            imageViewerBackCleanup = null;
+            cleanup();
+        }
     };
 
     closeBtn.addEventListener('click', closeModalInner);
@@ -1694,8 +1806,9 @@ function showImageModal(imageUrl, description) {
         if (e.target === modalOverlay) closeModalInner();
     });
     downloadBtn.addEventListener('click', () => downloadImage(imageUrl, description));
-    copyBtn.addEventListener('click', () => copyImageUrl(imageUrl));
+    copyBtn.addEventListener('click', () => copyImageUrl(originalUrl));
 
+    imageViewerBackCleanup = registerOverlayBackHandler(closeModalInner);
     setTimeout(() => modalOverlay.classList.add('visible'), 50);
 }
 
@@ -1744,41 +1857,74 @@ async function ensureStoragePermission() {
     }
 }
 
+async function saveImageToGallery(base64Data, filename) {
+    const platform = Capacitor.getPlatform();
+    const MediaStore = Capacitor.Plugins?.MediaStore;
+
+    if (platform === 'android' && MediaStore?.saveImage) {
+        await MediaStore.saveImage({
+            base64: base64Data,
+            filename,
+        });
+        return 'album';
+    }
+
+    if (platform === 'android') {
+        const folderPath = ANDROID_PICTURES_DIR;
+        try {
+            await Filesystem.mkdir({
+                path: folderPath,
+                directory: Directory.ExternalStorage,
+                recursive: true,
+            });
+        } catch (error) {
+            // mkdir may fail if folder already exists; ignore that case
+        }
+
+        try {
+            await Filesystem.writeFile({
+                path: `${folderPath}/${filename}`,
+                data: base64Data,
+                directory: Directory.ExternalStorage,
+                recursive: true,
+            });
+            return 'album';
+        } catch (error) {
+            console.debug('External storage write failed, falling back to documents:', error?.message || error);
+        }
+    }
+
+    await Filesystem.writeFile({
+        path: filename,
+        data: base64Data,
+        directory: Directory.Documents,
+        recursive: true,
+    });
+    return 'documents';
+}
+
 async function downloadImage(imageUrl, description) {
-    const safeFilename = description.substring(0, 20).replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_') || 'image';
+    const safeFilename = description.substring(0, 20).replace(/[^a-zA-Z0-9一-龥]/g, '_') || 'image';
     const filename = `generated_${safeFilename}_${Date.now()}.png`;
+    const targetUrl = toAbsoluteImageUrl(imageUrl) || imageUrl;
 
     if (isNativeApp) {
         try {
             await ensureStoragePermission();
-
-            const response = await fetch(imageUrl);
+            const { response } = await fetchWithCdnFallback(targetUrl, { timeoutMs: ACCEL_FETCH_TIMEOUT_MS });
             const blob = await response.blob();
             const base64Data = await blobToBase64(blob);
 
-            const MediaStore = Capacitor.Plugins.MediaStore;
-
-            if (MediaStore) {
-                await MediaStore.saveImage({
-                    base64: base64Data.split(',')[1],
-                    filename: filename
-                });
-                showToast(getToastMessage('toast.imageSavedToAlbum'), 'success');
-            } else {
-                await Filesystem.writeFile({
-                    path: filename,
-                    data: base64Data,
-                    directory: Directory.Documents,
-                });
-                showToast(getToastMessage('toast.imageSaved'), 'success');
-            }
+            const location = await saveImageToGallery(base64Data, filename);
+            const successKey = location === 'album' ? 'toast.imageSavedToAlbum' : 'toast.imageSaved';
+            showToast(getToastMessage(successKey), 'success');
         } catch (error) {
-            showToast(`${getToastMessage('toast.downloadFailed')}: ${error.message}`, 'error');
+            showToast(`${getToastMessage('toast.downloadFailed')}: ${error.message || error}`, 'error');
         }
     } else {
         try {
             showToast(getToastMessage('toast.preparingDownload'), 'info');
-            const response = await fetch(imageUrl);
+            const { response } = await fetchWithCdnFallback(targetUrl, { timeoutMs: ACCEL_FETCH_TIMEOUT_MS });
             const blob = await response.blob();
             const link = document.createElement('a');
 
@@ -1790,14 +1936,16 @@ async function downloadImage(imageUrl, description) {
             URL.revokeObjectURL(link.href);
 
             showToast(getToastMessage('toast.downloadSuccess'), 'success');
-        } catch {
+        } catch (error) {
+            console.warn('Download failed (web):', error);
             showToast(getToastMessage('toast.downloadFailedRetry'), 'error');
         }
     }
 }
 
 function copyImageUrl(imageUrl) {
-    navigator.clipboard.writeText(imageUrl).then(() => {
+    const targetUrl = toAbsoluteImageUrl(imageUrl) || imageUrl;
+    navigator.clipboard.writeText(targetUrl).then(() => {
         showToast(getToastMessage('toast.linkCopied'), 'success');
     }).catch(() => {
         showToast(getToastMessage('toast.copyFailed'), 'error');
@@ -1805,22 +1953,21 @@ function copyImageUrl(imageUrl) {
 }
 
 function addCopyButtonToCodeBlock(preElement, codeElement) {
-    // 检查是否已存在复制按钮
-    if (preElement.querySelector('.copy-btn-wrapper')) {
+    const existingWrapper = preElement.closest('.code-block-wrapper');
+    if (existingWrapper && existingWrapper.querySelector('.copy-btn-wrapper')) {
         return;
     }
 
-    // 确保 pre 元素有相对定位
-    const computedStyle = getComputedStyle(preElement);
-    if (computedStyle.position === 'static' || computedStyle.position === '' || !computedStyle.position) {
-        preElement.style.position = 'relative';
+    let wrapper = preElement.closest('.code-block-wrapper');
+    if (!wrapper) {
+        wrapper = document.createElement('div');
+        wrapper.className = 'code-block-wrapper';
+        preElement.parentNode.insertBefore(wrapper, preElement);
+        wrapper.appendChild(preElement);
     }
-
-    // 创建复制按钮包装器
     const copyWrapper = document.createElement('div');
     copyWrapper.className = 'copy-btn-wrapper';
 
-    // 创建复制按钮
     const copyBtn = document.createElement('button');
     copyBtn.className = 'copy-btn';
     copyBtn.innerHTML = `
@@ -1830,7 +1977,6 @@ function addCopyButtonToCodeBlock(preElement, codeElement) {
         <span>${getToastMessage('ui.copy')}</span>
     `;
 
-    // 添加点击事件
     copyBtn.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -1839,7 +1985,6 @@ function addCopyButtonToCodeBlock(preElement, codeElement) {
             const codeText = codeElement.textContent || codeElement.innerText;
             await navigator.clipboard.writeText(codeText);
 
-            // 更新按钮状态
             const span = copyBtn.querySelector('span');
             const svg = copyBtn.querySelector('svg path');
             const originalText = span.textContent;
@@ -1847,8 +1992,6 @@ function addCopyButtonToCodeBlock(preElement, codeElement) {
 
             span.textContent = getToastMessage('status.copied');
             svg.setAttribute('d', ICONS.CHECK);
-
-            // 2秒后恢复
             setTimeout(() => {
                 span.textContent = originalText;
                 svg.setAttribute('d', originalPath);
@@ -1860,7 +2003,7 @@ function addCopyButtonToCodeBlock(preElement, codeElement) {
     });
 
     copyWrapper.appendChild(copyBtn);
-    preElement.appendChild(copyWrapper);
+    wrapper.appendChild(copyWrapper);
 }
 
 try {
@@ -1868,7 +2011,6 @@ try {
         window.addCopyButtonToCodeBlock = addCopyButtonToCodeBlock;
     }
 } catch (_) { }
-
 
 let currentLoadChatId = 0;
 let currentUser = null;
@@ -8801,6 +8943,19 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         mathRenderer.renderMath(element, { isFinalRender });
         if (window.hljs) {
             ensurePlaintextHighlightLanguage();
+            element.querySelectorAll('pre code').forEach(block => {
+                const cls = block.className || '';
+                const isMermaidLike = cls.includes('language-mermaid');
+                const isVegaLike = cls.includes('language-vega-lite') || cls.includes('language-vega');
+                if (!isMermaidLike && !isVegaLike) {
+                    if (block.dataset.vegaLitePending === 'true') {
+                        delete block.dataset.vegaLitePending;
+                    }
+                    if (block.dataset.mermaidPending === 'true') {
+                        delete block.dataset.mermaidPending;
+                    }
+                }
+            });
             if (isFinalRender) {
                 const candidateBlocks = Array.from(element.querySelectorAll('pre code'))
                     .filter(block => block.dataset.mermaidPending !== 'true' &&
@@ -10173,51 +10328,96 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
 
     return new Promise((resolve) => {
         const baseUrl = isNativeApp ? API_BASE_URL : '';
-        const imageUrl = `${baseUrl}/api/image-proxy?prompt=${encodeURIComponent(englishPrompt)}`;
+        const searchParams = new URLSearchParams({ prompt: englishPrompt });
+        if (sessionId) {
+            searchParams.set('sessionId', sessionId); 
+        }
 
         const loadImage = async () => {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 60000); // 60秒超时，后端会重试
-            const timestamp = Date.now();
-            activeResponses.set(chatIdForRequest, { controller, timestamp });
-
-            try {
-                const headers = {};
-                if (sessionId) {
-                    headers['X-Session-ID'] = sessionId;
-                } else {
-                    headers['X-Visitor-ID'] = await getGuestVisitorId();
+            if (contentDiv) {
+                contentDiv.innerHTML = `
+                    <div class="thinking-indicator-new">
+                        <svg class="spinner" viewBox="0 0 50 50">
+                            <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle>
+                        </svg>
+                        <span>${getToastMessage('ui.generationMayTake1to2Minutes')}</span>
+                    </div>
+                `;
+            }
+            const params = new URLSearchParams(searchParams);
+            const headers = {};
+            let visitorId = null;
+            if (!sessionId) {
+                visitorId = await getGuestVisitorId();
+                if (visitorId) {
+                    params.set('visitorId', visitorId);
+                    headers['X-Visitor-ID'] = visitorId;
                 }
+            } else {
+                headers['X-Session-ID'] = sessionId;
+            }
+            const imageUrl = `${baseUrl}/api/image-proxy?${params.toString()}`;
 
-                const response = await fetch(imageUrl, {
-                    signal: controller.signal,
-                    headers: headers
-                });
-                clearTimeout(timeoutId);
-                if (!response.ok) {
-                    // 检查是否是 API 用量限制错误
-                    if (response.status === 429) {
-                        showUsageLimitModal();
-                        throw new Error('API usage limit reached');
+            const fetchWithRetry = async (attempt = 1) => {
+                const controller = new AbortController();
+                const timeoutMs = isNativeApp ? 90000 : 60000;
+                const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+                const timestamp = Date.now();
+                activeResponses.set(chatIdForRequest, { controller, timestamp });
+
+                try {
+                    const response = await fetch(imageUrl, {
+                        signal: controller.signal,
+                        headers,
+                        cache: 'no-store',
+                        mode: 'cors'
+                    });
+                    clearTimeout(timeoutId);
+                    if (!response.ok) {
+                        if (response.status === 429) {
+                            showUsageLimitModal();
+                            throw new Error('API usage limit reached');
+                        }
+                        const mappedMessage = getModelErrorMessage(response.status);
+                        throw new Error(mappedMessage || `${getToastMessage('errors.serverError')}: ${response.status}`);
                     }
-                    const mappedMessage = getModelErrorMessage(response.status);
-                    throw new Error(mappedMessage || `${getToastMessage('errors.serverError')}: ${response.status}`);
+                    const contentType = response.headers.get('content-type') || '';
+                    let finalImageUrl = null;
+                    if (contentType.includes('application/json')) {
+                        const data = await response.json();
+                        finalImageUrl = data?.url;
+                        if (!finalImageUrl) {
+                            throw new Error('No image url returned from server.');
+                        }
+                    } else if (contentType.startsWith('image/')) {
+                        const blob = await response.blob();
+                        finalImageUrl = URL.createObjectURL(blob);
+                    } else {
+                        throw new Error('Invalid content type received from server.');
+                    }
+                    return finalImageUrl;
+                } catch (error) {
+                    clearTimeout(timeoutId);
+                    activeResponses.delete(chatIdForRequest);
+                    if (attempt < 2) {
+                        console.warn(`Image fetch attempt ${attempt} failed, retrying...`, error);
+                        await sleep(1500);
+                        return fetchWithRetry(attempt + 1);
+                    }
+                    throw error;
                 }
-                const contentType = response.headers.get('content-type');
-                if (!contentType || !contentType.startsWith('image/')) {
-                    throw new Error('Invalid content type received from server.');
-                }
-                const blob = await response.blob();
+            };
 
-                // 转换为base64保存
-                const base64Data = await blobToBase64(blob);
-                const localImageUrl = `data:${contentType};base64,${base64Data}`;
+            let finalImageUrl = null;
+            try {
+                finalImageUrl = await fetchWithRetry();
+                const { displayUrl, originalUrl } = await ensureDisplayableImageUrl(finalImageUrl, headers);
 
                 const imageContentHtml = `
                     <div>${getToastMessage('ui.generatedImageForYou')}</div>
                     <div class="image-preview-container">
-                        <img src="${localImageUrl}" alt="${chineseDescription}" style="max-width: 250px; border-radius: 8px; cursor: pointer; display: block;" data-image-url="${localImageUrl}">
-                        <button class="image-overlay-btn" title="${getToastMessage('ui.downloadImage')}" data-action="download-image" data-image-url="${localImageUrl}" data-description="${chineseDescription}">
+                        <img src="${displayUrl}" alt="${chineseDescription}" style="max-width: 250px; border-radius: 8px; cursor: pointer; display: block;" data-image-url="${displayUrl}" data-original-url="${originalUrl}">
+                        <button class="image-overlay-btn" title="${getToastMessage('ui.downloadImage')}" data-action="download-image" data-image-url="${displayUrl}" data-original-url="${originalUrl}" data-description="${chineseDescription}">
                             <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
                         </button>
                     </div>
@@ -10236,9 +10436,8 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
 
                 resolve(assistantMessage);
             } catch (error) {
-                clearTimeout(timeoutId);
                 activeResponses.delete(chatIdForRequest);
-                console.error(`${getToastMessage('console.imageLoadFailed')}:`, imageUrl, error.message);
+                console.error(`${getToastMessage('console.imageLoadFailed')}:`, finalImageUrl || imageUrl, error.message);
                 const errorMessage = getToastMessage('errors.imageGenerationFailed');
                 const errorContentHtml = `<p style="color: var(--error-color, #ef4444);">${errorMessage}</p>`;
 
@@ -12429,6 +12628,54 @@ function detectViewerType(filename, content) {
     return 'rich_text';
 }
 
+let fileViewerBackCleanup = null;
+let imageViewerBackCleanup = null;
+
+function registerOverlayBackHandler(onBack) {
+    if (typeof window === 'undefined' || !window.history?.pushState) return () => { };
+    const previousState = window.history.state;
+    const previousUrl = window.location.href;
+    const token = `overlay-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    let closed = false;
+    let handledByPopstate = false;
+
+    const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        window.removeEventListener('popstate', handler);
+
+        if (handledByPopstate) {
+            return;
+        }
+
+        try {
+            const currentState = window.history.state;
+            const isOverlayEntry = currentState && currentState.overlay === token;
+            if (isOverlayEntry && window.history.length > 1) {
+                navigationEngine?.markHistoryHandled?.();
+                window.history.back();
+            } else {
+                window.history.replaceState(previousState, '', previousUrl);
+            }
+        } catch (_) { }
+    };
+
+    const handler = () => {
+        if (closed) return;
+        closed = true;
+        handledByPopstate = true;
+        window.removeEventListener('popstate', handler);
+        try { onBack?.(); } catch (_) { }
+    };
+
+    window.addEventListener('popstate', handler);
+    try {
+        window.history.pushState({ overlay: token }, '');
+    } catch (_) { }
+
+    return cleanup;
+}
+
 function unregisterFileViewerLinkHandler() {
     if (typeof removeFileViewerLinkHandler === 'function') {
         removeFileViewerLinkHandler();
@@ -12562,11 +12809,21 @@ function showFileViewer(filename, content) {
             break;
     }
 
+    if (fileViewerBackCleanup) {
+        fileViewerBackCleanup();
+        fileViewerBackCleanup = null;
+    }
+    fileViewerBackCleanup = registerOverlayBackHandler(() => hideFileViewerUI());
     elements.fileViewerOverlay.classList.add('visible');
 }
 
 function hideFileViewerUI() {
     elements.fileViewerOverlay.classList.remove('visible');
+    if (fileViewerBackCleanup) {
+        const cleanup = fileViewerBackCleanup;
+        fileViewerBackCleanup = null;
+        cleanup();
+    }
     unregisterFileViewerLinkHandler();
 
     const preElement = elements.fileViewerCode.parentNode;
@@ -12580,6 +12837,44 @@ function hideFileViewerUI() {
 
         elements.fileViewerCode = newCodeElement;
     }
+}
+
+function closeImageViewerIfOpen() {
+    const imageModal = document.getElementById('image-viewer-modal');
+    if (imageModal && imageModal.classList.contains('visible')) {
+        const closeBtn = imageModal.querySelector('.close-btn');
+        if (closeBtn) {
+            closeBtn.click();
+        } else {
+            imageModal.classList.remove('visible');
+            setTimeout(() => {
+                if (document.body.contains(imageModal)) {
+                    document.body.removeChild(imageModal);
+                }
+            }, 200);
+        }
+        return true;
+    }
+    return false;
+}
+
+function closeFileViewerIfOpen() {
+    if (elements.fileViewerOverlay?.classList.contains('visible')) {
+        hideFileViewerUI();
+        return true;
+    }
+    return false;
+}
+
+function setupPreviewerShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        if (!['Escape', 'Esc', 'ArrowLeft', 'Backspace'].includes(e.key)) return;
+        const closed = closeImageViewerIfOpen() || closeFileViewerIfOpen();
+        if (closed) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+    });
 }
 
 function setupInputPanelObserver() {
@@ -14865,14 +15160,17 @@ function setupEventListeners() {
         const imageToView = target.closest('img[data-image-url]');
         if (imageToView) {
             e.stopPropagation();
-            viewImage(imageToView.dataset.imageUrl, imageToView.alt);
+            const viewUrl = imageToView.dataset.imageUrl || imageToView.dataset.originalUrl;
+            const originalUrl = imageToView.dataset.originalUrl || viewUrl;
+            viewImage(viewUrl, imageToView.alt, originalUrl);
             return;
         }
 
         const downloadButton = target.closest('[data-action="download-image"]');
         if (downloadButton) {
             e.stopPropagation();
-            downloadImage(downloadButton.dataset.imageUrl, downloadButton.dataset.description);
+            const downloadUrl = downloadButton.dataset.imageUrl || downloadButton.dataset.originalUrl;
+            downloadImage(downloadUrl, downloadButton.dataset.description);
             return;
         }
     });
@@ -14885,7 +15183,7 @@ function setupEventListeners() {
 
         e.preventDefault();
         e.stopPropagation();
-        const url = btn.dataset.imageUrl || btn.dataset.src || '';
+        const url = btn.dataset.imageUrl || btn.dataset.originalUrl || btn.dataset.src || '';
         const desc = btn.dataset.description || (btn.dataset.descriptionKey ? getToastMessage(btn.dataset.descriptionKey) : '');
         if (url) {
             downloadImage(url, desc || 'QR');
@@ -15978,6 +16276,7 @@ async function initialize() {
         setupOAuthButtons();
         setupTouchMessageActions();
         setupNativeOAuthDeepLinkHandler();
+        setupPreviewerShortcuts();
 
         if (elements.voiceBtn) {
             const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
