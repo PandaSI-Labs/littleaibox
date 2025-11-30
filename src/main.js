@@ -10193,33 +10193,62 @@ function extractImagePrompt(userMessageText) {
     return prompt || getToastMessage('ui.beautifulImage');
 }
 
-async function generateCombinedImagePrompt(userMessageText, conversationHistory, intent) {
-    const originalUserPrompt = extractImagePrompt(userMessageText);
+function extractInlineImagesFromContent(userContent) {
+    if (!Array.isArray(userContent)) return [];
+    const images = [];
+    userContent.forEach(part => {
+        const url = part?.image_url?.url;
+        if (!url || typeof url !== 'string') return;
+        const match = url.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+        if (match && match[2]) {
+            images.push({ mimeType: match[1], data: match[2] });
+        }
+    });
+    return images;
+}
+
+async function describeImagesWithToolUse(userContent, userMessageText) {
+    const inlineImages = extractInlineImagesFromContent(userContent);
+    if (!inlineImages.length) return null;
+
+    const prompt = `You are a vision assistant. Describe the key subjects, style, and setting of the provided image(s). 
+        Use the SAME LANGUAGE as this user request if it exists, keep it concise (10-30 words per image), and number multiple images.
+        If you cannot access the image, reply exactly "Image not available". 
+        User request: "${userMessageText || ''}"`;
+
+    try {
+        const description = await callAISynchronously(prompt, 'gemini-2.0-flash', false, inlineImages);
+        return typeof description === 'string' ? description.trim() : null;
+    } catch (error) {
+        console.warn('Image description via tool-use failed:', error);
+        return null;
+    }
+}
+
+async function generateCombinedImagePrompt(userMessageText, conversationHistory, intent, imageDescription = null) {
+    const userPrompt = extractImagePrompt(userMessageText);
+    const sourcePrompt = imageDescription
+        ? `${imageDescription}\nUser request: ${userPrompt}`
+        : userPrompt;
 
     if (intent === 'image_generation') {
-        const promptForAI = `You are a professional AI art prompt optimizer. Convert the user's description into a detailed English prompt suitable for models like Midjourney or Stable Diffusion. Enhance quality, detail, and artistic style.
-        User's description: "${originalUserPrompt}"
-        Directly output the optimized English prompt without any other explanation.`;
-
-        const chineseDescriptionPrompt = `Based on the user's request, generate a concise and accurate description IN THE SAME LANGUAGE AS THE USER'S REQUEST. This description will be shown to the user.
-        User's request: "${originalUserPrompt}"
-        Requirement: The description should be clear, highlight the main content, and be between 5 to 15 words. Return only the description text.`;
+        const promptForAI = `Act as a strict AI image prompt builder. Rewrite the user's description into a single detailed English prompt for Midjourney/Stable Diffusion. Maximize clarity, quality, and style. Return ONLY the final prompt, nothing else.
+        User's description: "${sourcePrompt}"`;
 
         try {
             const englishPrompt = await callAISynchronously(promptForAI, 'gemini-2.0-flash');
-            const chineseDescription = await callAISynchronously(chineseDescriptionPrompt, 'gemini-2.0-flash');
 
             return {
-                original: originalUserPrompt,
-                english: englishPrompt || originalUserPrompt,
-                chineseDescription: chineseDescription.trim().replace(/^["']|["']$/g, '') || originalUserPrompt
+                original: sourcePrompt,
+                english: englishPrompt || sourcePrompt,
+                localizedDescription: null
             };
         } catch (error) {
             console.error(`${getToastMessage('console.firstPromptOptimizationFailed')}:`, error);
             return {
-                original: originalUserPrompt,
-                english: originalUserPrompt,
-                chineseDescription: originalUserPrompt
+                original: sourcePrompt,
+                english: sourcePrompt,
+                localizedDescription: null
             };
         }
 
@@ -10244,44 +10273,44 @@ async function generateCombinedImagePrompt(userMessageText, conversationHistory,
             }
         }
 
-        const promptForAI = `You are an image prompt optimizer. Based on the original prompt and the user's modification request, generate a new, complete, descriptive English prompt.
+        const promptForAI = `Act as a strict AI image prompt builder. Rewrite a single English prompt that merges the original idea and the user's edits. Keep it complete, descriptive, and ready for Midjourney/SD. Output ONLY the final prompt.
         Original prompt: "${originalPrompt}"
-        User's modification request: "${userMessageText}"
-        Generate a single, complete new English prompt that incorporates both the original idea and the requested changes.`;
+        User's modification request: "${userMessageText}"`;
 
-        const chineseDescriptionPrompt = `Based on the user's modification request for an image, generate a concise description IN THE SAME LANGUAGE AS THE USER'S REQUEST.
+        const localizedDescriptionPrompt = `Write a concise 10-20 word description in the user's language for the modified image. Be direct and highlight key features. Return ONLY the description text.
         Original image info: "${originalPrompt}"
-        User's modification request: "${userMessageText}"
-        Requirement: Generate a 10-20 word description highlighting the key features of the modified image. Return only the description text.`;
+        User's modification request: "${userMessageText}"`;
 
         try {
             const newEnglishPrompt = await callAISynchronously(promptForAI, 'gemini-2.0-flash');
-            const chineseDescription = await callAISynchronously(chineseDescriptionPrompt, 'gemini-2.0-flash');
+            const localizedDescriptionRaw = await callAISynchronously(localizedDescriptionPrompt, 'gemini-2.0-flash');
+            const localizedDescription = await translateToUserLanguage(
+                (localizedDescriptionRaw || userMessageText || '').toString().trim().replace(/^["']|["']$/g, '')
+            );
 
             return {
                 original: userMessageText,
                 english: newEnglishPrompt || `${originalPrompt}, ${userMessageText}`,
-                chineseDescription: chineseDescription.trim().replace(/^["']|["']$/g, '') || userMessageText
+                localizedDescription: localizedDescription || userMessageText
             };
         } catch (error) {
             return {
                 original: userMessageText,
                 english: `${originalPrompt}, ${userMessageText}`,
-                chineseDescription: userMessageText
+                localizedDescription: await translateToUserLanguage(userMessageText)
             };
         }
     }
     return {
         original: userMessageText,
         english: userMessageText,
-        chineseDescription: userMessageText
+        localizedDescription: await translateToUserLanguage(userMessageText)
     };
 }
 
 async function handleImageGeneration(userContent, promptObject, options = {}) {
     const { existingAssistantElement = null } = options;
     const englishPrompt = promptObject.english;
-    const chineseDescription = promptObject.chineseDescription;
 
     if (!currentChatId) await startNewChat(true);
     const chatIdForRequest = currentChatId;
@@ -10413,16 +10442,32 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
                 finalImageUrl = await fetchWithRetry();
                 const { displayUrl, originalUrl } = await ensureDisplayableImageUrl(finalImageUrl, headers);
 
+                let localizedDescription = promptObject.localizedDescription || null;
+                if (!localizedDescription) {
+                    try {
+                        const localizedDescriptionPrompt = `Write a concise 15-30 word description in the user's language for this generated image request. Be direct and highlight key subjects, style, and setting. Return ONLY the description text.
+Request: "${promptObject.original}"
+English prompt: "${englishPrompt}"`;
+                        const localizedDescriptionRaw = await callAISynchronously(localizedDescriptionPrompt, 'gemini-2.0-flash');
+                        localizedDescription = await translateToUserLanguage(
+                            (localizedDescriptionRaw || promptObject.original || '').toString().trim().replace(/^["']|["']$/g, '')
+                        );
+                    } catch (e) {
+                        localizedDescription = await translateToUserLanguage(promptObject.original);
+                    }
+                }
+                localizedDescription = localizedDescription || await translateToUserLanguage(promptObject.original);
+
                 const imageContentHtml = `
                     <div>${getToastMessage('ui.generatedImageForYou')}</div>
                     <div class="image-preview-container">
-                        <img src="${displayUrl}" alt="${chineseDescription}" style="max-width: 250px; border-radius: 8px; cursor: pointer; display: block;" data-image-url="${displayUrl}" data-original-url="${originalUrl}">
-                        <button class="image-overlay-btn" title="${getToastMessage('ui.downloadImage')}" data-action="download-image" data-image-url="${displayUrl}" data-original-url="${originalUrl}" data-description="${chineseDescription}">
+                        <img src="${displayUrl}" alt="${localizedDescription}" style="max-width: 250px; border-radius: 8px; cursor: pointer; display: block;" data-image-url="${displayUrl}" data-original-url="${originalUrl}">
+                        <button class="image-overlay-btn" title="${getToastMessage('ui.downloadImage')}" data-action="download-image" data-image-url="${displayUrl}" data-original-url="${originalUrl}" data-description="${localizedDescription}">
                             <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
                         </button>
                     </div>
                     <p style="margin-top: 8px; line-height: 1.5;">
-                        <strong>${getToastMessage('ui.imageDescription')}：</strong> ${chineseDescription}
+                        <strong>${getToastMessage('ui.imageDescription')}：</strong> ${localizedDescription}
                     </p>
                 `;
                 renderMessageContent(contentDiv, imageContentHtml);
@@ -11612,7 +11657,8 @@ async function _processAndSendMessage(userContent, userMessageText) {
             }
         });
 
-        const hasFileAttachments = userContent.some(att => att.type === 'file');
+    const hasFileAttachments = userContent.some(att => att.type === 'file');
+    const hasImageAttachments = userContent.some(att => att.type === 'image_url');
         const allowLargeDocumentProcessing = !isSearchModeActive && !isImageModeActive && !isResearchModeActive;
 
         if (allowLargeDocumentProcessing && totalTextLength > LARGE_TEXT_THRESHOLD) {
@@ -11679,6 +11725,10 @@ async function _processAndSendMessage(userContent, userMessageText) {
                 checkImageGeneration: true,
                 isImageModeActive
             });
+            if (isImageModeActive && hasImageAttachments) {
+                intentAnalysis.shouldGenerateImage = true;
+                intentAnalysis.intentResult.intent = 'image_generation';
+            }
 
             if (!hasFileAttachments && isImageModeActive) {
                 if (contentDiv) {
@@ -11688,7 +11738,16 @@ async function _processAndSendMessage(userContent, userMessageText) {
                     if (contentDiv) {
                         contentDiv.querySelector('span').textContent = getToastMessage('status.generatingImageForYou');
                     }
-                    const newImagePromptObject = await generateCombinedImagePrompt(userMessageText, conversationHistory, intentAnalysis.intentResult.intent);
+                    let imageVisionDescription = null;
+                    if (hasImageAttachments) {
+                        imageVisionDescription = await describeImagesWithToolUse(userContent, userMessageText);
+                    }
+                    const newImagePromptObject = await generateCombinedImagePrompt(
+                        userMessageText,
+                        conversationHistory,
+                        intentAnalysis.intentResult.intent,
+                        imageVisionDescription
+                    );
                     const imageResult = await handleImageGeneration(userContent, newImagePromptObject, {
                         existingAssistantElement: assistantPlaceholderElement
                     });
@@ -12406,7 +12465,22 @@ async function translateQueryToEnglishForResearch(text) {
     return result;
 }
 
-async function callAISynchronously(prompt, model = 'gemini-2.5-flash-lite', incrementUsage = false) {
+async function translateToUserLanguage(text) {
+    if (!text || !text.trim()) return text;
+    const targetLang = currentUser?.language || getCurrentLanguage() || 'zh-CN';
+    const prompt = `Translate the following text into ${targetLang}. Preserve meaning and tone. Return ONLY the translated text.\n\n"""${text.trim()}"""`;
+    try {
+        const translated = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false);
+        if (translated && typeof translated === 'string' && translated.trim()) {
+            return translated.trim();
+        }
+    } catch (e) {
+        console.warn('translateToUserLanguage failed, using original text.', e);
+    }
+    return text;
+}
+
+async function callAISynchronously(prompt, model = 'gemini-2.5-flash-lite', incrementUsage = false, images = null) {
     const headers = { 'Content-Type': 'application/json' };
 
     if (sessionId) {
@@ -12421,6 +12495,9 @@ async function callAISynchronously(prompt, model = 'gemini-2.5-flash-lite', incr
             model: model,
             incrementUsage: incrementUsage
         };
+        if (Array.isArray(images) && images.length > 0) {
+            payload.images = images;
+        }
         const response = await fetch('/api/tool-use', {
             method: 'POST',
             headers,
@@ -12484,6 +12561,7 @@ function updateSearchModeUI() {
         elements.toolSearchOption.classList.remove('active');
     }
 
+    updateAttachmentButtonState();
     updateToolsButtonState();
     updateActiveModel();
 }
@@ -12503,6 +12581,7 @@ function updateImageModeUI() {
         elements.toolImageOption.classList.remove('active');
     }
 
+    updateAttachmentButtonState();
     updateToolsButtonState();
     updateActiveModel();
 }
@@ -12512,6 +12591,15 @@ function updateToolsButtonState() {
         elements.toolsMenuBtn.classList.add('active');
     } else {
         elements.toolsMenuBtn.classList.remove('active');
+    }
+}
+
+function updateAttachmentButtonState() {
+    const addFileBtn = document.getElementById('add-file-btn');
+    if (addFileBtn) {
+        addFileBtn.disabled = isSearchModeActive;
+        addFileBtn.classList.toggle('disabled', isSearchModeActive);
+        addFileBtn.removeAttribute('title');
     }
 }
 
@@ -12530,6 +12618,7 @@ function updateResearchModeUI() {
         elements.toolResearchOption.classList.remove('active');
     }
 
+    updateAttachmentButtonState();
     updateToolsButtonState();
     updateActiveModel();
 }
