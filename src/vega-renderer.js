@@ -149,6 +149,7 @@ function normalizeVegaSpecString(raw) {
     text = text.replace(/(^|[ \t])\/\/[^\n\r]*/gm, '$1');
     text = text.replace(/\/\*[\s\S]*?\*\//g, '');
     text = text.replace(/"domain"\s*:\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]/g, '"domain": [$1, $2]');
+    text = text.replace(/\[\s*([-+]?\d+(?:\.\d+)?)\s*\]\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]/g, '[$1, $2]');
     return text;
 }
 

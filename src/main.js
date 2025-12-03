@@ -809,7 +809,7 @@ class NavigationEngine {
         // 关闭登录遮罩
         if (elements.authOverlay?.classList.contains('visible')) {
             if (authOverlayReason === 'user') {
-                hideAuthOverlay(false, { routeHandled: this.isHistoryNavigation });
+                hideAuthOverlay(true, { skipHandleBack: true });
             } else {
                 this.handleExitLogic();
             }
@@ -2256,9 +2256,9 @@ function getAvailableModels() {
 // 模型渲染速度配置
 const modelRenderSpeeds = {
     'gemini-2.5-pro': 1,
-    'gemini-2.5-flash': 1.4,
-    'gemini-2.5-flash-lite': 2.5,
-    'gemini-2.0-flash': 3
+    'gemini-2.5-flash': 1.2,
+    'gemini-2.5-flash-lite': 2,
+    'gemini-2.0-flash': 2
 };
 
 function composeSystemPrompt(userPrompt = '') {
@@ -2381,7 +2381,6 @@ if (SpeechRecognition) {
 
     recognition.onresult = (event) => {
         elements.messageInput.value = event.results[0][0].transcript;
-        // 触发input事件以调整输入框高度
         elements.messageInput.dispatchEvent(new Event('input'));
         updateSendButton();
         cleanupRecognition();
@@ -7259,6 +7258,15 @@ function showEmptyState(forceLanguage = null) {
 
     currentChatId = null;
     const currentLang = forceLanguage || (currentUser ? (currentUser.language || getCurrentLanguage()) : getCurrentLanguage());
+
+    if (welcomePageShown &&
+        elements.chatContainer?.dataset?.view === 'welcome' &&
+        elements.chatContainer.dataset.lang === currentLang) {
+        elements.chatContainer.style.overflowY = 'hidden';
+        elements.chatContainer.scrollTop = 0;
+        isWelcomePage = true;
+        return;
+    }
     welcomePageShown = true;
     elements.chatContainer.innerHTML = `
         <div class="empty-state">
@@ -7274,6 +7282,10 @@ function showEmptyState(forceLanguage = null) {
     `;
 
     elements.chatContainer.style.overflowY = 'hidden';
+    if (elements.chatContainer && elements.chatContainer.dataset) {
+        elements.chatContainer.dataset.view = 'welcome';
+        elements.chatContainer.dataset.lang = currentLang;
+    }
     isWelcomePage = true;
 
     elements.chatContainer.scrollTop = 0;
@@ -7325,7 +7337,11 @@ async function startNewChat(skipProcessingCheck = false) {
         };
         elements.chatContainer.innerHTML = '';
         isWelcomePage = false;
-        welcomePageShown = true;
+        welcomePageShown = false;
+        if (elements.chatContainer?.dataset) {
+            delete elements.chatContainer.dataset.view;
+            delete elements.chatContainer.dataset.lang;
+        }
         elements.chatContainer.style.overflowY = 'auto';
 
         clearInputAndAttachments(true);
@@ -7344,6 +7360,10 @@ async function startNewChat(skipProcessingCheck = false) {
     chats[tempChatId] = { id: tempChatId, title: getToastMessage('ui.newChat'), messages: [], isTemp: true };
     elements.chatContainer.innerHTML = '';
     welcomePageShown = false;
+    if (elements.chatContainer?.dataset) {
+        delete elements.chatContainer.dataset.view;
+        delete elements.chatContainer.dataset.lang;
+    }
     clearInputAndAttachments(true);
     scheduleRenderSidebar();
     setTimeout(() => {
@@ -8930,14 +8950,32 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 }
             });
         }
+
+        const diagramPlaceholders = [];
+        if (isFinalRender) {
+            element.querySelectorAll('.mermaid-render-container, .vega-lite-render-container').forEach(diagramEl => {
+                const h = diagramEl.offsetHeight;
+                if (h > 0) {
+                    diagramEl.style.minHeight = `${h}px`;
+                    diagramPlaceholders.push(diagramEl);
+                }
+            });
+        }
+
         const vegaRenderPromise = renderVegaLiteDiagrams(element, { loadScript, isFinalRender });
+        const cleanupDiagrams = () => {
+            diagramPlaceholders.forEach(el => { el.style.minHeight = ''; });
+        };
         if (vegaRenderPromise) {
             element.__vegaLiteRenderPromise = vegaRenderPromise;
             vegaRenderPromise.catch(() => { }).finally(() => {
+                cleanupDiagrams();
                 if (!userHasScrolledUp && elements?.chatContainer) {
                     elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
                 }
             });
+        } else {
+            cleanupDiagrams();
         }
 
         mathRenderer.renderMath(element, { isFinalRender });
@@ -10007,18 +10045,6 @@ class IntentAnalyzer {
             return this.currentMessageIntentResult;
         }
 
-        if (isImageModeActive) {
-            const nonImageKeywords = ['代码', '编程', '解释', '翻译', '总结', '分析', '计算', 'code', 'explain', 'translate', 'summarize', 'analyze', 'calculate'];
-            if (nonImageKeywords.some(keyword => userMessageText.toLowerCase().includes(keyword.toLowerCase()))) {
-                const result = { intent: 'text_response', confidence: 0.8 };
-                this.currentMessageIntentResult = result;
-                return result;
-            }
-            const result = { intent: 'image_generation', confidence: 0.8 };
-            this.currentMessageIntentResult = result;
-            return result;
-        }
-
         if (userMessageText.length < 20 && !this.containsImageKeywords(userMessageText)) {
             const result = { intent: 'text_response', confidence: 0.9 };
             this.currentMessageIntentResult = result;
@@ -10047,24 +10073,28 @@ class IntentAnalyzer {
             return `${msg.role}: ${content.substring(0, 200)}`;
         }).join('\n');
 
+        const modeHint = (typeof isImageModeActive !== 'undefined' && isImageModeActive)
+            ? '\nCurrent app mode: IMAGE MODE IS ON. If the request could be visual, prefer "image_generation" or "image_modification". Only choose another intent if the ask is clearly non-visual (e.g., code, translation, math).'
+            : '';
         const intentAnalysisPrompt = `Analyze the user's intent and classify it into one of these categories: "image_generation", "image_modification", "CLASSICAL_CHINESE_ANALYSIS", "ROLEPLAY_CREATIVE", or "GENERAL_QUERY".
 
         Rules:
-        1. Image Commands: If it explicitly requests "draw", "generate image", "create picture" → "image_generation"
-        2. Classical Chinese: If it contains classical Chinese, ancient poetry, or historical texts → "CLASSICAL_CHINESE_ANALYSIS"
-        3. Creative Writing: If it involves roleplay, storytelling, story creation, character scenarios → "ROLEPLAY_CREATIVE"
-        4. Default: All other cases → "GENERAL_QUERY"
+        1. Image Commands: If it explicitly requests "draw", "generate image", "create picture" -> "image_generation"
+        2. Classical Chinese: If it contains classical Chinese, ancient poetry, or historical texts -> "CLASSICAL_CHINESE_ANALYSIS"
+        3. Creative Writing: If it involves roleplay, storytelling, story creation, character scenarios -> "ROLEPLAY_CREATIVE"
+        4. Default: All other cases -> "GENERAL_QUERY"
+        ${modeHint}
 
         Examples:
-        - "Draw a sunset" → "image_generation"
-        - "解释这首古诗" → "CLASSICAL_CHINESE_ANALYSIS"
-        - "Write a story about..." → "ROLEPLAY_CREATIVE"
-        - "What's the weather?" → "GENERAL_QUERY"
+        - "Draw a sunset" -> "image_generation"
+        - "??????" -> "CLASSICAL_CHINESE_ANALYSIS"
+        - "Write a story about..." -> "ROLEPLAY_CREATIVE"
+        - "What's the weather?" -> "GENERAL_QUERY"
 
         User Message (first 500 chars): "${userMessageText.substring(0, 500)}"
 
         Return only JSON:
-        {"intent": "one_of_the_intents", "confidence": 0.9}`;
+        {"intent": "one_of_the_intents", "confidence": 0.9}`
 
         try {
             const response = await callAISynchronously(intentAnalysisPrompt, 'gemini-2.0-flash', false);
@@ -10138,11 +10168,10 @@ class IntentAnalyzer {
         };
 
         if (isImageModeActive) {
-            if (intentResult) {
-                result.shouldGenerateImage = intentResult.intent === 'image_generation' || intentResult.intent === 'image_modification';
-            }
-        }
-        else {
+            result.shouldGenerateImage = intentResult
+                ? (intentResult.intent === 'image_generation' || intentResult.intent === 'image_modification')
+                : false;
+        } else {
             if (this.shouldDetectClassicalChinese(userMessageText)) {
                 result.shouldUseClassicalChinesePrompt = intentResult ? intentResult.intent === 'CLASSICAL_CHINESE_ANALYSIS' : true;
             }
@@ -10550,6 +10579,7 @@ let globalCharQueue = [];
 let userHasScrolledUp = false;
 let lastScrollTime = 0;
 let isAutoScrolling = false;
+const STREAM_RENDER_INTERVAL_MS = 30;
 
 async function processStreamedResponse(response, contentDiv) {
     const reader = response.body.getReader();
@@ -10559,6 +10589,7 @@ async function processStreamedResponse(response, contentDiv) {
     let finishReason = null;
     let finalCitations = null;
     let firstTokenAt = null;
+    let receivedDone = false;
 
     // 初始化全局变量
     globalBackgroundBuffer = '';
@@ -10571,6 +10602,8 @@ async function processStreamedResponse(response, contentDiv) {
     let isTyping = false;
     let renderSpeed = modelRenderSpeeds[currentModelId] || 2;
     let renderSpeedAccumulator = 0;
+
+    let lastRenderTime = 0;
 
     const startTyping = () => {
         if (isTyping) return;
@@ -10598,16 +10631,21 @@ async function processStreamedResponse(response, contentDiv) {
 
 
             if (isPageVisible) {
-                try {
-                    renderMessageContent(contentDiv, globalDisplayBuffer);
-                    if (!userHasScrolledUp) {
-                        elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+                const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+                const shouldRenderNow = (now - lastRenderTime) >= STREAM_RENDER_INTERVAL_MS || charQueue.length === 0;
+                if (shouldRenderNow) {
+                    try {
+                        renderMessageContent(contentDiv, globalDisplayBuffer);
+                        if (!userHasScrolledUp) {
+                            elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+                        }
+                    } catch (renderError) {
+                        console.error(`${getToastMessage('console.renderMessageContentFailed')}:`, renderError);
+                        if (contentDiv) {
+                            contentDiv.textContent = globalDisplayBuffer;
+                        }
                     }
-                } catch (renderError) {
-                    console.error(`${getToastMessage('console.renderMessageContentFailed')}:`, renderError);
-                    if (contentDiv) {
-                        contentDiv.textContent = globalDisplayBuffer;
-                    }
+                    lastRenderTime = now;
                 }
             } else {
                 // 页面隐藏时，将新内容累积到后台缓冲区
@@ -10632,7 +10670,11 @@ async function processStreamedResponse(response, contentDiv) {
     };
 
     const processLine = (dataStr) => {
-        if (!dataStr || dataStr === '[DONE]') return;
+        if (!dataStr) return;
+        if (dataStr === '[DONE]') {
+            receivedDone = true;
+            return;
+        }
 
         try {
             const data = JSON.parse(dataStr);
@@ -10654,6 +10696,7 @@ async function processStreamedResponse(response, contentDiv) {
 
             if (data.choices?.[0]?.finish_reason) {
                 finishReason = data.choices[0].finish_reason;
+                receivedDone = true;
             }
         } catch (parseError) {
             console.warn(`${getToastMessage('console.parseStreamDataFailed')}:`, parseError, getToastMessage('console.originalData'), dataStr);
@@ -10679,6 +10722,7 @@ async function processStreamedResponse(response, contentDiv) {
             if (line.startsWith('data: ')) {
                 const dataStr = line.substring(6).trim();
                 if (dataStr === '[DONE]') {
+                    receivedDone = true;
                     break;
                 }
                 processLine(dataStr);
@@ -10714,7 +10758,8 @@ async function processStreamedResponse(response, contentDiv) {
         };
         checkTyping();
     });
-    return { fullResponse, finalCitations, finishReason };
+    const interrupted = !receivedDone && fullResponse.length > 0;
+    return { fullResponse, finalCitations, finishReason, interrupted };
 }
 
 async function handleSearchAndChat(userMessageText) {
@@ -10840,7 +10885,10 @@ async function handleSearchAndChat(userMessageText) {
         };
 
         if (contentDiv) {
-            renderMessageContent(contentDiv, assistantMessageToSave);
+            if (contentDiv.__renderState) {
+                delete contentDiv.__renderState;
+            }
+            renderMessageContent(contentDiv, assistantMessageToSave, assistantMessageToSave.citations || null, true);
         }
 
         chats[chatIdForRequest].messages.push(assistantMessageToSave);
@@ -10996,12 +11044,15 @@ async function handleResearchAndChat(userContent, userMessageText) {
         if (translatedResearchText) {
             researchSourceText = translatedResearchText;
         }
+
+        const semanticScholarQuery = await buildSemanticScholarQuery(researchSourceText);
+        const finalResearchQuery = semanticScholarQuery || researchSourceText;
         await sleep(1000);
 
         const researchResults = await makeApiRequest('semantic-scholar', {
             method: 'POST',
             body: JSON.stringify({
-                query: researchSourceText,
+                query: finalResearchQuery,
                 chunks: []
             })
         });
@@ -11013,7 +11064,9 @@ async function handleResearchAndChat(userContent, userMessageText) {
 
         renderPlaceholder(getToastMessage('ui.integratingLiterature'));
 
-        const systemContext = `${ROLE_INSTRUCTION}\n${FORMAT_INSTRUCTION}\n\n${RESEARCH_MODE_INSTRUCTION}`;
+        const preferredLanguage = getCurrentLanguage() || currentUser?.language || 'zh-CN';
+        const languageInstruction = preferredLanguage ? `\nRespond in ${preferredLanguage}.` : '';
+        const systemContext = `${ROLE_INSTRUCTION}\n${FORMAT_INSTRUCTION}\n\n${RESEARCH_MODE_INSTRUCTION}${languageInstruction}`;
 
         let researchContext =
             `${getToastMessage('ui.networkSearchResults') || 'Search Results'}:\n`;
@@ -11122,7 +11175,10 @@ async function handleResearchAndChat(userContent, userMessageText) {
         };
 
         if (contentDiv) {
-            renderMessageContent(contentDiv, assistantMessageToSave);
+            if (contentDiv.__renderState) {
+                delete contentDiv.__renderState;
+            }
+            renderMessageContent(contentDiv, assistantMessageToSave, assistantMessageToSave.citations || null, true);
         }
 
         chats[chatIdForRequest].messages.push(assistantMessageToSave);
@@ -11482,15 +11538,17 @@ async function handleChatMessage(userContent, options = {}) {
             }
         } catch (_) { }
 
-        const { fullResponse: responseText, finalCitations, finishReason } = await processStreamedResponse(response, contentDiv);
+        const { fullResponse: responseText, finalCitations, finishReason, interrupted } = await processStreamedResponse(response, contentDiv);
         fullResponse = responseText.trim();
 
-        if (finishReason) {
+        if (finishReason || interrupted) {
             let warningMessage = '';
             if (finishReason === 'length') {
                 warningMessage = getToastMessage('ui.aiResponseTruncatedDueToLength');
             } else if (finishReason === 'content_filter') {
                 warningMessage = getToastMessage('ui.aiResponseStoppedDueToSafetyPolicy');
+            } else if (interrupted) {
+                warningMessage = getToastMessage('ui.aiResponseMayBeIncomplete');
             }
 
             if (warningMessage) {
@@ -11516,7 +11574,6 @@ async function handleChatMessage(userContent, options = {}) {
         if (container) {
             const messages = Array.from(container.querySelectorAll('.message')).reverse();
 
-            // Remove pending assistant placeholder (spinner/empty bubble)
             const lastAssistant = messages.find(msg => msg.classList.contains('assistant'));
             if (lastAssistant) {
                 const contentDiv = lastAssistant.querySelector('.content');
@@ -11527,14 +11584,12 @@ async function handleChatMessage(userContent, options = {}) {
                 }
             }
 
-            // Roll back pending user bubble in DOM
             const lastUserMessage = messages.find(msg => msg.classList.contains('user'));
             if (lastUserMessage) {
                 lastUserMessage.remove();
             }
         }
 
-        // Roll back pending user message in memory
         if (chats[chatIdForRequest] && chats[chatIdForRequest].messages.length > 0) {
             const lastMsg = chats[chatIdForRequest].messages[chats[chatIdForRequest].messages.length - 1];
             if (lastMsg && lastMsg.role === 'user') {
@@ -11542,7 +11597,6 @@ async function handleChatMessage(userContent, options = {}) {
             }
         }
 
-        // Restore input so user can resend
         if (userMessageText && elements.messageInput) {
             elements.messageInput.value = userMessageText;
             elements.messageInput.dispatchEvent(new Event('input'));
@@ -11569,6 +11623,19 @@ async function handleChatMessage(userContent, options = {}) {
             const isScrolledToBottom = scrollHeight - clientHeight <= scrollTop + 20;
 
             requestAnimationFrame(() => {
+                const chatContainer = elements.chatContainer;
+                const prevHeight = contentDiv?.offsetHeight || 0;
+                const distanceToBottom = chatContainer
+                    ? (chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight)
+                    : null;
+
+                if (contentDiv) {
+                    contentDiv.style.minHeight = `${prevHeight}px`;
+                    if (contentDiv.__renderState) {
+                        delete contentDiv.__renderState;
+                    }
+                }
+
                 const renderPromise = renderMessageContent(contentDiv, processedResponse, null, true);
 
                 if (isScrolledToBottom) {
@@ -11589,6 +11656,20 @@ async function handleChatMessage(userContent, options = {}) {
                     } else {
                         ensureActions();
                     }
+                }
+
+                const clearMinHeight = () => {
+                    if (contentDiv) {
+                        contentDiv.style.minHeight = '';
+                    }
+                    if (distanceToBottom !== null && chatContainer) {
+                        chatContainer.scrollTop = chatContainer.scrollHeight - chatContainer.clientHeight - distanceToBottom;
+                    }
+                };
+                if (renderPromise && typeof renderPromise.finally === 'function') {
+                    renderPromise.finally(clearMinHeight);
+                } else {
+                    clearMinHeight();
                 }
                 refreshEditButtons();
             });
@@ -12465,9 +12546,33 @@ async function translateQueryToEnglishForResearch(text) {
     return result;
 }
 
+async function buildSemanticScholarQuery(text) {
+    if (!text || !text.trim()) return '';
+    const base = text.trim().slice(0, 500);
+    const prompt = [
+        'Generate a compact English search query (3-8 key terms, include acronyms) for Semantic Scholar.',
+        'Keep it keyword-style, no full sentences, no fillers.',
+        'Use common ML/NLP abbreviations when present.',
+        'Return ONLY the query string.',
+        '',
+        `Topic:\n"""${base}"""`
+    ].join('\n');
+
+    try {
+        const res = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false);
+        if (res && typeof res === 'string') {
+            const cleaned = res.replace(/[`"]/g, '').trim();
+            if (cleaned) return cleaned;
+        }
+    } catch (e) {
+        console.warn('buildSemanticScholarQuery failed, fallback to raw text', e);
+    }
+    return base;
+}
+
 async function translateToUserLanguage(text) {
     if (!text || !text.trim()) return text;
-    const targetLang = currentUser?.language || getCurrentLanguage() || 'zh-CN';
+    const targetLang = getCurrentLanguage() || currentUser?.language || 'zh-CN';
     const prompt = `Translate the following text into ${targetLang}. Preserve meaning and tone. Return ONLY the translated text.\n\n"""${text.trim()}"""`;
     try {
         const translated = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false);
