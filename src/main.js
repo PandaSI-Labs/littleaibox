@@ -1440,11 +1440,23 @@ function ensurePlaintextHighlightLanguage() {
     }
 }
 
+let rerenderScheduled = false;
+
 function rerenderDynamicContent(root) {
     try {
+        rerenderScheduled = false;
         const container = root || elements.chatContainer || document;
-        const contents = container.querySelectorAll('.message .content');
-        contents.forEach(el => mathRenderer.renderMath(el, { isFinalRender: true }));
+        const contents = container.querySelectorAll('.message .content:not([data-dynamic-processed="true"])');
+        const hasUnprocessed = contents.length > 0;
+
+        if (!hasUnprocessed) {
+            return;
+        }
+
+        contents.forEach(el => {
+            if (el.dataset && el.dataset.plainText === 'true') return;
+            mathRenderer.renderMath(el, { isFinalRender: true });
+        });
 
         try {
             renderMermaidDiagrams(container, { loadScript, isFinalRender: true });
@@ -1455,7 +1467,7 @@ function rerenderDynamicContent(root) {
 
         if (window.hljs) {
             ensurePlaintextHighlightLanguage();
-            const blocks = Array.from(container.querySelectorAll('pre code'))
+            const blocks = Array.from(container.querySelectorAll('.message .content:not([data-dynamic-processed=\"true\"]) pre code'))
                 .filter(block => !block.classList.contains('hljs')
                     && (block.dataset.mermaidProcessed !== 'true')
                     && (block.dataset.vegaLiteProcessed !== 'true')
@@ -1465,11 +1477,24 @@ function rerenderDynamicContent(root) {
                     && !((block.className || '').includes('language-vega')));
             blocks.forEach(block => { try { hljs.highlightElement(block); } catch (_) { } });
         }
+
+        contents.forEach(el => {
+            try { el.dataset.dynamicProcessed = 'true'; } catch (_) { }
+        });
     } catch (_) { }
 }
 
 function setupVisibilityRerender() {
-    const schedule = () => setTimeout(() => rerenderDynamicContent(), 60);
+    const schedule = () => {
+        if (rerenderScheduled) return;
+        rerenderScheduled = true;
+        const run = () => rerenderDynamicContent();
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(run, { timeout: 200 });
+        } else {
+            setTimeout(run, 80);
+        }
+    };
 
     document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(); });
     window.addEventListener('focus', schedule);
@@ -2231,9 +2256,18 @@ async function preloadChatContents(chatList, userId) {
 // 使用限制配置
 const GUEST_LIMIT = 5;
 const LOGGED_IN_LIMIT = 12;
+const USAGE_FETCH_TIMEOUT_MS = 10000;
 
 let currentUserUsage = { count: 0, limit: LOGGED_IN_LIMIT, apiMode: 'mixed' };
 let guestUsageStats = { count: 0, limit: GUEST_LIMIT, loaded: false };
+let usageFetchController = null;
+let usageFetchTimeout = null;
+let usageFetchSeq = 0;
+
+function clampGeneratedTitleWords(title = '') {
+    const clean = String(title || '').trim();
+    return clean;
+}
 
 // 模型配置
 const models = [
@@ -3309,6 +3343,8 @@ async function clearCacheAndReload() {
     const { updateNowBtn } = getUpdateElements();
     const version = updateNowBtn?.dataset.version || 'latest';
 
+    try { localStorage.setItem('skipSessionClearOnNext401', '1'); } catch (_) { }
+
     hideUpdateNowButton();
     hideVersionUpdateNotification();
 
@@ -4086,8 +4122,30 @@ function getModelErrorMessage(status) {
     return message !== statusKey ? message : null;
 }
 
+const toastRegistry = new Map();
+function destroyToast(record) {
+    if (!record) return;
+    if (record.toast && record.onShown) {
+        record.toast.removeEventListener('transitionend', record.onShown);
+    }
+    clearTimeout(record.showTimer);
+    clearTimeout(record.shownFallbackTimer);
+    clearTimeout(record.hideTimer);
+    clearTimeout(record.removeTimer);
+    if (record.wrapper?.parentNode) {
+        record.wrapper.parentNode.removeChild(record.wrapper);
+    }
+}
+
 function showToast(message, type = 'info', error = null, options = {}) {
     const duration = typeof options.duration === 'number' ? options.duration : 2000;
+    const toastKey = options.key || null;
+
+    if (toastKey && toastRegistry.has(toastKey)) {
+        const existing = toastRegistry.get(toastKey);
+        destroyToast(existing);
+        toastRegistry.delete(toastKey);
+    }
 
     const wrapper = document.createElement('div');
     wrapper.className = 'message-toast-wrapper';
@@ -4114,35 +4172,52 @@ function showToast(message, type = 'info', error = null, options = {}) {
     let shownResolve;
     const whenShown = new Promise((resolve) => { shownResolve = resolve; });
 
-    let shownFallbackTimer = null;
-    const onShown = (e) => {
+    const record = {
+        wrapper,
+        toast,
+        onShown: null,
+        shownFallbackTimer: null,
+        showTimer: null,
+        hideTimer: null,
+        removeTimer: null
+    };
+
+    record.onShown = (e) => {
         if (!e || e.propertyName === 'transform') {
-            toast.removeEventListener('transitionend', onShown);
-            if (shownFallbackTimer) clearTimeout(shownFallbackTimer);
+            toast.removeEventListener('transitionend', record.onShown);
+            if (record.shownFallbackTimer) clearTimeout(record.shownFallbackTimer);
             shownResolve();
         }
     };
-    toast.addEventListener('transitionend', onShown);
+    toast.addEventListener('transitionend', record.onShown);
 
-    setTimeout(() => {
-        shownFallbackTimer = setTimeout(() => {
-            toast.removeEventListener('transitionend', onShown);
+    record.showTimer = setTimeout(() => {
+        record.shownFallbackTimer = setTimeout(() => {
+            toast.removeEventListener('transitionend', record.onShown);
             shownResolve();
         }, 500);
         toast.classList.add('show');
     }, 50);
 
     const whenHidden = new Promise((resolve) => {
-        setTimeout(() => {
+        record.hideTimer = setTimeout(() => {
             toast.classList.remove('show');
-            setTimeout(() => {
+            record.removeTimer = setTimeout(() => {
                 if (wrapper.parentNode) {
                     wrapper.parentNode.removeChild(wrapper);
+                }
+                if (toastKey) {
+                    toastRegistry.delete(toastKey);
                 }
                 resolve();
             }, 400);
         }, duration);
     });
+
+    if (toastKey) {
+        toastRegistry.set(toastKey, record);
+    }
+
     return { whenShown, whenHidden, element: toast, wrapper };
 }
 
@@ -4353,10 +4428,13 @@ function closeSidebar(isFromBackButton = false, options = {}) {
     if (!document.body.classList.contains('sidebar-open')) {
         return;
     }
-    document.body.classList.remove('sidebar-open');
-    document.getElementById('sidebar-toggle-btn').setAttribute('aria-expanded', 'false');
-    const fromHistory = options.fromHistory === true;
-    navigationEngine?.notifySidebarClosed?.({ fromHistory });
+    queueMicrotask(() => {
+        document.body.classList.remove('sidebar-open');
+        const toggle = document.getElementById('sidebar-toggle-btn');
+        if (toggle) toggle.setAttribute('aria-expanded', 'false');
+        const fromHistory = options.fromHistory === true;
+        navigationEngine?.notifySidebarClosed?.({ fromHistory });
+    });
 }
 
 function closeSidebarOnInteraction() {
@@ -5760,6 +5838,20 @@ async function checkPasswordChangeStatus() {
 
 async function fetchUsageStats(forceRefresh = false) {
     if (!currentUser) return;
+    const fetchId = ++usageFetchSeq;
+
+    if (usageFetchController) {
+        try { usageFetchController.abort(); } catch (_) { }
+    }
+
+    usageFetchController = new AbortController();
+    if (usageFetchTimeout) {
+        clearTimeout(usageFetchTimeout);
+    }
+    usageFetchTimeout = setTimeout(() => {
+        try { usageFetchController?.abort(); } catch (_) { }
+    }, USAGE_FETCH_TIMEOUT_MS);
+
     const usageDisplay = document.getElementById('usage-display');
     const userInfoPopover = document.getElementById('user-info-popover');
     const refreshingText = getToastMessage('status.refreshing');
@@ -5772,7 +5864,7 @@ async function fetchUsageStats(forceRefresh = false) {
     }
 
     try {
-        const result = await makeApiRequest('user/usage');
+        const result = await makeApiRequest('user/usage', { signal: usageFetchController.signal });
         if (result.success) {
             currentUserUsage.count = result.count;
             currentUserUsage.limit = result.limit || (getCustomApiKey() ? Infinity : LOGGED_IN_LIMIT);
@@ -5784,9 +5876,14 @@ async function fetchUsageStats(forceRefresh = false) {
             currentUserUsage.fallbackLimit = typeof result.fallbackLimit === 'number' ? result.fallbackLimit : 12;
             currentUserUsage.totalCount = typeof result.totalCount === 'number' ? result.totalCount : currentUserUsage.count;
 
-            updateUsageDisplay();
+            if (fetchId === usageFetchSeq) {
+                updateUsageDisplay();
+            }
         }
     } catch (error) {
+        if (fetchId !== usageFetchSeq) {
+            return;
+        }
         console.error(`${getToastMessage('console.usageStatsFailed')}:`, error);
 
         const errorText = getToastMessage('ui.error') + ': ' + getToastMessage('console.usageStatsFailed');
@@ -5795,6 +5892,14 @@ async function fetchUsageStats(forceRefresh = false) {
         }
         if (userInfoPopover) {
             userInfoPopover.textContent = errorText;
+        }
+    } finally {
+        if (fetchId === usageFetchSeq && usageFetchController) {
+            if (usageFetchTimeout) {
+                clearTimeout(usageFetchTimeout);
+                usageFetchTimeout = null;
+            }
+            usageFetchController = null;
         }
     }
 }
@@ -5941,7 +6046,7 @@ async function uploadImage(file) {
 
 // 认证相关函数
 async function _makeRequest(prefix, endpoint, options = {}) {
-    const { isSessionCheck = false, isBackgroundSync = false } = options;
+    const { isSessionCheck = false, isBackgroundSync = false, suppressAutoLogout = false } = options;
 
     const headers = {
         'Content-Type': 'application/json',
@@ -5958,28 +6063,43 @@ async function _makeRequest(prefix, endpoint, options = {}) {
     try {
         const response = await fetch(`${prefix}${endpoint}`, { ...options, headers });
 
-        if (response.status === 401 && (currentUser || sessionId)) {
-            if (!isSessionCheck && !isBackgroundSync) {
-                showToast(getToastMessage('toast.sessionExpired'), 'error');
+    if (response.status === 401 && (currentUser || sessionId)) {
+        const error = new Error(getToastMessage('errors.sessionInvalidOrExpired'));
+        error.isAuthError = true;
+        error.status = 401;
 
-                const expiredSessionId = sessionId;
-                sessionId = null;
-                currentUser = null;
-                refreshSecurityMfaToggleFromUser?.();
-                updateCurrentPasswordPlaceholderInput();
-                localStorage.removeItem('sessionId');
-                if (expiredSessionId) {
-                    localStorage.removeItem(`user_cache_${expiredSessionId}`);
-                }
-                localStorage.removeItem('userThemePreset');
+        const skipOnce = (() => {
+            try { return localStorage.getItem('skipSessionClearOnNext401') === '1'; } catch (_) { return false; }
+        })();
 
-                updateUI();
-                openAuthOverlay('auto', { mode: 'login' }, { syncRoute: true, routeOptions: { replace: true } });
-            }
-            const error = new Error(getToastMessage('errors.sessionInvalidOrExpired'));
-            error.isAuthError = true;
+        if (skipOnce) {
+            try { localStorage.removeItem('skipSessionClearOnNext401'); } catch (_) { }
             throw error;
         }
+
+        if (suppressAutoLogout) {
+            throw error;
+        }
+
+        if (!isSessionCheck && !isBackgroundSync) {
+            showToast(getToastMessage('toast.sessionExpired'), 'error');
+
+            const expiredSessionId = sessionId;
+            sessionId = null;
+            currentUser = null;
+            refreshSecurityMfaToggleFromUser?.();
+            updateCurrentPasswordPlaceholderInput();
+            localStorage.removeItem('sessionId');
+            if (expiredSessionId) {
+                localStorage.removeItem(`user_cache_${expiredSessionId}`);
+            }
+            localStorage.removeItem('userThemePreset');
+
+            updateUI();
+            openAuthOverlay('auto', { mode: 'login' }, { syncRoute: true, routeOptions: { replace: true } });
+        }
+        throw error;
+    }
 
         if (!response.ok) {
             let errorMessage = `${getToastMessage('errors.requestFailed')}: ${response.status}`;
@@ -6038,6 +6158,7 @@ async function _makeRequest(prefix, endpoint, options = {}) {
         throw error;
     }
 }
+
 function makeAuthRequest(endpoint, data, extraOptions = {}) {
     const options = {
         method: 'POST',
@@ -6713,13 +6834,17 @@ async function updateApiKey(apiKey, mode = 'mixed', options = {}) {
                 const modeLabel = (mode === 'mixed')
                     ? getToastMessage('ui.mixedMode')
                     : getToastMessage('ui.singleMode');
-                showToast(getToastMessage('status.modeSwitchedTo', { mode: modeLabel }), 'success');
+                showToast(getToastMessage('status.modeSwitchedTo', { mode: modeLabel }), 'success', null, { key: 'api-mode-switch' });
             } else {
                 showToast(getToastMessage('toast.apiKeyUpdateSuccess'), 'success');
             }
         }
         if (context !== 'mode') {
             updateUI();
+        } else {
+            try {
+                refreshSettingsI18nTexts();
+            } catch (_) { }
         }
         try {
             if (context !== 'mode') {
@@ -6798,24 +6923,24 @@ async function loadChats(isSessionValid = false) {
     if (currentUser && isSessionValid) {
         try {
             let cachedChats = null;
-            if (forceServerChatsReload) {
-                try {
-                    await deleteChatsFromDB(currentUser.id);
-                } catch (error) {
-                    console.warn('Failed to delete cached chats during forced reload:', error);
-                }
-                replaceChatsPreservingEphemeral({});
-                if (loader) loader.style.display = 'flex';
-            } else {
+            try {
                 cachedChats = await getChatsFromDB(currentUser.id);
-                if (cachedChats) {
-                    replaceChatsPreservingEphemeral(cachedChats);
-                    renderSidebar();
-                } else if (loader) {
-                    loader.style.display = 'flex';
-                }
+            } catch (error) {
+                console.warn('Failed to get cached chats:', error);
             }
-            makeApiRequest('chats/conversations').then(async (result) => {
+
+            if (cachedChats) {
+                replaceChatsPreservingEphemeral(cachedChats);
+                renderSidebar();
+            } else if (loader) {
+                loader.style.display = 'flex';
+            }
+
+            if (forceServerChatsReload && loader) {
+                loader.style.display = 'flex';
+            }
+
+            makeApiRequest('chats/conversations', { suppressAutoLogout: true }).then(async (result) => {
                 if (result.success) {
                     const serverChats = {};
                     for (const conv of result.conversations) {
@@ -6869,6 +6994,20 @@ async function loadChats(isSessionValid = false) {
                 if (loader) {
                     loader.style.display = 'none';
                 }
+                if (cachedChats) {
+                    replaceChatsPreservingEphemeral(cachedChats);
+                    renderSidebar();
+                } else if (loader && (!chats || Object.keys(chats).length === 0)) {
+                    loader.style.display = 'flex';
+                    const loadingText = loader.querySelector('.loading-text');
+                    if (loadingText) loadingText.textContent = getToastMessage('status.recordLoadFailed');
+                    const spinner = loader.querySelector('.loading-spinner');
+                    if (spinner) spinner.style.display = 'none';
+                }
+                if (error && error.status === 401) {
+                    showToast(getToastMessage('errors.sessionInvalidOrExpired'), 'error');
+                    openAuthOverlay('auto', { mode: 'login' }, { syncRoute: true, routeOptions: { replace: true } });
+                }
             });
         } catch (error) {
             if (loader && (!chats || Object.keys(chats).length === 0)) {
@@ -6885,6 +7024,7 @@ async function loadChats(isSessionValid = false) {
         renderSidebar();
     }
 }
+
 // UI更新函数
 function updateUI(showLoginPage = true) {
     const userAvatarButton = document.getElementById('user-avatar-button');
@@ -8446,6 +8586,9 @@ class MathRenderer {
         }
 
         try {
+            if (element?.dataset?.plainText === 'true') {
+                return;
+            }
             const textContent = element.textContent;
             const hasMath = MathRenderer.containsMath(textContent);
 
@@ -8527,8 +8670,9 @@ function stripStreamingHorizontalRuleTail(text) {
     return trimmed + text.slice(end);
 }
 
-function renderMessageContent(element, content, citations = null, isFinalRender = false) {
+function renderMessageContent(element, content, citations = null, isFinalRender = false, options = {}) {
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const { forcePlainText = false } = options || {};
     let renderTimeout;
     const clearRenderState = () => {
         if (element.__renderState) {
@@ -8600,6 +8744,17 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         messageText = content;
     } else {
         element.textContent = String(content);
+        if (renderTimeout) {
+            clearTimeout(renderTimeout);
+        }
+        clearRenderState();
+        return null;
+    }
+
+    if (forcePlainText) {
+        try { element.dataset.plainText = 'true'; } catch (_) { }
+        element.textContent = messageText || '';
+        element.style.whiteSpace = 'pre-wrap';
         if (renderTimeout) {
             clearTimeout(renderTimeout);
         }
@@ -9100,6 +9255,9 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         if (renderTimeout) {
             clearTimeout(renderTimeout);
         }
+        if (isFinalRender) {
+            try { element.dataset.dynamicProcessed = 'true'; } catch (_) { }
+        }
         return vegaRenderPromise || element.__mermaidRenderPromise || null;
 
     } catch (error) {
@@ -9150,11 +9308,15 @@ function createMessageElement(role, messageObject) {
     const contentDiv = document.createElement('div');
     contentDiv.className = 'content';
     let renderPromise = null;
+    const renderOptions = { forcePlainText: role === 'user' };
+    if (renderOptions.forcePlainText) {
+        try { contentDiv.dataset.plainText = 'true'; } catch (_) { }
+    }
     if (content) {
         if (typeof content === 'object' && content !== null && 'content' in content) {
-            renderPromise = renderMessageContent(contentDiv, content.content, content.citations, true);
+            renderPromise = renderMessageContent(contentDiv, content.content, content.citations, true, renderOptions);
         } else {
-            renderPromise = renderMessageContent(contentDiv, content, messageObject.citations || null, true);
+            renderPromise = renderMessageContent(contentDiv, content, messageObject.citations || null, true, renderOptions);
         }
     }
     messageContainerDiv.appendChild(contentDiv);
@@ -10948,7 +11110,7 @@ async function handleSearchAndChat(userMessageText) {
                 const newTitleFromServer = saveResult.newTitle;
 
                 if (chats[finalChatId] && newTitleFromServer) {
-                    chats[finalChatId].title = newTitleFromServer;
+                    chats[finalChatId].title = clampGeneratedTitleWords(newTitleFromServer);
                     if (!currentUser) {
                         try {
                             await saveChatsToDB('guest', chats);
@@ -13212,6 +13374,8 @@ async function forceClearCacheAndReload() {
             return;
         }
         isClearingCache = true;
+
+        try { localStorage.setItem('skipSessionClearOnNext401', '1'); } catch (_) { }
         const confirmed = await showCustomConfirm(
             getToastMessage('dialog.confirmOperation'),
             getToastMessage('dialog.clearCacheConfirmMessage'),
@@ -16004,20 +16168,20 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
         if (isTempChat) {
             if (currentUser) {
                 const result = await makeApiRequest('chats/new', { method: 'POST' });
-                if (result.success && result.conversation) {
-                    finalChatId = result.conversation.id;
+                        if (result.success && result.conversation) {
+                            finalChatId = result.conversation.id;
 
-                    const tempMessages = chats[chatId]?.messages || [];
-                    delete chats[chatId];
+                            const tempMessages = chats[chatId]?.messages || [];
+                            delete chats[chatId];
 
-                    chats[finalChatId] = {
-                        id: finalChatId,
-                        title: result.conversation.title,
-                        model_name: result.conversation.model_name,
-                        created_at: result.conversation.created_at,
-                        updated_at: result.conversation.updated_at,
-                        messages: tempMessages,
-                        isNewlyCreated: true
+                            chats[finalChatId] = {
+                                id: finalChatId,
+                                title: clampGeneratedTitleWords(result.conversation.title),
+                                model_name: result.conversation.model_name,
+                                created_at: result.conversation.created_at,
+                                updated_at: result.conversation.updated_at,
+                                messages: tempMessages,
+                                isNewlyCreated: true
                     };
 
                     currentChatId = finalChatId;
@@ -16068,7 +16232,7 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
 
         if (saveResult.success) {
             if (saveResult.title && chats[finalChatId]) {
-                chats[finalChatId].title = saveResult.title;
+                chats[finalChatId].title = clampGeneratedTitleWords(saveResult.title);
             }
 
             // 保存到 localStorage
@@ -16410,7 +16574,7 @@ function setupLayout() {
                 const selectedMode = input.value;
                 guestApiState.mode = selectedMode || 'mixed';
                 const modeLabel = (selectedMode === 'mixed') ? getToastMessage('ui.mixedMode') : getToastMessage('ui.singleMode');
-                showToast(getToastMessage('status.modeSwitchedTo', { mode: modeLabel }), 'success');
+                showToast(getToastMessage('status.modeSwitchedTo', { mode: modeLabel }), 'success', null, { key: 'api-mode-switch' });
             }
         });
     });

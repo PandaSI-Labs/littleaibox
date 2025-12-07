@@ -807,7 +807,8 @@ body.sidebar-collapsed #new-chat-btn .icon-plus {
     text-overflow: ellipsis;
     color: var(--secondary-text-color);
     font-size: 15px;
-    flex-grow: 1;
+    flex: 1 1 auto;
+    min-width: 0;
     user-select: none;
     -webkit-user-select: none;
     transition: transform 0.3s ease-in-out;

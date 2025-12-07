@@ -13,6 +13,11 @@ window.addEventListener('DOMContentLoaded', () => {
             jsx: 'javascript',
             ts: 'typescript',
             tsx: 'typescript',
+            html: 'plaintext',
+            htm: 'plaintext',
+            xml: 'plaintext',
+            xhtml: 'plaintext',
+            svg: 'plaintext',
             proto: 'protobuf',
             ps1: 'powershell',
             kt: 'kotlin',
@@ -24,8 +29,19 @@ window.addEventListener('DOMContentLoaded', () => {
             text: 'plaintext'
         };
 
+        if (!hljs.getLanguage('plaintext')) {
+            try {
+                hljs.registerLanguage('plaintext', () => ({ name: 'Plaintext', contains: [] }));
+            } catch (_) { }
+        }
+
         const requested = new Map();
-        const resolveLang = (name) => aliasMap[name] || name;
+        const resolveLang = (name) => {
+            const normalized = (name || '').toString().trim().toLowerCase();
+            if (!normalized) return '';
+            const primary = normalized.split(/[,;:/\s]+/)[0] || normalized;
+            return aliasMap[primary] || primary;
+        };
 
         if (hljs.registerAliases) {
             Object.entries(aliasMap).forEach(([alias, languageName]) => {
@@ -37,6 +53,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
         function loadLanguageIfNeeded(lang) {
             const target = resolveLang(lang);
+            if (!target || target === 'plaintext') return Promise.resolve(true);
             try {
                 if (hljs.getLanguage(target)) return Promise.resolve(true);
             } catch (_) { }
@@ -58,8 +75,12 @@ window.addEventListener('DOMContentLoaded', () => {
         hljs.highlightElement = function (element) {
             try {
                 const classes = Array.from(element.classList || []);
-                const langClass = classes.find((cls) => cls.startsWith('language-'));
-                const lang = langClass ? langClass.slice('language-'.length) : null;
+                const langClass = classes.find((cls) => cls.startsWith('language-') || cls.startsWith('lang-'));
+                let lang = null;
+                if (langClass) {
+                    lang = langClass.startsWith('language-') ? langClass.slice('language-'.length) : langClass.slice('lang-'.length);
+                }
+                const resolved = resolveLang(lang);
 
                 if (lang === 'mermaid') {
                     element.classList.remove('language-mermaid');
@@ -70,8 +91,8 @@ window.addEventListener('DOMContentLoaded', () => {
                         return;
                     }
                 }
-                if (lang && !hljs.getLanguage(resolveLang(lang))) {
-                    loadLanguageIfNeeded(lang).then((loaded) => {
+                if (resolved && !hljs.getLanguage(resolved)) {
+                    loadLanguageIfNeeded(resolved).then((loaded) => {
                         if (loaded) {
                             try {
                                 originalHighlightElement(element);
