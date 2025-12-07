@@ -1158,7 +1158,7 @@ html[data-theme='dark'] .loader-bar::before {
     justify-content: center;
     cursor: pointer;
     color: var(--icon-color);
-    transition: transform 0.3s ease, background-color 0.2s;
+    transition: background-color 0.2s ease;
     z-index: 1;
 }
 
@@ -1168,12 +1168,7 @@ html[data-theme='dark'] .loader-bar::before {
 
 #sidebar-toggle-btn svg {
     fill: var(--icon-color);
-    transition: transform 0.3s ease;
-}
-
-body.sidebar-open #sidebar-toggle-btn,
-body:not(.sidebar-collapsed) #sidebar-toggle-btn {
-    transform: rotate(180deg);
+    transition: background-color 0.2s ease;
 }
 
 .header-right-items {
@@ -1577,7 +1572,7 @@ body.is-native-app .message:first-child {
     position: relative;
 }
 
-.code-block-wrapper > pre {
+.code-block-wrapper>pre {
     margin: 8px 0;
 }
 
