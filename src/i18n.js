@@ -1,7 +1,7 @@
 const translations = {};
 const translationsLoaded = {};
 let __runtimeLanguage = null;
-const SUPPORTED_LANGUAGES = ['en', 'zh-CN', 'zh-TW', 'es', 'ja', 'ko'];
+const SUPPORTED_LANGUAGES = ['en', 'zh-CN', 'zh-TW', 'es', 'ja', 'ko', 'fr'];
 const APP_BUILD_ID = typeof __APP_BUILD_ID__ !== 'undefined' ? __APP_BUILD_ID__ : 'dev';
 const TRANSLATION_CACHE_PREFIX = `translations_${APP_BUILD_ID}_`;
 
@@ -254,6 +254,12 @@ function getCurrentLanguage() {
     if (__runtimeLanguage) {
         return __runtimeLanguage;
     }
+    try {
+        const guestLang = sessionStorage.getItem('guest_selectedLanguage');
+        if (guestLang) {
+            return guestLang;
+        }
+    } catch (_) { }
     const storedLang = localStorage.getItem('selectedLanguage');
     if (storedLang) {
         return storedLang;
@@ -265,7 +271,8 @@ function getCurrentLanguage() {
             browserLang.startsWith('ja') ? 'ja' :
                 browserLang.startsWith('ko') ? 'ko' :
                     browserLang.startsWith('es') ? 'es' :
-                        browserLang.startsWith('en') ? 'en' : 'zh-CN';
+                        browserLang.startsWith('fr') ? 'fr' :
+                            browserLang.startsWith('en') ? 'en' : 'zh-CN';
     return defaultLang;
 }
 

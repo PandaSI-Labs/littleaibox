@@ -146,14 +146,16 @@
         }
     },
     "models": {
+        "gemini3Pro": "Gemini 3 Pro",
+        "gemini3ProDesc": "Most powerful model",
+        "thinkingLevelLow": "Low (Fast response)",
+        "thinkingLevelHigh": "High (Deep reasoning)",
         "gemini25Pro": "Gemini 2.5 Pro",
         "gemini25Flash": "Gemini 2.5 Flash",
         "gemini25FlashLite": "Gemini 2.5 Flash-Lite",
-        "gemini20Flash": "Gemini 2.0 Flash",
-        "gemini25ProDesc": "The most capable model",
+        "gemini25ProDesc": "Powerful and stable",
         "gemini25FlashDesc": "Fast and efficient",
         "gemini25FlashLiteDesc": "The most cost-effective",
-        "gemini20FlashDesc": "A balanced multimodal model",
         "slowest": "Slowest",
         "medium": "Medium"
     },
@@ -228,7 +230,7 @@
         "deleteFailed": "Delete failed",
         "tempChatRestored": "Successfully restored pending conversation",
         "tempChatSaveFailed": "Temporary chat save failed, cleared",
-        "fileAlreadyExists": "File \"{filename}\" already exists, skipping upload",
+        "fileDuplicate": "Duplicate file, skipping upload",
         "fileTooLarge": "File \"{filename}\" is too large. The upload limit for {userType} is {limit}MB.",
         "unsupportedFileFormat": "Previewing .{extension} file format is not currently supported",
         "exceedsCharacterLimit": "Adding file \"{filename}\" exceeds the character limit.",

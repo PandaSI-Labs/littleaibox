@@ -45,7 +45,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
     event.waitUntil((async () => {
         if ('navigationPreload' in self.registration) {
-            try { await self.registration.navigationPreload.enable(); } catch (_) { }
+            try { await self.registration.navigationPreload.disable(); } catch (_) { }
         }
         await self.clients.claim();
     })());
@@ -95,22 +95,8 @@ const navigationNetworkFirst = new NetworkFirst({ cacheName: 'html-cache', netwo
 self.addEventListener('fetch', (event) => {
     if (event.request.mode === 'navigate') {
         event.respondWith((async () => {
-            try {
-                const preloadResponse = await event.preloadResponse;
-                if (preloadResponse) {
-                    return preloadResponse;
-                }
-            } catch (error) {
-                console.warn('Navigation preload failed:', error);
-            }
             return navigationNetworkFirst.handle({ event, request: event.request });
         })());
-        
-        try {
-            if (event.preloadResponse) {
-                event.waitUntil(event.preloadResponse.catch(() => { }));
-            }
-        } catch (_) { }
     }
 });
 

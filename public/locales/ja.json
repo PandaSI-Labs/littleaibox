@@ -1,4 +1,4 @@
-﻿{
+{
     "appSubtitle": "インテリジェントAI会話アシスタント",
     "loading": "コアリソースを読み込んでいます...",
     "login": "ログイン",
@@ -146,14 +146,16 @@
         }
     },
     "models": {
+        "gemini3Pro": "Gemini 3 Pro",
+        "gemini3ProDesc": "最も強力なモデル",
+        "thinkingLevelLow": "低（高速応答）",
+        "thinkingLevelHigh": "高（深い推論）",
         "gemini25Pro": "Gemini 2.5 Pro",
         "gemini25Flash": "Gemini 2.5 Flash",
         "gemini25FlashLite": "Gemini 2.5 Flash-Lite",
-        "gemini20Flash": "Gemini 2.0 Flash",
-        "gemini25ProDesc": "最も高性能なモデル",
+        "gemini25ProDesc": "高性能で安定",
         "gemini25FlashDesc": "高速、高効率",
         "gemini25FlashLiteDesc": "最もコスト効率が高い",
-        "gemini20FlashDesc": "バランス型マルチモーダル",
         "slowest": "最も遅い",
         "medium": "中"
     },
@@ -229,7 +231,7 @@
         "deleteFailed": "削除に失敗しました",
         "tempChatRestored": "保留中の会話を正常に復元しました",
         "tempChatSaveFailed": "一時的なチャットの保存に失敗しました。クリアされました",
-        "fileAlreadyExists": "ファイル「{filename}」は既に存在するため、アップロードをスキップします",
+        "fileDuplicate": "ファイルが重複しています、アップロードをスキップします",
         "fileTooLarge": "ファイル「{filename}」が大きすぎます。{userType}のアップロード制限は{limit}MBです。",
         "unsupportedFileFormat": ".{extension} ファイル形式のプレビューは現在サポートされていません",
         "exceedsCharacterLimit": "ファイル「{filename}」を追加すると文字数制限を超えます。",

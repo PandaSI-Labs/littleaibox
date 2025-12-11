@@ -19,6 +19,12 @@
     --safe-area-inset-left: max(var(--native-safe-area-left, 0px), env(safe-area-inset-left, 0px));
     --safe-area-inset-right: max(var(--native-safe-area-right, 0px), env(safe-area-inset-right, 0px));
     --safe-top: var(--safe-area-inset-top);
+    --keyboard-gap: 0px;
+    --keyboard-height: 0px;
+
+    /* 键盘动画变量 */
+    --keyboard-transition-duration: 280ms;
+    --keyboard-transition-easing: cubic-bezier(0.4, 0.0, 0.2, 1);
 
     /* 主题色 (Theming) */
     --sidebar-bg: #fff;
@@ -549,12 +555,6 @@ html {
     height: 100%;
 }
 
-/* 确保主页面没有底部白色条 */
-.app-container {
-    margin-bottom: 0;
-    padding-bottom: 0;
-}
-
 body.is-resizing #sidebar {
     transition: none !important;
 }
@@ -569,14 +569,6 @@ body.is-resizing #sidebar {
  * =============================================================================
  */
 
-.app-container {
-    display: flex;
-    height: var(--app-height, 100dvh);
-    min-height: 100vh;
-    opacity: 0;
-    transition: opacity 0.3s ease-in;
-}
-
 .app-container.loaded {
     opacity: 1;
 }
@@ -585,13 +577,23 @@ body {
     transition: padding-left 0.3s ease-in-out;
 }
 
-body.keyboard-is-open .app-container {
-    height: calc(100dvh - var(--keyboard-height));
-    min-height: calc(100vh - var(--keyboard-height));
+html.keyboard-is-open {
+    overflow: hidden !important;
+    overscroll-behavior: none;
 }
 
 body.keyboard-is-open {
     --safe-area-inset-bottom: 0px;
+    overflow: hidden !important;
+    overscroll-behavior: none;
+}
+
+body.keyboard-is-open #chat-container,
+body.keyboard-is-open .chat-content-wrapper {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    will-change: transform;
 }
 
 body.keyboard-is-open .bottom-panel {
@@ -623,6 +625,8 @@ main {
     position: relative;
     transition: margin-left 0.3s ease-in-out, margin-right 0.3s ease-in-out;
     background-color: var(--main-bg);
+    overflow: hidden;
+    min-height: 0;
 }
 
 /**
@@ -681,6 +685,7 @@ html[data-theme='dark'] .suggestion-chip:hover {
     width: 280px;
     transform: translateX(-100%);
     transition: transform 0.3s ease-in-out;
+    will-change: transform;
     padding: 16px;
     padding-top: calc(16px + var(--safe-top));
     padding-left: calc(16px + var(--safe-area-inset-left));
@@ -1168,7 +1173,7 @@ html[data-theme='dark'] .loader-bar::before {
 
 #sidebar-toggle-btn svg {
     fill: var(--icon-color);
-    transition: background-color 0.2s ease;
+    transition: background-color 0.2s ease, transform 0.3s ease-in-out;
 }
 
 .header-right-items {
@@ -1303,9 +1308,14 @@ html[data-theme='dark'] .loader-bar::before {
     display: flex;
     flex-direction: column;
     transition: opacity 0.15s ease-in-out;
-    flex: 1;
+    flex: 1 1 auto;
+    height: 100%;
     overflow-y: auto;
     min-height: 0;
+    overflow-anchor: none;
+    scrollbar-gutter: stable both-edges;
+    contain: layout style;
+    will-change: scroll-position;
 }
 
 #chat-container[style*="overflow-y: hidden"] {
@@ -1362,7 +1372,7 @@ html[data-theme='dark'] .loader-bar::before {
     margin: 0 0 1.0rem 0;
     gap: 0.5rem;
     align-items: flex-start;
-    contain: content;
+    contain: layout style paint;
 }
 
 .message:first-child {
@@ -1863,6 +1873,61 @@ html[data-theme='dark'] .copy-btn:hover {
     border-color: var(--accent-color);
 }
 
+.input-wrapper.dragging {
+    border-color: var(--accent-color);
+    border-style: dashed;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 25%, transparent);
+    background: color-mix(in srgb, var(--accent-color) 7%, var(--gpt-input-bg));
+}
+
+.input-drop-overlay {
+    position: absolute;
+    inset: 0;
+    border-radius: 20px;
+    border: 2px dashed var(--accent-color);
+    background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+    color: var(--text-color);
+    pointer-events: none;
+    text-align: center;
+    padding: 16px;
+}
+
+.input-wrapper.dragging .input-drop-overlay {
+    display: flex;
+}
+
+.input-drop-overlay .drop-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 16px;
+    background: white;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+    display: grid;
+    place-items: center;
+    color: var(--accent-color);
+    font-size: 28px;
+}
+
+.input-drop-overlay .drop-text {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent-color);
+}
+
+html[data-theme='dark'] .input-wrapper.dragging {
+    background: color-mix(in srgb, var(--accent-color) 12%, var(--gpt-input-bg));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 35%, transparent);
+}
+
+html[data-theme='dark'] .input-drop-overlay {
+    background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+}
+
 .input-main-row {
     background-color: transparent;
     border: none;
@@ -2223,14 +2288,19 @@ html[data-theme='dark'] .copy-btn:hover {
 }
 
 #model-select-menu .model-select-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    display: block;
     padding: 10px 12px;
     border-radius: 8px;
     cursor: pointer;
+}
+
+#model-select-menu .model-select-item .model-main-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: 16px;
 }
+
 
 #model-select-menu .model-select-item:hover {
     background-color: var(--hover-bg);
@@ -2243,14 +2313,10 @@ html[data-theme='dark'] .copy-btn:hover {
     min-width: 0;
 }
 
-#model-select-menu .model-name,
-#model-select-menu .model-desc {
+#model-select-menu .model-name {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-#model-select-menu .model-name {
     font-weight: 500;
     color: var(--text-color);
     font-size: 15px;
@@ -2259,9 +2325,12 @@ html[data-theme='dark'] .copy-btn:hover {
 #model-select-menu .model-desc {
     font-size: 12px;
     color: var(--secondary-text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-#model-select-menu .checkmark-icon {
+#model-select-menu .model-main-row>.checkmark-icon {
     width: 20px;
     height: 20px;
     fill: var(--accent-color);
@@ -2269,8 +2338,67 @@ html[data-theme='dark'] .copy-btn:hover {
     flex-shrink: 0;
 }
 
-#model-select-menu .model-select-item.selected .checkmark-icon {
+#model-select-menu .model-select-item.selected .model-main-row>.checkmark-icon {
     visibility: visible;
+}
+
+#model-select-menu .model-select-item .accordion-arrow {
+    width: 20px;
+    height: 20px;
+    fill: var(--secondary-text-color);
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+}
+
+#model-select-menu .model-select-item.expanded .accordion-arrow {
+    transform: rotate(180deg);
+}
+
+.thinking-level-submenu {
+    width: 100%;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.2s ease-out, margin-top 0.2s ease-out;
+    margin-top: 0;
+    padding-left: 20px;
+    border-left: 2px solid var(--accent-color);
+    margin-left: 4px;
+}
+
+#model-select-menu .model-select-item.expanded .thinking-level-submenu {
+    max-height: 80px;
+    margin-top: 8px;
+}
+
+.thinking-level-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-color);
+    transition: background-color 0.15s ease;
+}
+
+.thinking-level-option:hover {
+    background-color: var(--hover-bg);
+}
+
+.thinking-level-option .checkmark-icon {
+    width: 16px;
+    height: 16px;
+    fill: var(--accent-color);
+    visibility: hidden;
+}
+
+.thinking-level-option.active .checkmark-icon {
+    visibility: visible;
+}
+
+.thinking-level-option.active {
+    background-color: rgba(26, 115, 232, 0.08);
 }
 
 /* 工具菜单容器 */
@@ -5186,6 +5314,23 @@ body.is-drag-scrolling {
         padding-left: 0;
     }
 
+    .app-container {
+        display: flex;
+        flex-direction: column;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: var(--keyboard-height, 0px);
+        overflow: hidden;
+        will-change: bottom;
+        contain: layout style;
+        opacity: 0;
+        margin-bottom: 0;
+        padding-bottom: 0;
+        transition: opacity 0.3s ease-in, bottom 0.2s ease-out;
+    }
+
     #chat-container {
         max-width: 100%;
         padding: 0 1rem 1rem 1rem;
@@ -5622,13 +5767,23 @@ body.is-drag-scrolling {
 
 @media (min-width: 641px) {
 
-    /* 主体布局 */
+    /* 桌面端布局 */
     body:not(.sidebar-collapsed) {
         padding-left: 280px;
     }
 
     body.sidebar-collapsed {
         padding-left: 0;
+    }
+
+    .app-container {
+        display: flex;
+        height: var(--app-height, 100dvh);
+        min-height: 100vh;
+        opacity: 0;
+        margin-bottom: 0;
+        padding-bottom: 0;
+        transition: opacity 0.3s ease-in;
     }
 
     body.right-sidebar-open .chat-area {
@@ -5638,14 +5793,15 @@ body.is-drag-scrolling {
     /* 侧边栏 */
     #sidebar {
         transform: translateX(0);
-        transition: transform 0.3s ease-in-out, padding 0.3s ease-in-out, width 0.3s ease-in-out;
+        transition: transform 0.3s ease-in-out;
+    }
+
+    body:not(.sidebar-collapsed) #sidebar-toggle-btn svg {
+        transform: rotate(180deg);
     }
 
     body.sidebar-collapsed #sidebar {
-        width: 0;
-        padding: 16px 0;
-        overflow: hidden;
-        border-right: none;
+        transform: translateX(-100%);
     }
 
     body.sidebar-collapsed #sidebar-toggle-btn svg {
@@ -6065,6 +6221,7 @@ body.sidebar-open .sidebar-overlay {
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
     border-left: 1px solid rgba(0, 0, 0, 0.08);
+    will-change: transform;
 }
 
 body.right-sidebar-open #right-sidebar {
@@ -6092,6 +6249,8 @@ body.right-sidebar-open #right-sidebar {
     padding: 0;
     scrollbar-width: none;
     -ms-overflow-style: none;
+    will-change: scroll-position;
+    transform: translateZ(0);
 }
 
 .right-sidebar-content::-webkit-scrollbar {
@@ -6978,13 +7137,11 @@ button,
  * =============================================================================
  */
 
-/* 浮动标签输入框容器 */
 .floating-label-group {
     position: relative;
     margin-bottom: 24px;
 }
 
-/* 输入框基础样式 */
 .floating-label-group .api-key-input {
     width: 100%;
     padding: 14px;
@@ -6996,7 +7153,6 @@ button,
     transition: border-color 0.2s ease;
 }
 
-/* 标签基础样式 */
 .floating-label-group label {
     position: absolute;
     top: 14px;
@@ -7009,7 +7165,6 @@ button,
     padding: 0 4px;
 }
 
-/* 输入框获得焦点或有内容时的动画效果 */
 .floating-label-group .api-key-input:focus+label,
 .floating-label-group .api-key-input:not(:placeholder-shown)+label {
     top: -8px;
@@ -7018,14 +7173,12 @@ button,
     color: var(--accent-color);
 }
 
-/* 输入框获得焦点时，边框高亮 */
 .floating-label-group .api-key-input:focus {
     outline: none;
     border-color: var(--accent-color);
     box-shadow: 0 0 0 1px var(--accent-color);
 }
 
-/* API Key输入框错误状态 */
 .floating-label-group .api-key-input.error {
     border-color: #f44336;
     box-shadow: 0 0 0 1px #f44336;

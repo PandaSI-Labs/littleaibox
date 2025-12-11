@@ -7,15 +7,16 @@
   },
   "plugins": {
     "StatusBar": {
-      "overlaysWebView": true,
+      "overlaysWebView": false,
       "style": "DARK"
     },
     "Keyboard": {
-      "resize": "native"
+      "resize": "none"
     },
     "SplashScreen": {
       "launchShowDuration": 0,
-      "launchAutoHide": true
+      "launchAutoHide": false,
+      "backgroundColor": "#ffffff"
     },
     "Filesystem": {
       "iosIsDocumentPickerEnabled": true,

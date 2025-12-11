@@ -1,4 +1,4 @@
-﻿{
+{
     "appSubtitle": "智能AI對話助理",
     "loading": "正在載入核心資源...",
     "login": "登入",
@@ -131,6 +131,7 @@
         "aiToolCallReturnedFailureStatus": "AI工具呼叫傳回失敗狀態",
         "aiReturnedEmptyContent": "模型拒絕了該請求,請換內容/模型",
         "saveFailed": "儲存失敗",
+        "verificationCodeInvalidOrExpired": "驗證碼無效或已過期",
         "maxActivationReached": "最多可啟用3次",
         "httpStatus": {
             "400": "請求參數或地區/計費權限異常(400)",
@@ -145,14 +146,16 @@
         }
     },
     "models": {
+        "gemini3Pro": "Gemini 3 Pro",
+        "gemini3ProDesc": "能力最強的模型",
+        "thinkingLevelLow": "低 (快速回應)",
+        "thinkingLevelHigh": "高 (深度思考)",
         "gemini25Pro": "Gemini 2.5 Pro",
         "gemini25Flash": "Gemini 2.5 Flash",
         "gemini25FlashLite": "Gemini 2.5 Flash-Lite",
-        "gemini20Flash": "Gemini 2.0 Flash",
-        "gemini25ProDesc": "能力最強的模型",
+        "gemini25ProDesc": "強大且穩定",
         "gemini25FlashDesc": "速度快、效率高",
         "gemini25FlashLiteDesc": "最具成本效益",
-        "gemini20FlashDesc": "平衡的多模態模型",
         "slowest": "最慢",
         "medium": "中等"
     },
@@ -227,7 +230,7 @@
         "deleteFailed": "刪除失敗",
         "tempChatRestored": "已成功恢復暫存的對話",
         "tempChatSaveFailed": "臨時聊天儲存失敗，已清除",
-        "fileAlreadyExists": "檔案「{filename}」已存在，略過上傳",
+        "fileDuplicate": "檔案重複，略過上傳",
         "fileTooLarge": "檔案「{filename}」過大。{userType}的上傳限制為 {limit}MB。",
         "unsupportedFileFormat": "暫不支援預覽 .{extension} 檔案格式",
         "exceedsCharacterLimit": "新增檔案「{filename}」後超出字元上限。",
@@ -591,6 +594,7 @@
         "securityMfaEnabledToast": "驗證器已啟用",
         "securityMfaDisabledToast": "驗證器已關閉",
         "securityBackupCopiedToast": "備用驗證碼已複製",
+        "securityBackupCodeUsed": "您使用的備用驗證碼已失效。每個備用驗證碼只能使用一次。",
         "tip": "提示",
         "limitReached": "已達上限",
         "limitReachedDesc": "訪客試用次數已達上限，請登入或明日再試。",

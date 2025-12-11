@@ -8,7 +8,7 @@
     <script src="/pre-theme.js"></script>
 
     <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="format-detection" content="telephone=no">
@@ -28,6 +28,17 @@
     <meta property="og:image" content="https://littleaibox.com/images/pwa-512x512.png">
     <meta name="theme-color" content="#ffffff">
     <meta name="color-scheme" content="light dark">
+    <script>
+        (() => {
+            try {
+                const savedLang = localStorage.getItem('selectedLanguage') || sessionStorage.getItem('guest_selectedLanguage');
+                if (savedLang) {
+                    document.documentElement.setAttribute('lang', savedLang);
+                    window.__PREFERRED_LANG__ = savedLang;
+                }
+            } catch (_) { }
+        })();
+    </script>
     <script type="application/ld+json">
         {
             "@context": "https://schema.org",
@@ -50,7 +61,8 @@
                 'zh-TW': 'LittleAIBox —— 隱私優先的多模態 AI 平台，全球無障礙直連 Gemini，支援離線/本地運行、語音、OCR、文件/程式碼，並內建圖表與流程圖渲染。',
                 'ja': 'LittleAIBoxはプライバシー重視のマルチモーダルAIプラットフォーム。Geminiへ世界中から直接アクセスでき、ローカル/オフライン動作、音声、OCR、ドキュメント/コード、図表・フローチャート描画を備えます。',
                 'ko': 'LittleAIBox는 프라이버시 우선 멀티모달 AI 플랫폼으로 전 세계 어디서나 Gemini에 바로 연결되며, 로컬/오프라인 모드, 음성·OCR, 문서/코드, 차트·플로우차트 렌더링을 제공합니다.',
-                'es': 'LittleAIBox: plataforma de IA multimodal centrada en la privacidad, con acceso global directo a Gemini, modo local/offline, voz y OCR, archivos/código y renderizado integrado de gráficos/diagramas.'
+                'es': 'LittleAIBox: plataforma de IA multimodal centrada en la privacidad, con acceso global directo a Gemini, modo local/offline, voz y OCR, archivos/código y renderizado integrado de gráficos/diagramas.',
+                'fr': 'LittleAIBox : plateforme IA multimodale axée sur la confidentialité, avec accès direct mondial à Gemini, mode local/hors ligne, voix et OCR, fichiers/code et rendu intégré de graphiques/diagrammes.'
             };
 
             const normalizeLang = (langRaw) => {
@@ -61,6 +73,7 @@
                 if (val.startsWith('ja')) return 'ja';
                 if (val.startsWith('ko')) return 'ko';
                 if (val.startsWith('es')) return 'es';
+                if (val.startsWith('fr')) return 'fr';
                 if (val.startsWith('en')) return 'en';
                 return null;
             };
@@ -140,7 +153,16 @@
 </head>
 
 <body>
-    <div id="loading-screen" class="loading-screen">
+    <script>
+        (function () {
+            var ua = navigator.userAgent || '';
+            if (ua.indexOf('Capacitor') !== -1 || window.Capacitor) {
+                document.write('<style>#loading-screen.apk-initial-hide{display:none!important}</style>');
+                window.__IS_APK_INITIAL_LOAD__ = true;
+            }
+        })();
+    </script>
+    <div id="loading-screen" class="loading-screen apk-initial-hide">
         <div class="loading-container">
             <div class="loading-logo">
                 <h1 data-i18n-key="ui.appTitle">LittleAIBox</h1>
@@ -774,7 +796,6 @@
                                 </div>
                             </div>
                         </div>
-
                     </div>
 
                     <div id="language-settings-page" class="settings-page">
@@ -809,6 +830,12 @@
                                     <button id="lang-btn-es" class="language-btn" data-lang="es" aria-label="Español">
                                         <div class="language-content">
                                             <span class="language-name">Español</span>
+                                        </div>
+                                        <div class="language-check"></div>
+                                    </button>
+                                    <button id="lang-btn-fr" class="language-btn" data-lang="fr" aria-label="Français">
+                                        <div class="language-content">
+                                            <span class="language-name">Français</span>
                                         </div>
                                         <div class="language-check"></div>
                                     </button>

@@ -1,4 +1,4 @@
-﻿{
+{
     "appSubtitle": "智能AI对话助手",
     "loading": "正在加载核心资源...",
     "login": "登录",
@@ -146,14 +146,16 @@
         }
     },
     "models": {
+        "gemini3Pro": "Gemini 3 Pro",
+        "gemini3ProDesc": "能力最强的模型",
+        "thinkingLevelLow": "低 (快速响应)",
+        "thinkingLevelHigh": "高 (深度思考)",
         "gemini25Pro": "Gemini 2.5 Pro",
         "gemini25Flash": "Gemini 2.5 Flash",
         "gemini25FlashLite": "Gemini 2.5 Flash-Lite",
-        "gemini20Flash": "Gemini 2.0 Flash",
-        "gemini25ProDesc": "能力最强的模型",
+        "gemini25ProDesc": "强大且稳定",
         "gemini25FlashDesc": "速度快、效率高",
         "gemini25FlashLiteDesc": "最具成本效益",
-        "gemini20FlashDesc": "平衡的多模态模型",
         "slowest": "最慢",
         "medium": "中等"
     },
@@ -228,7 +230,7 @@
         "deleteFailed": "删除失败",
         "tempChatRestored": "已成功恢复暂存的对话",
         "tempChatSaveFailed": "临时聊天保存失败，已清除",
-        "fileAlreadyExists": "文件 \"{filename}\" 已存在，跳过上传",
+        "fileDuplicate": "文件重复，跳过上传",
         "fileTooLarge": "文件 \"{filename}\" 过大。{userType}的上传限制为 {limit}MB。",
         "unsupportedFileFormat": "暂不支持预览 .{extension} 文件格式",
         "exceedsCharacterLimit": "添加文件 \"{filename}\" 后超出字符上限。",

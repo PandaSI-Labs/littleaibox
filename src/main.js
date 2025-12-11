@@ -1,4 +1,4 @@
-import { App } from '@capacitor/app';
+﻿import { App } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Clipboard } from '@capacitor/clipboard';
@@ -6,6 +6,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Keyboard } from '@capacitor/keyboard';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { SplashScreen } from '@capacitor/splash-screen';
 import { StatusBar } from '@capacitor/status-bar';
 import { FilePicker } from '@capawesome/capacitor-file-picker';
 import qrcodeGenerator from 'qrcode-generator';
@@ -29,6 +30,7 @@ const RESEARCH_MODE_INSTRUCTION = `Answer succinctly using only relevant Semanti
 // ===========================================================
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const CustomSplash = registerPlugin('CustomSplash');
 const IMAGE_ACCEL_BASES = [
     'https://littleaibox.oss-accelerate.aliyuncs.com'
 ];
@@ -146,11 +148,14 @@ async function applyNativeSafeAreaInsets() {
     }
 
     try {
-        // 使用StatusBar插件获取顶部信息
         const statusBarInfo = await StatusBar.getInfo();
-        const statusBarHeight = statusBarInfo.height || 0;
+        let statusBarHeight = statusBarInfo.height || 0;
 
-        // 设置顶部为StatusBar高度
+        // 在小窗口模式下使用相对值
+        if (statusBarHeight === 0 && window.innerHeight < 600) {
+            statusBarHeight = Math.min(40, Math.max(16, Math.round(window.innerHeight * 0.03)));
+        }
+
         document.documentElement.style.setProperty('--native-safe-area-top', `${statusBarHeight}px`);
         document.documentElement.style.setProperty('--native-safe-area-bottom', '0px');
         document.documentElement.style.setProperty('--native-safe-area-left', '0px');
@@ -160,11 +165,23 @@ async function applyNativeSafeAreaInsets() {
 
     } catch (statusBarError) {
         // 回退值
-        document.documentElement.style.setProperty('--native-safe-area-top', '24px');
+        const fallbackHeight = Math.min(40, Math.max(16, Math.round(window.innerHeight * 0.03)));
+        document.documentElement.style.setProperty('--native-safe-area-top', `${fallbackHeight}px`);
         document.documentElement.style.setProperty('--native-safe-area-bottom', '0px');
         document.documentElement.style.setProperty('--native-safe-area-left', '0px');
         document.documentElement.style.setProperty('--native-safe-area-right', '0px');
     }
+}
+
+// 监听窗口大小变化
+let safeAreaResizeTimer = null;
+if (Capacitor.isNativePlatform()) {
+    window.addEventListener('resize', () => {
+        if (safeAreaResizeTimer) clearTimeout(safeAreaResizeTimer);
+        safeAreaResizeTimer = setTimeout(() => {
+            applyNativeSafeAreaInsets();
+        }, 150);
+    });
 }
 
 const scriptPromises = new Map();
@@ -1137,7 +1154,7 @@ class RouteManager {
 
         const state = this.normalizeAuthState(mode);
         if (hideSettings) {
-            hideSettingsModal(false, { skipHandleBack: true });
+            hideSettingsModal(false, { skipHandleBack: true, skipRouteNavigation: true });
         }
         if (!onlyManageUi) {
             this.syncAuthRoute(state, { replace: true, silent: true });
@@ -2082,6 +2099,37 @@ let isWelcomePage = true;
 let isLoadingParameters = false;
 let lastSettingsOriginRoute = null;
 
+const CUSTOM_KEY_HINT_PREFIX = 'has_custom_api_key_hint_';
+const getCustomKeyHintStorageKey = () => {
+    try {
+        const userId = currentUser?.id || localStorage.getItem('userId');
+        return `${CUSTOM_KEY_HINT_PREFIX}${userId || 'global'}`;
+    } catch (_) {
+        return `${CUSTOM_KEY_HINT_PREFIX}global`;
+    }
+};
+
+let cachedHasCustomApiKey = (() => {
+    try {
+        const storageKey = getCustomKeyHintStorageKey();
+        return localStorage.getItem(storageKey) === '1';
+    } catch (_) {
+        return false;
+    }
+})();
+
+function rememberCustomKeyPresence(hasKey) {
+    cachedHasCustomApiKey = !!hasKey;
+    try {
+        const storageKey = getCustomKeyHintStorageKey();
+        if (hasKey) {
+            localStorage.setItem(storageKey, '1');
+        } else {
+            localStorage.removeItem(storageKey);
+        }
+    } catch (_) { }
+}
+
 // API密钥未保存提示逻辑
 let originalApiKeys = { keyOne: '', keyTwo: '', mode: 'mixed' };
 let apiKeysChanged = false;
@@ -2100,7 +2148,6 @@ let weeklyFeatureStatus = { can_use: true, expires_at: null, loaded: false };
 
 let globalCleanupFunctions = [];
 let isInitializing = false;
-let keyValidationCheckTimer = null;
 
 function addGlobalCleanup(cleanupFn) {
     globalCleanupFunctions.push(cleanupFn);
@@ -2271,29 +2318,62 @@ function clampGeneratedTitleWords(title = '') {
 
 // 模型配置
 const models = [
+    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', descKey: 'models.gemini3ProDesc', context_window: 1000000, hasThinkingLevel: true },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', descKey: 'models.gemini25ProDesc', context_window: 1000000 },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', descKey: 'models.gemini25FlashDesc', context_window: 1000000 },
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', descKey: 'models.gemini25FlashLiteDesc', context_window: 1000000 },
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', descKey: 'models.gemini20FlashDesc', context_window: 30000 },
 ];
+const FREE_TIER_MODEL_IDS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+const GUEST_PAID_MODEL_IDS = ['gemini-2.5-pro'];
 let currentModelId = models[0].id;
 let userSelectedModelId = models[0].id;
 
-function getAvailableModels() {
-    if (currentUser) {
-        return models;
-    }
-    const hasGuestKey = !!getCustomApiKey();
-    return hasGuestKey ? models : models.filter(model => model.id !== 'gemini-2.5-pro');
+function hasConfiguredApiKeyForUi() {
+    if (guestHasActiveCustomKey()) return true;
+    if (currentUser && (currentUser.custom_api_key || currentUser.custom_api_key_t)) return true;
+    return cachedHasCustomApiKey;
 }
+
+function getKeyTier() {
+    if (!hasConfiguredApiKeyForUi()) return null;
+
+    if (currentUser) {
+        return currentUser.keyTier || 'free';
+    }
+    return guestApiState.keyTier || 'free';
+}
+
+function getAvailableModels() {
+    const hasConfiguredKey = hasConfiguredApiKeyForUi();
+    const keyTier = getKeyTier();
+
+    const freeTierModels = models.filter(m => FREE_TIER_MODEL_IDS.includes(m.id));
+
+    if (!currentUser) {
+        // === 访客逻辑 ===
+        if (!hasConfiguredKey || keyTier !== 'paid') {
+            return freeTierModels;
+        }
+        return models.filter(m => FREE_TIER_MODEL_IDS.includes(m.id) || GUEST_PAID_MODEL_IDS.includes(m.id));
+    }
+
+    // === 登录用户逻辑 ===
+    if (!hasConfiguredKey || keyTier !== 'paid') {
+        return freeTierModels;
+    }
+    return models;
+}
+
 
 // 模型渲染速度配置
 const modelRenderSpeeds = {
+    'gemini-3-pro-preview': 1,
     'gemini-2.5-pro': 1,
     'gemini-2.5-flash': 1.2,
-    'gemini-2.5-flash-lite': 2,
-    'gemini-2.0-flash': 2
+    'gemini-2.5-flash-lite': 2
 };
+// Gemini 3 Pro thinking level 配置
+let currentThinkingLevel = 'high';
 
 function composeSystemPrompt(userPrompt = '') {
     const parts = [];
@@ -2658,7 +2738,7 @@ function setupBackgroundProcessing() {
 
                         renderMessageContent(globalContentDiv, globalDisplayBuffer);
 
-                        if (!userHasScrolledUp) {
+                        if (shouldAutoScroll()) {
                             setTimeout(() => {
                                 elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
                             }, 10);
@@ -2788,6 +2868,10 @@ function showLoadingScreen(customText = null) {
     const appContainer = document.querySelector('.app-container');
     if (!loadingScreen) return;
 
+    if (Capacitor.isNativePlatform()) {
+        loadingScreen.classList.remove('apk-initial-hide');
+    }
+
     const textElement = loadingScreen.querySelector('.loading-text');
     if (textElement && loadingScreenDefaultText === null) {
         loadingScreenDefaultText = textElement.textContent || '';
@@ -2827,6 +2911,13 @@ function hideLoadingScreen() {
         requestAnimationFrame(() => {
             appContainer.classList.add('loaded');
         });
+    }
+
+    if (Capacitor.isNativePlatform()) {
+        SplashScreen.hide().catch(() => { });
+        if (CustomSplash && typeof CustomSplash.hide === 'function') {
+            CustomSplash.hide().catch(() => { });
+        }
     }
 }
 
@@ -4068,19 +4159,33 @@ function isPlainTextFile(filename) {
         'txt', 'md', 'markdown', 'js', 'ts', 'jsx', 'tsx', 'py', 'java',
         'c', 'cpp', 'h', 'cs', 'php', 'rb', 'go', 'rs', 'swift', 'kt',
         'scala', 'dart', 'r', 'm', 'sh', 'bat', 'ps1', 'css', 'html', 'csv',
-        'xml', 'json', 'yaml', 'yml', 'sql', 'log', 'ini', 'toml', 'env'
+        'xml', 'json', 'yaml', 'yml', 'sql', 'log', 'ini', 'toml', 'env',
+        'gpu', 'cpu', 'cfg', 'conf', 'config', 'properties', 'gradle',
+        'gitignore', 'gitkeep', 'gitattributes', 'gitmodules', 'dockerignore',
+        'npmrc', 'yarnrc', 'pnpmrc', 'editorconfig', 'babelrc', 'eslintrc',
+        'prettierrc', 'stylelintrc', 'postcssrc', 'lock', 'tf', 'tfvars',
+        'hcl', 'graphql', 'gql', 'vue', 'svelte', 'astro', 'lua', 'coffee',
+        'pl', 'pm', 'erl', 'ex', 'exs', 'hs', 'clj', 'cljs', 'edn', 'tcl',
+        'groovy', 'vb', 'vbs', 'cmd', 'psm1', 'plist', 'tsv', 'diff', 'patch',
+        'ignore', 'xcconfig', 'pbxproj', 'storyboard', 'xib', 'strings', 'entitlements',
+        'mobileconfig', 'modulemap', 'podspec', 'mm', 'metal', 'aidl'
     ];
     const extension = filename.split('.').pop()?.toLowerCase();
     return extension ? plainTextExtensions.includes(extension) : false;
 }
 
 function dismissKeyboard() {
+    const active = document.activeElement;
+    if (active && typeof active.blur === 'function') {
+        active.blur();
+    }
     if (isNativeApp) {
         Keyboard.hide();
-    } else {
-        if (document.activeElement instanceof HTMLElement) {
-            document.activeElement.blur();
-        }
+        requestAnimationFrame(() => {
+            if (document.activeElement instanceof HTMLElement) {
+                document.activeElement.blur();
+            }
+        });
     }
 }
 
@@ -4252,27 +4357,140 @@ function renderQuotePreview() {
     }
 }
 
-function smoothScrollToBottom() {
-    const container = elements.chatContainer;
-    const targetScrollTop = container.scrollHeight;
-    const startScrollTop = container.scrollTop;
-    const distance = targetScrollTop - startScrollTop;
-    const duration = 200;
-    const startTime = performance.now();
+class ScrollManager {
+    constructor(containerSelector = '#chat-container') {
+        this.containerSelector = containerSelector;
+        this._container = null;
 
-    function animateScroll(currentTime) {
-        const elapsed = currentTime - startTime;
-        const progress = Math.min(elapsed / duration, 1);
+        // 滚动状态
+        this.userHasScrolledUp = false;
+        this.isUserScrolling = false;
+        this.isAutoScrolling = false;
+        this.lastScrollTime = 0;
 
-        const easeOut = 1 - Math.pow(1 - progress, 3);
+        // 配置
+        this.scrollDebounceMs = 150;
+        this.bottomThreshold = 20;
+        this.smoothScrollDuration = 200;
 
-        container.scrollTop = startScrollTop + (distance * easeOut);
+        // 内部状态
+        this._scrollTimeout = null;
+    }
 
-        if (progress < 1) {
-            requestAnimationFrame(animateScroll);
+    get container() {
+        if (!this._container || !document.body.contains(this._container)) {
+            this._container = document.querySelector(this.containerSelector);
+        }
+        return this._container;
+    }
+
+    shouldAutoScroll() {
+        return !this.userHasScrolledUp && !this.isUserScrolling;
+    }
+
+    shouldPreserveScrollPosition() {
+        return this.userHasScrolledUp || this.isUserScrolling;
+    }
+
+    isAtBottom() {
+        const container = this.container;
+        if (!container) return true;
+        return container.scrollHeight - container.clientHeight <= container.scrollTop + this.bottomThreshold;
+    }
+
+    resetUserScrollState() {
+        this.userHasScrolledUp = false;
+    }
+
+    scrollToBottom() {
+        const container = this.container;
+        if (!container) return;
+        container.scrollTop = container.scrollHeight;
+    }
+
+    smoothScrollToBottom(callback) {
+        const container = this.container;
+        if (!container) {
+            if (callback) callback();
+            return;
+        }
+
+        const targetScrollTop = container.scrollHeight;
+        const startScrollTop = container.scrollTop;
+        const distance = targetScrollTop - startScrollTop;
+
+        if (distance <= 0) {
+            if (callback) callback();
+            return;
+        }
+
+        // 动态调整滚动时长
+        const duration = Math.min(1100, Math.max(360, Math.abs(distance) * 0.6));
+        const startTime = performance.now();
+
+        this.isAutoScrolling = true;
+        this.lastScrollTime = Date.now();
+
+        const animateScroll = (currentTime) => {
+            const elapsed = currentTime - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const easeOut = 1 - Math.pow(1 - progress, 3);
+
+            container.scrollTop = startScrollTop + (distance * easeOut);
+
+            if (progress < 1) {
+                requestAnimationFrame(animateScroll);
+            } else {
+                setTimeout(() => {
+                    this.isAutoScrolling = false;
+                    if (callback) callback();
+                }, 50);
+            }
+        };
+
+        requestAnimationFrame(animateScroll);
+    }
+
+    autoScrollToBottomIfNeeded(smooth = false) {
+        if (!this.shouldAutoScroll()) return;
+        if (smooth) {
+            this.smoothScrollToBottom();
+        } else {
+            this.scrollToBottom();
         }
     }
-    requestAnimationFrame(animateScroll);
+
+    handleScrollEvent() {
+        this.isUserScrolling = true;
+        this.lastScrollTime = Date.now();
+
+        if (this._scrollTimeout) clearTimeout(this._scrollTimeout);
+        this._scrollTimeout = setTimeout(() => {
+            this.isUserScrolling = false;
+        }, this.scrollDebounceMs);
+
+        this.userHasScrolledUp = !this.isAtBottom();
+    }
+
+    init() {
+        const container = this.container;
+        if (!container) return;
+
+        container.addEventListener('scroll', () => this.handleScrollEvent());
+    }
+}
+
+const scrollManager = new ScrollManager();
+function smoothScrollToBottom() {
+    scrollManager.smoothScrollToBottom();
+}
+
+function shouldAutoScroll() {
+    return scrollManager.shouldAutoScroll();
+}
+
+function shouldPreserveScrollPosition() {
+    return scrollManager.shouldPreserveScrollPosition();
 }
 
 function ensureMessageActionsVisible(messageElement, gap = 12) {
@@ -4419,17 +4637,32 @@ function cancelQuote() {
 }
 
 function openSidebar() {
-    document.body.classList.add('sidebar-open');
+    const isMobile = window.matchMedia('(max-width: 640px)').matches;
+    if (isMobile) {
+        document.body.classList.add('sidebar-open');
+    } else {
+        document.body.classList.remove('sidebar-collapsed');
+    }
     document.getElementById('sidebar-toggle-btn').setAttribute('aria-expanded', 'true');
     navigationEngine?.notifySidebarOpened?.();
 }
 
 function closeSidebar(isFromBackButton = false, options = {}) {
-    if (!document.body.classList.contains('sidebar-open')) {
+    const isMobile = window.matchMedia('(max-width: 640px)').matches;
+    const shouldCloseMobile = isMobile && document.body.classList.contains('sidebar-open');
+    const shouldCloseDesktop = !isMobile && !document.body.classList.contains('sidebar-collapsed');
+
+    if (!shouldCloseMobile && !shouldCloseDesktop) {
         return;
     }
+
     queueMicrotask(() => {
-        document.body.classList.remove('sidebar-open');
+        if (isMobile) {
+            document.body.classList.remove('sidebar-open');
+        } else {
+            document.body.classList.add('sidebar-collapsed');
+        }
+
         const toggle = document.getElementById('sidebar-toggle-btn');
         if (toggle) toggle.setAttribute('aria-expanded', 'false');
         const fromHistory = options.fromHistory === true;
@@ -4464,18 +4697,43 @@ function getCurrentUserId() {
     return currentUser?.id || 'guest';
 }
 
-let guestApiState = { keyOne: '', keyTwo: '', mode: 'mixed', toggle: '0' };
+let guestApiState = (() => {
+    try {
+        return {
+            keyOne: localStorage.getItem('guest_api_key_one') || '',
+            keyTwo: localStorage.getItem('guest_api_key_two') || '',
+            mode: localStorage.getItem('guest_api_mode') || 'mixed',
+            toggle: localStorage.getItem('guest_api_key_toggle') || '0',
+            keyTier: localStorage.getItem('guest_api_key_tier') || 'free'
+        };
+    } catch (_) {
+        return { keyOne: '', keyTwo: '', mode: 'mixed', toggle: '0', keyTier: 'free' };
+    }
+})();
+
+function persistGuestApiState() {
+    try {
+        localStorage.setItem('guest_api_key_one', guestApiState.keyOne || '');
+        localStorage.setItem('guest_api_key_two', guestApiState.keyTwo || '');
+        localStorage.setItem('guest_api_mode', guestApiState.mode || 'mixed');
+        localStorage.setItem('guest_api_key_toggle', guestApiState.toggle || '0');
+        localStorage.setItem('guest_api_key_tier', guestApiState.keyTier || 'free');
+    } catch (_) { }
+}
 
 function clearGuestApiKeys() {
     try {
         guestApiState.keyOne = '';
         guestApiState.keyTwo = '';
         guestApiState.toggle = '0';
+        guestApiState.keyTier = 'free';
 
         localStorage.removeItem('guest_api_key_one');
         localStorage.removeItem('guest_api_key_two');
         localStorage.removeItem('guest_api_mode');
         localStorage.removeItem('guest_api_key_toggle');
+        localStorage.removeItem('guest_api_key_tier');
+        persistGuestApiState();
     } catch (_) { }
 }
 
@@ -4704,9 +4962,6 @@ function setOriginalApiKeys() {
     }
 }
 
-let pendingKeyValidationStatus = null;
-let keyValidationPrefetched = false;
-
 // 检查密钥验证状态
 async function checkKeyValidationStatus() {
     try {
@@ -4721,48 +4976,18 @@ async function checkKeyValidationStatus() {
     }
 }
 
-// 初始化阶段预取密钥验证状态
-async function prefetchKeyValidationStatus() {
+function maybeTriggerScheduledKeyValidation() {
     if (!currentUser || (!currentUser.custom_api_key && !currentUser.custom_api_key_t)) return;
     try {
-        const response = await makeAuthRequest('check-key-validation-status', {}, { headers: { 'X-Validation-Only': 'true' } });
-        keyValidationPrefetched = true;
+        const now = Date.now();
+        const lastCheck = Number(sessionStorage.getItem('key_validation_last_check_ts') || '0');
 
-        if (response.success && response.autoValidated === false && response.validationError) {
-            showKeyValidationNotification({
-                validationStatus: 'error',
-                message: response.validationError
-            });
-        }
-
-        else if (response.success && response.autoValidated === true && response.validationStatus !== 'valid') {
-            showKeyValidationNotification({
-                validationStatus: response.validationStatus,
-                message: response.validationResult?.message || 'API密钥验证完成'
-            });
-        }
-
-        else {
-            pendingKeyValidationStatus = null;
-        }
-    } catch (error) {
-        console.warn('Prefetch key validation status failed:', error);
+        if (now - lastCheck < 12 * 60 * 60 * 1000) return;
+        sessionStorage.setItem('key_validation_last_check_ts', String(now));
+        checkKeyValidationStatus();
+    } catch (_) {
+        // ignore storage errors
     }
-}
-
-function checkKeyValidationOnLogin() {
-    if (!currentUser || (!currentUser.custom_api_key && !currentUser.custom_api_key_t)) return;
-    if (keyValidationCheckTimer) {
-        clearTimeout(keyValidationCheckTimer);
-    }
-    keyValidationCheckTimer = setTimeout(() => {
-        keyValidationCheckTimer = null;
-        try {
-            checkKeyValidationStatus();
-        } catch (error) {
-            console.warn('checkKeyValidationStatus failed:', error);
-        }
-    }, 300);
 }
 
 // 显示密钥失效通知
@@ -5670,8 +5895,16 @@ function hideSettingsModal(manageHistory = true, options = {}) {
     if (!elements.settingsModal?.classList.contains('visible')) {
         return false;
     }
+    const skipRouteNavigation = options.skipRouteNavigation === true;
     elements.settingsModal.classList.remove('visible');
     safeNavigationCall('removeUiStateByName', 'settingsModal');
+
+    // 同步关闭设置导航菜单
+    const settingsNav = document.getElementById('settings-nav');
+    const settingsNavOverlay = document.getElementById('settings-nav-overlay');
+    if (settingsNav) settingsNav.classList.remove('open');
+    if (settingsNavOverlay) settingsNavOverlay.classList.remove('visible');
+
     // 清除保存的设置路由信息
     if (navigationEngine) {
         navigationEngine.settingsRouteInfo = null;
@@ -5684,7 +5917,7 @@ function hideSettingsModal(manageHistory = true, options = {}) {
     }
     const currentRoute = router.getCurrentRoute();
     const isSettingsRoute = currentRoute?.name === 'settings';
-    const shouldPop = manageHistory && isSettingsRoute;
+    const shouldPop = manageHistory && isSettingsRoute && !skipRouteNavigation;
     if (shouldPop) {
         navigationEngine.requestProgrammaticBack({
             skipHandleBack: options.skipHandleBack === true
@@ -5696,7 +5929,7 @@ function hideSettingsModal(manageHistory = true, options = {}) {
                 lastSettingsOriginRoute = null;
             }
         });
-    } else if (isSettingsRoute) {
+    } else if (isSettingsRoute && !skipRouteNavigation) {
         const fallbackRoute = lastSettingsOriginRoute || (currentChatId ? {
             name: String(currentChatId).startsWith('temp_') ? 'tempChat' : 'chat',
             params: { chatId: currentChatId }
@@ -5705,6 +5938,8 @@ function hideSettingsModal(manageHistory = true, options = {}) {
             replace: true,
             silent: !lastSettingsOriginRoute
         });
+        lastSettingsOriginRoute = null;
+    } else if (isSettingsRoute && skipRouteNavigation) {
         lastSettingsOriginRoute = null;
     }
     return true;
@@ -5867,9 +6102,12 @@ async function fetchUsageStats(forceRefresh = false) {
         const result = await makeApiRequest('user/usage', { signal: usageFetchController.signal });
         if (result.success) {
             currentUserUsage.count = result.count;
-            currentUserUsage.limit = result.limit || (getCustomApiKey() ? Infinity : LOGGED_IN_LIMIT);
+            currentUserUsage.limit = result.limit || (hasConfiguredApiKeyForUi() ? Infinity : LOGGED_IN_LIMIT);
             currentUserUsage.apiMode = result.apiMode || currentUser.api_mode;
-            currentUserUsage.hasKeys = typeof result.hasKeys === 'boolean' ? result.hasKeys : !!getCustomApiKey();
+            currentUserUsage.hasKeys = typeof result.hasKeys === 'boolean' ? result.hasKeys : hasConfiguredApiKeyForUi();
+            if (typeof result.hasKeys === 'boolean') {
+                rememberCustomKeyPresence(result.hasKeys);
+            }
             currentUserUsage.fallbackCount = typeof result.fallbackCount === 'number'
                 ? result.fallbackCount
                 : ((result.fallbackRequestCount || 0) + (result.serverFallbackCount || 0));
@@ -5953,7 +6191,7 @@ function updateUsageDisplay() {
 
     const hasKeys = (typeof (currentUserUsage?.hasKeys) === 'boolean')
         ? currentUserUsage.hasKeys
-        : !!getCustomApiKey();
+        : hasConfiguredApiKeyForUi();
 
     const fallbackCount = typeof (currentUserUsage?.fallbackCount) === 'number'
         ? currentUserUsage.fallbackCount
@@ -6063,43 +6301,44 @@ async function _makeRequest(prefix, endpoint, options = {}) {
     try {
         const response = await fetch(`${prefix}${endpoint}`, { ...options, headers });
 
-    if (response.status === 401 && (currentUser || sessionId)) {
-        const error = new Error(getToastMessage('errors.sessionInvalidOrExpired'));
-        error.isAuthError = true;
-        error.status = 401;
+        if (response.status === 401 && (currentUser || sessionId)) {
+            const error = new Error(getToastMessage('errors.sessionInvalidOrExpired'));
+            error.isAuthError = true;
+            error.status = 401;
 
-        const skipOnce = (() => {
-            try { return localStorage.getItem('skipSessionClearOnNext401') === '1'; } catch (_) { return false; }
-        })();
+            const skipOnce = (() => {
+                try { return localStorage.getItem('skipSessionClearOnNext401') === '1'; } catch (_) { return false; }
+            })();
 
-        if (skipOnce) {
-            try { localStorage.removeItem('skipSessionClearOnNext401'); } catch (_) { }
-            throw error;
-        }
-
-        if (suppressAutoLogout) {
-            throw error;
-        }
-
-        if (!isSessionCheck && !isBackgroundSync) {
-            showToast(getToastMessage('toast.sessionExpired'), 'error');
-
-            const expiredSessionId = sessionId;
-            sessionId = null;
-            currentUser = null;
-            refreshSecurityMfaToggleFromUser?.();
-            updateCurrentPasswordPlaceholderInput();
-            localStorage.removeItem('sessionId');
-            if (expiredSessionId) {
-                localStorage.removeItem(`user_cache_${expiredSessionId}`);
+            if (skipOnce) {
+                try { localStorage.removeItem('skipSessionClearOnNext401'); } catch (_) { }
+                throw error;
             }
-            localStorage.removeItem('userThemePreset');
 
-            updateUI();
-            openAuthOverlay('auto', { mode: 'login' }, { syncRoute: true, routeOptions: { replace: true } });
+            if (suppressAutoLogout) {
+                throw error;
+            }
+
+            if (!isSessionCheck && !isBackgroundSync) {
+                showToast(getToastMessage('toast.sessionExpired'), 'error');
+
+                const expiredSessionId = sessionId;
+                sessionId = null;
+                currentUser = null;
+                rememberCustomKeyPresence(false);
+                refreshSecurityMfaToggleFromUser?.();
+                updateCurrentPasswordPlaceholderInput();
+                localStorage.removeItem('sessionId');
+                if (expiredSessionId) {
+                    localStorage.removeItem(`user_cache_${expiredSessionId}`);
+                }
+                localStorage.removeItem('userThemePreset');
+
+                updateUI();
+                openAuthOverlay('auto', { mode: 'login' }, { syncRoute: true, routeOptions: { replace: true } });
+            }
+            throw error;
         }
-        throw error;
-    }
 
         if (!response.ok) {
             let errorMessage = `${getToastMessage('errors.requestFailed')}: ${response.status}`;
@@ -6301,6 +6540,7 @@ async function applyAuthenticatedSession(result, options = {}) {
     localStorage.setItem('sessionId', sessionId);
     localStorage.setItem('userId', result.user?.id || '');
     currentUser = result.user;
+    rememberCustomKeyPresence(!!(currentUser.custom_api_key || currentUser.custom_api_key_t));
     updateCurrentPasswordPlaceholderInput();
     refreshSecurityMfaToggleFromUser?.();
     window.currentUser = result.user;
@@ -6408,6 +6648,16 @@ async function applyAuthenticatedSession(result, options = {}) {
     loadUserAIParameters().catch(err => console.error(`${getToastMessage('console.aiParametersLoadFailed')}:`, err));
     loadChats(true).catch(err => console.error(`${getToastMessage('console.chatHistoryLoadFailed')}:`, err));
     hideLoadingScreen();
+
+    makeAuthRequest('me', {}).then(result => {
+        if (result.success && result.user && result.user.keyTier) {
+            currentUser.keyTier = result.user.keyTier;
+            persistCurrentUserCache();
+            resetToDefaultModel();
+        }
+    }).catch(err => {
+        console.error('Failed to fetch keyTier after login:', err);
+    });
 }
 
 async function login(email, password) {
@@ -6517,6 +6767,7 @@ async function logout() {
         notifyBackendCacheInvalidation('user_logout', { sessionId: sessionIdToClean });
         sessionId = null;
         currentUser = null;
+        rememberCustomKeyPresence(false);
         refreshSecurityMfaToggleFromUser?.();
         updateCurrentPasswordPlaceholderInput();
         simpleCache.cache.clear();
@@ -6757,6 +7008,7 @@ async function checkSession() {
             if (result.success && result.user) {
                 const previousLanguage = currentUser?.language || null;
                 currentUser = result.user;
+                rememberCustomKeyPresence(!!(currentUser.custom_api_key || currentUser.custom_api_key_t));
                 updateCurrentPasswordPlaceholderInput();
                 refreshSecurityMfaToggleFromUser?.();
                 simpleCache.set(`user_session_${sessionId}`, result.user, 60000);
@@ -6779,10 +7031,6 @@ async function checkSession() {
 
                 asyncStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser)));
 
-                if (currentUser && (currentUser.custom_api_key || currentUser.custom_api_key_t)) {
-                    checkKeyValidationOnLogin();
-                }
-
                 try {
                     updateUI(false);
                 } catch (_) { }
@@ -6798,6 +7046,7 @@ async function checkSession() {
                 const tempSessionId = sessionId;
                 sessionId = null;
                 currentUser = null;
+                rememberCustomKeyPresence(false);
                 refreshSecurityMfaToggleFromUser?.();
                 updateCurrentPasswordPlaceholderInput();
                 localStorage.removeItem('sessionId');
@@ -6817,17 +7066,26 @@ async function checkSession() {
 }
 
 async function updateApiKey(apiKey, mode = 'mixed', options = {}) {
-    const { context = 'keys', suppressToast = false } = options;
+    const { context = 'keys', suppressToast = false, keyTier } = options;
     try {
-        const result = await makeAuthRequest('update-api-key', { apiKey, mode });
+        const payload = { apiKey, mode };
+        if (typeof keyTier !== 'undefined') {
+            payload.keyTier = keyTier;
+        }
+        const result = await makeAuthRequest('update-api-key', payload);
 
         const hasAnyKey = !!(apiKey && String(apiKey).trim());
         const serverMode = (result && result.validationResults && result.validationResults.newApiMode)
             ? result.validationResults.newApiMode
             : (mode || (currentUser.api_mode || 'mixed'));
+        const serverKeyTier = (result && result.validationResults && result.validationResults.keyTier)
+            ? result.validationResults.keyTier
+            : null;
 
         currentUser.custom_api_key = (hasAnyKey ? apiKey : null);
         currentUser.api_mode = serverMode;
+        currentUser.keyTier = serverKeyTier || (hasAnyKey ? (currentUser.keyTier || 'free') : 'free');
+        rememberCustomKeyPresence(hasAnyKey);
 
         if (!suppressToast) {
             if (context === 'mode') {
@@ -6841,6 +7099,10 @@ async function updateApiKey(apiKey, mode = 'mixed', options = {}) {
         }
         if (context !== 'mode') {
             updateUI();
+            if (!currentChatId) {
+                showEmptyState();
+            }
+            resetToDefaultModel();
         } else {
             try {
                 refreshSettingsI18nTexts();
@@ -6857,8 +7119,6 @@ async function updateApiKey(apiKey, mode = 'mixed', options = {}) {
             try {
                 const kv = document.getElementById('key-validation-modal-overlay');
                 if (kv) kv.remove();
-                pendingKeyValidationStatus = null;
-                keyValidationPrefetched = false;
             } catch (_) { }
         }
         if (context !== 'mode' && hasAnyKey) {
@@ -6871,7 +7131,7 @@ async function updateApiKey(apiKey, mode = 'mixed', options = {}) {
             } catch (_) { }
         }
 
-        return serverMode;
+        return { mode: serverMode, keyTier: currentUser.keyTier };
     } catch (error) {
         showToast(error.message, 'error');
         throw error;
@@ -7044,7 +7304,7 @@ function updateUI(showLoginPage = true) {
 
     if (currentUser) {
         if (!currentUserUsage.limit || currentUserUsage.limit === LOGGED_IN_LIMIT) {
-            currentUserUsage.limit = getCustomApiKey() ? Infinity : LOGGED_IN_LIMIT;
+            currentUserUsage.limit = hasConfiguredApiKeyForUi() ? Infinity : LOGGED_IN_LIMIT;
         }
 
         const name = currentUser.username || currentUser.email;
@@ -7206,6 +7466,49 @@ async function validateApiKey(apiKey) {
     }
 }
 
+async function validateApiKeyWithTier(apiKey) {
+    if (!apiKey || !apiKey.trim()) {
+        return { success: false, tier: null, message: getToastMessage('errors.invalidKeyFormat') };
+    }
+
+    try {
+        const proResult = await callValidationEndpoint(apiKey, 'gemini-2.5-pro');
+        if (proResult.success) {
+            return { success: true, tier: 'paid' };
+        }
+
+        const freeResult = await callValidationEndpoint(apiKey, 'gemini-2.5-flash-lite');
+        if (freeResult.success) {
+            return { success: true, tier: 'free' };
+        }
+
+        return { success: false, tier: null, message: freeResult.message || getToastMessage('errors.apiKeyValidationFailed') };
+    } catch (error) {
+        console.error(`${getToastMessage('console.backendValidationCallFailed')}:`, error);
+        return { success: false, tier: null, message: error.message || getToastMessage('errors.backendValidationFailed') };
+    }
+}
+
+function deriveOverallKeyTier(validatedResults = []) {
+    if (!validatedResults.length) return 'free';
+    const allPaid = validatedResults.every(res => res.tier === 'paid');
+    return allPaid ? 'paid' : 'free';
+}
+
+async function callValidationEndpoint(apiKey, model) {
+    try {
+        if (!sessionId) {
+            return await makeApiRequest('validate-api-key', {
+                method: 'POST',
+                body: JSON.stringify({ apiKey, validationOnly: true, model })
+            });
+        }
+        return await makeAuthRequest('validate-api-key', { apiKey, validationOnly: true, model });
+    } catch (error) {
+        return { success: false, message: error.message };
+    }
+}
+
 async function loadChat(chatId) {
     ensureInlineEditModeClosed();
 
@@ -7297,6 +7600,9 @@ async function loadChat(chatId) {
         const messagesToRender = chats[chatId].messages;
 
         const scheduleFinalScroll = () => {
+            if (shouldPreserveScrollPosition()) {
+                return;
+            }
             requestAnimationFrame(() => {
                 elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
             });
@@ -8671,9 +8977,36 @@ function stripStreamingHorizontalRuleTail(text) {
 }
 
 function renderMessageContent(element, content, citations = null, isFinalRender = false, options = {}) {
+    if (!isFinalRender) {
+        const throttleState = element.__renderThrottle || (element.__renderThrottle = {
+            pending: false,
+            latestArgs: null
+        });
+
+        if (throttleState.pending) {
+            throttleState.latestArgs = { content, citations, options };
+            return null;
+        }
+
+        throttleState.pending = true;
+        throttleState.latestArgs = null;
+
+        requestAnimationFrame(() => {
+            throttleState.pending = false;
+            if (throttleState.latestArgs) {
+                const args = throttleState.latestArgs;
+                throttleState.latestArgs = null;
+                renderMessageContent(element, args.content, args.citations, false, args.options);
+            }
+        });
+    } else {
+        delete element.__renderThrottle;
+    }
+
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     const { forcePlainText = false } = options || {};
     let renderTimeout;
+
     const clearRenderState = () => {
         if (element.__renderState) {
             delete element.__renderState;
@@ -8861,11 +9194,31 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             }))
         };
 
+        // 性能优化
+        const parseState = element.__parseState || (element.__parseState = {
+            lastContentToParse: '',
+            lastParsedHtml: ''
+        });
+
+        if (!isFinalRender && parseState.lastContentToParse === contentToParse) {
+            if (renderTimeout) clearTimeout(renderTimeout);
+            return null;
+        }
+
         let html = marked.parse(contentToParse);
+
+        // 更新缓存
+        if (!isFinalRender) {
+            parseState.lastContentToParse = contentToParse;
+            parseState.lastParsedHtml = html;
+        } else {
+            delete element.__parseState;
+        }
 
         const sourcesMap = new Map();
         if (localCitations && localCitations.length > 0) {
             localCitations.forEach((citation, index) => {
+
                 sourcesMap.set(index + 1, citation);
             });
         }
@@ -9002,9 +9355,19 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         const tableLockEnd = lastTableCloseIndex === -1 ? -1 : lastTableCloseIndex + '</table>'.length;
         const codeLockEnd = lastPreCloseIndex === -1 ? -1 : lastPreCloseIndex + '</pre>'.length;
 
+        let mathLockEnd = -1;
+        const displayMathClosePattern = /\$\$\s*(?:<\/p>|<\/div>|<br\s*\/?>|\n|$)/gi;
+        let mathMatch;
+        while ((mathMatch = displayMathClosePattern.exec(finalSanitizedHtml)) !== null) {
+            const matchEnd = mathMatch.index + mathMatch[0].length;
+            if (matchEnd > mathLockEnd) {
+                mathLockEnd = matchEnd;
+            }
+        }
+
         const newLockEnd = syntheticFenceAdded
-            ? tableLockEnd
-            : Math.max(tableLockEnd, codeLockEnd);
+            ? Math.max(tableLockEnd, mathLockEnd)
+            : Math.max(tableLockEnd, codeLockEnd, mathLockEnd);
 
         if (newLockEnd > renderState.lockedLength) {
             renderState.lockedLength = newLockEnd;
@@ -9073,7 +9436,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             }
             renderState.lastLockedHtml = renderState.lockedHtml;
 
-            if (contentChanged && !userHasScrolledUp && elements?.chatContainer) {
+            if (contentChanged && shouldAutoScroll() && elements?.chatContainer) {
                 elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
             }
         }
@@ -9092,15 +9455,26 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             }
             renderState.streamingHtml = streamingHtml;
 
-            if (contentChanged && !userHasScrolledUp && elements?.chatContainer) {
+            if (contentChanged && shouldAutoScroll() && elements?.chatContainer) {
                 elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
             }
         }
         const mermaidRenderPromise = renderMermaidDiagrams(element, { loadScript, isFinalRender });
         if (mermaidRenderPromise) {
             element.__mermaidRenderPromise = mermaidRenderPromise;
+            // 记录渲染前的高度和滚动位置
+            const beforeHeight = elements?.chatContainer?.scrollHeight || 0;
+            const beforeScrollTop = elements?.chatContainer?.scrollTop || 0;
             mermaidRenderPromise.catch(() => { }).finally(() => {
-                if (!userHasScrolledUp && elements?.chatContainer) {
+                if (!elements?.chatContainer) return;
+                const afterHeight = elements.chatContainer.scrollHeight;
+                const heightDelta = afterHeight - beforeHeight;
+
+                if (shouldPreserveScrollPosition()) {
+                    if (heightDelta !== 0 && beforeScrollTop < beforeHeight - elements.chatContainer.clientHeight) {
+                        elements.chatContainer.scrollTop = beforeScrollTop + heightDelta;
+                    }
+                } else {
                     elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
                 }
             });
@@ -9123,9 +9497,20 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         };
         if (vegaRenderPromise) {
             element.__vegaLiteRenderPromise = vegaRenderPromise;
+            // 记录渲染前的高度和滚动位置
+            const vegaBeforeHeight = elements?.chatContainer?.scrollHeight || 0;
+            const vegaBeforeScrollTop = elements?.chatContainer?.scrollTop || 0;
             vegaRenderPromise.catch(() => { }).finally(() => {
                 cleanupDiagrams();
-                if (!userHasScrolledUp && elements?.chatContainer) {
+                if (!elements?.chatContainer) return;
+                const afterHeight = elements.chatContainer.scrollHeight;
+                const heightDelta = afterHeight - vegaBeforeHeight;
+
+                if (shouldPreserveScrollPosition()) {
+                    if (heightDelta !== 0 && vegaBeforeScrollTop < vegaBeforeHeight - elements.chatContainer.clientHeight) {
+                        elements.chatContainer.scrollTop = vegaBeforeScrollTop + heightDelta;
+                    }
+                } else {
                     elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
                 }
             });
@@ -9673,32 +10058,24 @@ function appendMessage(role, content) {
     const clientHeight = elements.chatContainer.clientHeight;
     const scrollTop = elements.chatContainer.scrollTop;
     const isScrolledToBottom = scrollHeight - clientHeight <= scrollTop + 20;
-
-    // 当用户发送消息且当前不在底部时，滚动到底部
     const shouldForceScroll = role === 'user' && !isScrolledToBottom;
 
     if (shouldForceScroll || isScrolledToBottom) {
-        isAutoScrolling = true;
-        lastScrollTime = Date.now();
+        scrollManager.isAutoScrolling = true;
+        scrollManager.lastScrollTime = Date.now();
         if (shouldForceScroll) {
-            try {
-                userHasScrolledUp = false;
-            } catch (_) { }
+            scrollManager.resetUserScrollState();
         }
-        const scrollToBottom = () => {
-            requestAnimationFrame(() => {
-                elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
-                setTimeout(() => {
-                    isAutoScrolling = false;
-                }, 100);
-            });
-        };
 
-        scrollToBottom();
+        smoothScrollToBottom();
+        setTimeout(() => {
+            scrollManager.isAutoScrolling = false;
+        }, 250);
+
         const ensureActions = () => ensureMessageActionsVisible(messageElement);
         if (renderPromise && typeof renderPromise.then === 'function') {
             renderPromise.finally(() => {
-                scrollToBottom();
+                smoothScrollToBottom();
                 ensureActions();
             });
         } else {
@@ -9799,11 +10176,11 @@ function cleanupEmptyMessagePlaceholders() {
 }
 
 async function processAndAttachFile(file) {
-    const isDuplicate = attachments.some(attachment =>
-        attachment.file && attachment.file.name === file.name && attachment.file.size === file.size
-    );
+    // 生成内容哈希用于重复检测
+    const contentHash = await generateFileHash(file);
+    const isDuplicate = attachments.some(att => att.contentHash === contentHash);
     if (isDuplicate) {
-        showToast(getToastMessage('toast.fileAlreadyExists', { filename: file.name }), 'info');
+        showToast(getToastMessage('toast.fileDuplicate'), 'info');
         return;
     }
 
@@ -9817,7 +10194,7 @@ async function processAndAttachFile(file) {
         throw new Error('File size exceeds limit');
     }
 
-    const attachmentId = addAttachment(file, file.type.startsWith('image/') ? 'image' : 'file');
+    const attachmentId = addAttachment(file, file.type.startsWith('image/') ? 'image' : 'file', contentHash);
 
     try {
         let content = '';
@@ -9853,7 +10230,15 @@ async function processAndAttachFile(file) {
                 removeAttachment(attachmentId);
                 return;
             }
-        } else if (isPlainTextFile(file.name)) {
+        } else if (isPlainTextFile(file.name) || file.type.startsWith('text/')) {
+            content = await readFileAsText(file);
+        } else if (!file.type || file.type === 'application/octet-stream') {
+            const isBinary = await isLikelyBinaryFile(file);
+            if (isBinary) {
+                showToast(getToastMessage('toast.unsupportedFileFormat', { extension: extension || 'binary' }), 'error');
+                removeAttachment(attachmentId);
+                throw new Error(`Unsupported binary file: ${file.name}`);
+            }
             content = await readFileAsText(file);
         } else {
             showToast(getToastMessage('toast.unsupportedFileFormat', { extension: extension }), 'error');
@@ -9912,9 +10297,9 @@ async function handlePaste(e) {
     }
 }
 
-function addAttachment(file, type) {
+function addAttachment(file, type, contentHash = null) {
     const attachmentId = attachmentIdCounter++;
-    const attachment = { id: attachmentId, file, type, content: null };
+    const attachment = { id: attachmentId, file, type, content: null, contentHash };
     attachments.push(attachment);
     const element = document.createElement('div');
     element.dataset.attachmentId = attachmentId;
@@ -10024,6 +10409,26 @@ function readFileAsText(file) {
         reader.onload = () => resolve(reader.result);
         reader.onerror = error => reject(error);
     });
+}
+
+async function isLikelyBinaryFile(file) {
+    try {
+        const sample = file.slice(0, Math.min(file.size, 4096));
+        const buffer = await sample.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        if (bytes.length === 0) return false;
+        let nonTextCount = 0;
+        for (let i = 0; i < bytes.length; i++) {
+            const b = bytes[i];
+            if (b === 0) return true;
+            if (b < 7 || (b > 13 && b < 32)) {
+                nonTextCount++;
+            }
+        }
+        return (nonTextCount / bytes.length) > 0.3;
+    } catch (err) {
+        return false;
+    }
 }
 
 class IntentAnalyzer {
@@ -10207,12 +10612,6 @@ class IntentAnalyzer {
             return this.currentMessageIntentResult;
         }
 
-        if (userMessageText.length < 20 && !this.containsImageKeywords(userMessageText)) {
-            const result = { intent: 'text_response', confidence: 0.9 };
-            this.currentMessageIntentResult = result;
-            return result;
-        }
-
         const recentHistory = conversationHistory.slice(-6).map(msg => {
             let content = '';
 
@@ -10259,7 +10658,7 @@ class IntentAnalyzer {
         {"intent": "one_of_the_intents", "confidence": 0.9}`
 
         try {
-            const response = await callAISynchronously(intentAnalysisPrompt, 'gemini-2.0-flash', false);
+            const response = await callAISynchronously(intentAnalysisPrompt, 'gemini-2.5-flash-lite', false);
             const result = safeJsonParse(response);
 
             if (result && result.intent && ['image_generation', 'image_modification', 'CLASSICAL_CHINESE_ANALYSIS', 'ROLEPLAY_CREATIVE', 'GENERAL_QUERY'].includes(result.intent)) {
@@ -10408,7 +10807,7 @@ async function describeImagesWithToolUse(userContent, userMessageText) {
         User request: "${userMessageText || ''}"`;
 
     try {
-        const description = await callAISynchronously(prompt, 'gemini-2.0-flash', false, inlineImages);
+        const description = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false, inlineImages);
         return typeof description === 'string' ? description.trim() : null;
     } catch (error) {
         console.warn('Image description via tool-use failed:', error);
@@ -10427,7 +10826,7 @@ async function generateCombinedImagePrompt(userMessageText, conversationHistory,
         User's description: "${sourcePrompt}"`;
 
         try {
-            const englishPrompt = await callAISynchronously(promptForAI, 'gemini-2.0-flash');
+            const englishPrompt = await callAISynchronously(promptForAI, 'gemini-2.5-flash-lite');
 
             return {
                 original: sourcePrompt,
@@ -10457,7 +10856,7 @@ async function generateCombinedImagePrompt(userMessageText, conversationHistory,
 
                     try {
                         const reversePrompt = `Convert the following image description back to a detailed English prompt suitable for AI image generation. Description: ${desc}`;
-                        originalPrompt = await callAISynchronously(reversePrompt, 'gemini-2.0-flash');
+                        originalPrompt = await callAISynchronously(reversePrompt, 'gemini-2.5-flash-lite');
                     } catch (e) { originalPrompt = desc; }
                     break;
                 }
@@ -10473,8 +10872,8 @@ async function generateCombinedImagePrompt(userMessageText, conversationHistory,
         User's modification request: "${userMessageText}"`;
 
         try {
-            const newEnglishPrompt = await callAISynchronously(promptForAI, 'gemini-2.0-flash');
-            const localizedDescriptionRaw = await callAISynchronously(localizedDescriptionPrompt, 'gemini-2.0-flash');
+            const newEnglishPrompt = await callAISynchronously(promptForAI, 'gemini-2.5-flash-lite');
+            const localizedDescriptionRaw = await callAISynchronously(localizedDescriptionPrompt, 'gemini-2.5-flash-lite');
             const localizedDescription = await translateToUserLanguage(
                 (localizedDescriptionRaw || userMessageText || '').toString().trim().replace(/^["']|["']$/g, '')
             );
@@ -10550,7 +10949,7 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
         const baseUrl = isNativeApp ? API_BASE_URL : '';
         const searchParams = new URLSearchParams({ prompt: englishPrompt });
         if (sessionId) {
-            searchParams.set('sessionId', sessionId); 
+            searchParams.set('sessionId', sessionId);
         }
 
         const loadImage = async () => {
@@ -10639,7 +11038,7 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
                         const localizedDescriptionPrompt = `Write a concise 15-30 word description in the user's language for this generated image request. Be direct and highlight key subjects, style, and setting. Return ONLY the description text.
 Request: "${promptObject.original}"
 English prompt: "${englishPrompt}"`;
-                        const localizedDescriptionRaw = await callAISynchronously(localizedDescriptionPrompt, 'gemini-2.0-flash');
+                        const localizedDescriptionRaw = await callAISynchronously(localizedDescriptionPrompt, 'gemini-2.5-flash-lite');
                         localizedDescription = await translateToUserLanguage(
                             (localizedDescriptionRaw || promptObject.original || '').toString().trim().replace(/^["']|["']$/g, '')
                         );
@@ -10738,10 +11137,24 @@ let globalBackgroundBuffer = '';
 let globalDisplayBuffer = '';
 let globalContentDiv = null;
 let globalCharQueue = [];
-let userHasScrolledUp = false;
-let lastScrollTime = 0;
-let isAutoScrolling = false;
 const STREAM_RENDER_INTERVAL_MS = 30;
+
+Object.defineProperty(window, 'userHasScrolledUp', {
+    get() { return scrollManager.userHasScrolledUp; },
+    set(v) { scrollManager.userHasScrolledUp = v; }
+});
+Object.defineProperty(window, 'isUserScrolling', {
+    get() { return scrollManager.isUserScrolling; },
+    set(v) { scrollManager.isUserScrolling = v; }
+});
+Object.defineProperty(window, 'isAutoScrolling', {
+    get() { return scrollManager.isAutoScrolling; },
+    set(v) { scrollManager.isAutoScrolling = v; }
+});
+Object.defineProperty(window, 'lastScrollTime', {
+    get() { return scrollManager.lastScrollTime; },
+    set(v) { scrollManager.lastScrollTime = v; }
+});
 
 async function processStreamedResponse(response, contentDiv) {
     const reader = response.body.getReader();
@@ -10758,7 +11171,7 @@ async function processStreamedResponse(response, contentDiv) {
     globalDisplayBuffer = '';
     globalContentDiv = contentDiv;
     globalCharQueue = [];
-    userHasScrolledUp = false;
+    scrollManager.resetUserScrollState();
 
     const charQueue = globalCharQueue;
     let isTyping = false;
@@ -10798,7 +11211,7 @@ async function processStreamedResponse(response, contentDiv) {
                 if (shouldRenderNow) {
                     try {
                         renderMessageContent(contentDiv, globalDisplayBuffer);
-                        if (!userHasScrolledUp) {
+                        if (shouldAutoScroll()) {
                             elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
                         }
                     } catch (renderError) {
@@ -10892,18 +11305,16 @@ async function processStreamedResponse(response, contentDiv) {
         }
     }
 
-    // 如果还有未渲染字符但未启动渲染，保证启动
     if (!isTyping && charQueue.length > 0) startTyping();
 
     await new Promise(resolve => {
         const checkTyping = () => {
             if (!isTyping && charQueue.length === 0) {
-                // 如果还有后台缓冲区内容且页面可见，立即显示
                 if (globalBackgroundBuffer && isPageVisible && globalContentDiv) {
                     try {
                         globalDisplayBuffer += globalBackgroundBuffer;
                         renderMessageContent(globalContentDiv, globalDisplayBuffer);
-                        if (!userHasScrolledUp) {
+                        if (shouldAutoScroll()) {
                             setTimeout(() => {
                                 elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
                             }, 10);
@@ -11004,6 +11415,10 @@ async function handleSearchAndChat(userMessageText) {
             system_prompt: composeSystemPrompt(aiParameters.systemPrompt)
         };
 
+        if (currentModelId === 'gemini-3-pro-preview' && currentThinkingLevel) {
+            body.thinking_level = currentThinkingLevel;
+        }
+
         // 访客用户
         if (!currentUser) {
             const guestKey = selectGuestApiKeyForRequest();
@@ -11080,7 +11495,7 @@ async function handleSearchAndChat(userMessageText) {
                 }
             }
 
-            const hasConfiguredKey = !!(currentUser && getCustomApiKey());
+            const hasConfiguredKey = hasConfiguredApiKeyForUi();
             if (hasConfiguredKey) {
                 const content = getToastMessage('errors.searchFeatureDailyLimitReached');
                 const assistantEl = appendMessage('assistant', content);
@@ -11290,6 +11705,10 @@ async function handleResearchAndChat(userContent, userMessageText) {
             system_prompt: composeSystemPrompt(aiParameters.systemPrompt)
         };
 
+        if (currentModelId === 'gemini-3-pro-preview' && currentThinkingLevel) {
+            body.thinking_level = currentThinkingLevel;
+        }
+
         if (!currentUser) {
             const guestKey = selectGuestApiKeyForRequest();
             if (guestKey) body.apiKey = guestKey;
@@ -11390,18 +11809,21 @@ async function handleResearchAndChat(userContent, userMessageText) {
 }
 
 function showUsageLimitModal() {
-    // 立即显示弹窗
-    elements.limitModalTitle.textContent = currentUser ? getToastMessage('status.dailyLimitReached') : getToastMessage('status.trialLimitReached');
-    elements.limitModalText.textContent = currentUser ?
-        getToastMessage('status.dailyLimitReachedMessage', { limit: currentUserUsage.limit }) :
-        getToastMessage('status.trialLimitReachedMessage');
-    elements.limitLoginBtn.textContent = currentUser ? getToastMessage('status.goToSettings') : getToastMessage('status.loginNow');
+    const isLoggedIn = !!currentUser;
+    const usageLimit = isLoggedIn ? LOGGED_IN_LIMIT : GUEST_LIMIT;
+
+    // ??????
+    elements.limitModalTitle.textContent = isLoggedIn ? getToastMessage('status.dailyLimitReached') : getToastMessage('status.trialLimitReached');
+    elements.limitModalText.textContent = isLoggedIn
+        ? getToastMessage('status.dailyLimitReachedMessage', { limit: usageLimit })
+        : getToastMessage('status.trialLimitReachedMessage');
+    elements.limitLoginBtn.textContent = isLoggedIn ? getToastMessage('status.goToSettings') : getToastMessage('status.loginNow');
     elements.limitLoginBtn.onclick = () => {
         elements.limitModalOverlay.classList.remove('visible');
-        if (currentUser) {
+        if (isLoggedIn) {
             document.getElementById('settings-modal-overlay').classList.add('visible');
 
-            // 切换到API页面
+            // ???API??
             const apiNavItem = document.querySelector('.settings-nav-item[data-page="api"]');
             if (apiNavItem) {
                 apiNavItem.click();
@@ -11582,6 +12004,10 @@ async function handleChatMessage(userContent, options = {}) {
             system_prompt: finalSystemPrompt,
             intent_analysis: intentAnalysis.intentResult
         };
+
+        if (currentModelId === 'gemini-3-pro-preview' && currentThinkingLevel) {
+            body.thinking_level = currentThinkingLevel;
+        }
 
         // 访客用户
         if (!currentUser) {
@@ -11801,10 +12227,14 @@ async function handleChatMessage(userContent, options = {}) {
                 const renderPromise = renderMessageContent(contentDiv, processedResponse, null, true);
 
                 if (isScrolledToBottom) {
-                    const ensureBottom = () => requestAnimationFrame(() => smoothScrollToBottom());
+                    const ensureBottom = () => requestAnimationFrame(() => {
+                        if (shouldAutoScroll()) {
+                            smoothScrollToBottom();
+                        }
+                    });
                     const ensureActions = () => {
                         const messageElement = contentDiv.closest('.message');
-                        if (messageElement) {
+                        if (messageElement && shouldAutoScroll()) {
                             ensureMessageActionsVisible(messageElement);
                         }
                     };
@@ -11824,7 +12254,7 @@ async function handleChatMessage(userContent, options = {}) {
                     if (contentDiv) {
                         contentDiv.style.minHeight = '';
                     }
-                    if (distanceToBottom !== null && chatContainer) {
+                    if (distanceToBottom !== null && chatContainer && shouldAutoScroll()) {
                         chatContainer.scrollTop = chatContainer.scrollHeight - chatContainer.clientHeight - distanceToBottom;
                     }
                 };
@@ -11900,8 +12330,8 @@ async function _processAndSendMessage(userContent, userMessageText) {
             }
         });
 
-    const hasFileAttachments = userContent.some(att => att.type === 'file');
-    const hasImageAttachments = userContent.some(att => att.type === 'image_url');
+        const hasFileAttachments = userContent.some(att => att.type === 'file');
+        const hasImageAttachments = userContent.some(att => att.type === 'image_url');
         const allowLargeDocumentProcessing = !isSearchModeActive && !isImageModeActive && !isResearchModeActive;
 
         if (allowLargeDocumentProcessing && totalTextLength > LARGE_TEXT_THRESHOLD) {
@@ -12109,9 +12539,14 @@ async function _processAndSendMessage(userContent, userMessageText) {
     }
     intentAnalyzer.reset();
 }
+
 async function sendMessage() {
     if (isSendingMessage) {
         return;
+    }
+
+    if (Capacitor.isNativePlatform()) {
+        Keyboard.hide();
     }
 
     if (isEditModeActive) {
@@ -12900,14 +13335,24 @@ function updateSelectedModelDisplay() {
         if (!selectedModel) {
             selectedModel = availableModels[0];
         }
-        // 当当前选择在可用模型中不存在时，回退并同步用户选择
         currentModelId = selectedModel.id;
         userSelectedModelId = selectedModel.id;
     }
-    elements.selectedModelName.textContent = selectedModel.name;
+
+    let displayName = selectedModel.name;
+    if (selectedModel.hasThinkingLevel && currentThinkingLevel) {
+        const levelSuffix = currentThinkingLevel === 'high' ? '-High' : '-Low';
+        displayName = selectedModel.name + levelSuffix;
+    }
+    elements.selectedModelName.textContent = displayName;
 }
 
 function updateActiveModel() {
+    const availableModels = getAvailableModels();
+    if (availableModels.length && !availableModels.some(m => m.id === userSelectedModelId)) {
+        userSelectedModelId = availableModels[0].id;
+    }
+
     if (isSearchModeActive) {
         currentModelId = 'gemini-2.5-flash-lite';
     } else if (isImageModeActive) {
@@ -12938,33 +13383,96 @@ function resetToDefaultModel() {
 function renderModelMenu() {
     elements.modelSelectMenu.innerHTML = '';
     const availableModels = getAvailableModels();
+    const currentLang = currentUser ? (currentUser.language || getCurrentLanguage()) : getCurrentLanguage();
 
     availableModels.forEach(model => {
         const item = document.createElement('div');
         item.className = 'model-select-item';
-        if (model.id === currentModelId) {
+
+        const isThisModelSelected = model.hasThinkingLevel
+            ? currentModelId === model.id
+            : model.id === currentModelId;
+
+        if (isThisModelSelected) {
             item.classList.add('selected');
         }
 
-        // 动态获取翻译
-        const currentLang = currentUser ? (currentUser.language || getCurrentLanguage()) : getCurrentLanguage();
         const modelDesc = t(currentLang, model.descKey);
 
-        item.innerHTML = `
+        if (model.hasThinkingLevel) {
+            const thinkingLevelLowText = t(currentLang, 'models.thinkingLevelLow');
+            const thinkingLevelHighText = t(currentLang, 'models.thinkingLevelHigh');
+
+            item.innerHTML = `
+                <div class="model-main-row">
+                    <div class="model-info">
+                        <span class="model-name">${model.name}</span>
+                        <span class="model-desc">${modelDesc}</span>
+                    </div>
+                    <svg class="accordion-arrow" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+                </div>
+            `;
+
+            const showLevelActive = isThisModelSelected;
+
+            const submenu = document.createElement('div');
+            submenu.className = 'thinking-level-submenu';
+            submenu.innerHTML = `
+                <div class="thinking-level-option${showLevelActive && currentThinkingLevel === 'high' ? ' active' : ''}" data-level="high">
+                    <span>${thinkingLevelHighText}</span>
+                    <svg class="checkmark-icon" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                </div>
+                <div class="thinking-level-option${showLevelActive && currentThinkingLevel === 'low' ? ' active' : ''}" data-level="low">
+                    <span>${thinkingLevelLowText}</span>
+                    <svg class="checkmark-icon" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                </div>
+            `;
+
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isExpanded = item.classList.contains('expanded');
+                document.querySelectorAll('.model-select-item.expanded').forEach(el => {
+                    if (el !== item) el.classList.remove('expanded');
+                });
+                item.classList.toggle('expanded', !isExpanded);
+            });
+
+            submenu.querySelectorAll('.thinking-level-option').forEach(opt => {
+                opt.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    currentThinkingLevel = opt.dataset.level;
+                    userSelectedModelId = model.id;
+                    updateActiveModel();
+                    item.classList.remove('expanded');
+                    // 延迟后关闭模型选择器
+                    setTimeout(() => {
+                        elements.modelSelectMenu.classList.remove('visible');
+                    }, 200);
+                });
+            });
+
+            item.appendChild(submenu);
+        } else {
+            item.innerHTML = `
+                <div class="model-main-row">
                     <div class="model-info">
                         <span class="model-name">${model.name}</span>
                         <span class="model-desc">${modelDesc}</span>
                     </div>
                     <svg class="checkmark-icon" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-                `;
-        item.addEventListener('click', () => {
-            userSelectedModelId = model.id;
-            updateActiveModel();
-            elements.modelSelectMenu.classList.remove('visible');
-        });
+                </div>
+            `;
+            item.addEventListener('click', () => {
+                userSelectedModelId = model.id;
+                updateActiveModel();
+                elements.modelSelectMenu.classList.remove('visible');
+            });
+        }
+
         elements.modelSelectMenu.appendChild(item);
     });
 }
+
 
 // 文件查看器函数
 function detectViewerType(filename, content) {
@@ -13241,7 +13749,10 @@ function setupInputPanelObserver() {
 
     const observer = new ResizeObserver(entries => {
         const now = Date.now();
-        if (isAutoScrolling || (now - lastScrollTime < 150)) {
+        if (scrollManager.isAutoScrolling || (now - scrollManager.lastScrollTime < 150)) {
+            return;
+        }
+        if (shouldPreserveScrollPosition()) {
             return;
         }
 
@@ -13258,14 +13769,14 @@ function setupInputPanelObserver() {
         for (const update of updates) {
             chatContainer.style.scrollPaddingBottom = `${update.panelHeight + 16}px`;
             if (update.isScrolledToBottom) {
-                isAutoScrolling = true;
-                lastScrollTime = Date.now();
+                scrollManager.isAutoScrolling = true;
+                scrollManager.lastScrollTime = Date.now();
                 chatContainer.scrollTo({
                     top: update.scrollHeight,
                     behavior: 'smooth'
                 });
                 setTimeout(() => {
-                    isAutoScrolling = false;
+                    scrollManager.isAutoScrolling = false;
                     const lastMessage = chatContainer.querySelector('.message:last-of-type');
                     if (lastMessage) {
                         ensureMessageActionsVisible(lastMessage);
@@ -13481,48 +13992,89 @@ async function processFilesArray(files) {
     resetCharCountTimer();
 }
 
+function eventHasFiles(event) {
+    const types = event?.dataTransfer?.types;
+    if (!types) return false;
+    try {
+        return Array.from(types).includes('Files');
+    } catch (_) {
+        return false;
+    }
+}
+
+async function generateFileHash(blob) {
+    try {
+        const sampleSize = Math.min(8192, blob.size);
+        const sample = blob.slice(0, sampleSize);
+        const buffer = await sample.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+
+        let hash = 5381;
+        for (let i = 0; i < bytes.length; i++) {
+            hash = ((hash << 5) + hash) + bytes[i];
+            hash = hash >>> 0;
+        }
+        return `${hash.toString(16)}-${blob.size}`;
+    } catch (e) {
+        return `fallback-${blob.size}`;
+    }
+}
+
+async function readNativeFileAsBlob(fileInfo) {
+    const { path, webPath, blob, data, mimeType } = fileInfo;
+    if (blob instanceof Blob) {
+        return blob;
+    }
+
+    if (data) {
+        try {
+            return base64ToBlob(data, mimeType);
+        } catch (e) {
+            console.warn('base64ToBlob failed:', e);
+        }
+    }
+
+    const candidatePath = path || webPath;
+    if (candidatePath) {
+        try {
+            const res = await Filesystem.readFile({ path: candidatePath });
+            return base64ToBlob(res.data, mimeType);
+        } catch (readErr) {
+            console.warn('Filesystem.readFile failed:', readErr);
+        }
+    }
+
+    if (webPath) {
+        try {
+            const response = await fetch(webPath);
+            return await response.blob();
+        } catch (fetchErr) {
+            console.warn('Fetch webPath failed:', fetchErr);
+        }
+    }
+
+    return null;
+}
+
 async function handlePickedFiles(pickedFiles) {
     if (!pickedFiles || pickedFiles.length === 0) return;
 
     const files = [];
     for (const pf of pickedFiles) {
         try {
-            // Web 端
-            if (pf.blob instanceof Blob) {
-                files.push(new File([pf.blob], pf.name, { type: pf.mimeType || pf.blob.type }));
-                continue;
+            const blob = await readNativeFileAsBlob({
+                path: pf.path,
+                webPath: pf.webPath,
+                blob: pf.blob,
+                data: pf.data,
+                mimeType: pf.mimeType
+            });
+
+            if (!blob) {
+                throw new Error('Can not read file content');
             }
 
-            if (pf.data) {
-                const blob = base64ToBlob(pf.data, pf.mimeType);
-                files.push(new File([blob], pf.name, { type: pf.mimeType || blob.type }));
-                continue;
-            }
-
-            const candidatePath = pf.path || pf.webPath;
-            if (candidatePath) {
-                try {
-                    const res = await Filesystem.readFile({ path: candidatePath });
-                    const blob = base64ToBlob(res.data, pf.mimeType);
-                    files.push(new File([blob], pf.name, { type: pf.mimeType || blob.type }));
-                    continue;
-                } catch (readErr) {
-                    console.warn('Filesystem.readFile fallback failed:', readErr);
-                }
-            }
-
-            if (pf.webPath) {
-                try {
-                    const response = await fetch(pf.webPath);
-                    const blob = await response.blob();
-                    files.push(new File([blob], pf.name, { type: pf.mimeType || blob.type }));
-                    continue;
-                } catch (fetchErr) {
-                    console.warn('Fetch webPath fallback failed:', fetchErr);
-                }
-            }
-
-            throw new Error('Can not read file content');
+            files.push(new File([blob], pf.name, { type: pf.mimeType || blob.type }));
         } catch (err) {
             showToast(`${getToastMessage('console.skipFile', { filename: pf.name })}: ${err.message || err}`, 'info');
         }
@@ -13618,7 +14170,7 @@ function setupEventListeners() {
 
                         renderMessageContent(globalContentDiv, globalDisplayBuffer);
 
-                        if (!userHasScrolledUp) {
+                        if (shouldAutoScroll()) {
                             setTimeout(() => {
                                 elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
                             }, 10);
@@ -13637,23 +14189,7 @@ function setupEventListeners() {
         });
     }
 
-    elements.chatContainer.addEventListener('scroll', () => {
-        if (!isProcessing) {
-            userHasScrolledUp = false;
-            return;
-        }
-
-        const scrollHeight = elements.chatContainer.scrollHeight;
-        const clientHeight = elements.chatContainer.clientHeight;
-        const scrollTop = elements.chatContainer.scrollTop;
-        const isAtBottom = scrollHeight - clientHeight <= scrollTop + 10;
-        if (!isAtBottom) {
-            userHasScrolledUp = true;
-        } else {
-            userHasScrolledUp = false;
-        }
-    });
-
+    scrollManager.init();
 
     document.querySelectorAll('.auth-tab').forEach(tab => {
         tab.addEventListener('click', function () {
@@ -14375,6 +14911,156 @@ function setupEventListeners() {
 
     elements.messageInput.addEventListener('paste', handlePaste);
 
+    const dropTargets = [elements.messageInput, inputWrapper].filter(Boolean);
+    let dragEnterCounter = 0;
+    let dragTargetDepth = 0;
+    let dragSessionActive = false;
+    let dragResetTimer = null;
+
+    let dropOverlay = null;
+    if (inputWrapper) {
+        dropOverlay = document.createElement('div');
+        dropOverlay.className = 'input-drop-overlay';
+        dropOverlay.setAttribute('role', 'status');
+        dropOverlay.setAttribute('aria-live', 'polite');
+        dropOverlay.setAttribute('aria-atomic', 'true');
+        dropOverlay.innerHTML = `
+            <div class="drop-icon" aria-hidden="true">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M16.5 6.75L10.06 13.19C9.13 14.12 7.62 14.12 6.69 13.19C5.76 12.26 5.76 10.75 6.69 9.82L13.13 3.38C14.72 1.79 17.3 1.79 18.89 3.38C20.48 4.97 20.48 7.55 18.89 9.14L11.03 17C9.15 18.88 6.11 18.88 4.23 17C2.35 15.12 2.35 12.08 4.23 10.2L11.9 2.53" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <div class="sr-only">Drop files to upload</div>
+        `;
+        inputWrapper.appendChild(dropOverlay);
+    }
+
+    const clearDragResetTimer = () => {
+        if (dragResetTimer) {
+            clearTimeout(dragResetTimer);
+            dragResetTimer = null;
+        }
+    };
+
+    const scheduleDragReset = (delay = 120) => {
+        clearDragResetTimer();
+        dragResetTimer = setTimeout(() => {
+            resetDragVisualState();
+        }, delay);
+    };
+
+    const resetDragVisualState = () => {
+        clearDragResetTimer();
+        dragEnterCounter = 0;
+        dragTargetDepth = 0;
+        dragSessionActive = false;
+        dropTargets.forEach(t => t.classList.remove('drag-over'));
+        hideDropOverlay();
+    };
+
+    const ensureDragVisuals = () => {
+        if (dragSessionActive) return;
+        dragSessionActive = true;
+        showDropOverlay();
+    };
+
+    const showDropOverlay = () => {
+        if (!inputWrapper || !dropOverlay) return;
+        inputWrapper.classList.add('dragging');
+        dropOverlay.classList.add('visible');
+    };
+
+    const hideDropOverlay = () => {
+        if (!inputWrapper || !dropOverlay) return;
+        inputWrapper.classList.remove('dragging');
+        dropOverlay.classList.remove('visible');
+    };
+
+    const handleDragEnter = (e) => {
+        if (!eventHasFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        clearDragResetTimer();
+        dragTargetDepth += 1;
+        ensureDragVisuals();
+    };
+
+    const handleDragOver = (e) => {
+        if (!eventHasFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'copy';
+        clearDragResetTimer();
+        e.currentTarget.classList.add('drag-over');
+        ensureDragVisuals();
+    };
+    const handleDragLeave = (e) => {
+        e.stopPropagation();
+        dragTargetDepth = Math.max(0, dragTargetDepth - 1);
+        e.currentTarget.classList.remove('drag-over');
+    };
+    const handleDrop = async (e) => {
+        if (!eventHasFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.currentTarget.classList.remove('drag-over');
+        resetDragVisualState();
+        const files = Array.from(e.dataTransfer?.files || []);
+        if (files.length === 0) return;
+        await processFilesArray(files);
+    };
+    dropTargets.forEach(target => {
+        target.addEventListener('dragenter', handleDragEnter);
+        target.addEventListener('dragover', handleDragOver);
+        target.addEventListener('dragleave', handleDragLeave);
+        target.addEventListener('drop', handleDrop);
+    });
+
+    const handleWindowDragEnter = (e) => {
+        if (!eventHasFiles(e)) return;
+        dragEnterCounter += 1;
+        clearDragResetTimer();
+        ensureDragVisuals();
+    };
+    const handleWindowDragOver = (e) => {
+        if (!eventHasFiles(e)) return;
+        e.preventDefault();
+        clearDragResetTimer();
+        ensureDragVisuals();
+    };
+    const handleWindowDragLeave = (e) => {
+        if (!eventHasFiles(e)) return;
+        dragEnterCounter = Math.max(0, dragEnterCounter - 1);
+        if (dragEnterCounter === 0) {
+            scheduleDragReset(120);
+        }
+    };
+    const handleWindowDrop = (e) => {
+        if (!eventHasFiles(e)) return;
+        resetDragVisualState();
+    };
+    const handleWindowDragEnd = () => resetDragVisualState();
+    const handleWindowBlur = () => resetDragVisualState();
+    const handleVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') {
+            resetDragVisualState();
+        }
+    };
+    const handleWindowMouseLeave = (e) => {
+        if (e.relatedTarget === null) {
+            scheduleDragReset(120);
+        }
+    };
+
+    window.addEventListener('dragenter', handleWindowDragEnter);
+    window.addEventListener('dragover', handleWindowDragOver);
+    window.addEventListener('dragleave', handleWindowDragLeave);
+    window.addEventListener('drop', handleWindowDrop);
+    window.addEventListener('dragend', handleWindowDragEnd);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('mouseleave', handleWindowMouseLeave);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     elements.voiceBtn.addEventListener('click', () => {
         if (!recognition) {
             showToast(getToastMessage('toast.voiceRecognitionNotSupported'), 'error');
@@ -14424,56 +15110,43 @@ function setupEventListeners() {
         document.getElementById('upload-menu').classList.remove('visible');
 
         if (isNativeApp) {
-            const choice = await showImageSourceChoice(); // 1. 弹出我们自己的菜单
-            let source;
+            const choice = await showImageSourceChoice();
 
             if (choice === 'camera') {
-                source = CameraSource.Camera;
-            } else if (choice === 'photos') {
-                source = CameraSource.Photos;
-            } else {
-                return;
-            }
+                try {
+                    const photo = await Camera.getPhoto({
+                        quality: 100,
+                        allowEditing: false,
+                        resultType: CameraResultType.Base64,
+                        source: CameraSource.Camera
+                    });
 
-            try {
-                const image = await Camera.getPhoto({
-                    quality: 90,
-                    allowEditing: false,
-                    resultType: CameraResultType.DataUrl,
-                    source: source,
-                });
-
-                if (image.dataUrl) {
-                    const response = await fetch(image.dataUrl);
-                    const blob = await response.blob();
-
-                    // 提前检测文件大小
-                    const isGuest = !currentUser;
-                    const maxSize = isGuest ? GUEST_FILE_SIZE_LIMIT : LOGGED_IN_FILE_SIZE_LIMIT;
-                    const limitInMB = (maxSize / (1024 * 1024)).toFixed(1);
-
-                    if (blob.size > maxSize) {
-                        const userType = isGuest ? getToastMessage('ui.guest') : getToastMessage('ui.you');
-                        showToast(getToastMessage('toast.fileTooLarge', { filename: getToastMessage('ui.image'), userType: userType, limit: limitInMB }), 'error');
-                        return;
+                    if (photo.base64String) {
+                        const mimeType = photo.format === 'png' ? 'image/png' : 'image/jpeg';
+                        const blob = base64ToBlob(photo.base64String, mimeType);
+                        const filename = `camera_${Date.now()}.${photo.format || 'jpg'}`;
+                        const file = new File([blob], filename, { type: mimeType });
+                        await processFilesArray([file]);
                     }
-
-                    const fileName = `image_${Date.now()}.${image.format || 'jpg'}`;
-                    const file = new File([blob], fileName, { type: `image/${image.format || 'jpeg'}` });
-
-                    filesCurrentlyProcessing++;
-                    updateSendButton();
-                    try {
-                        await processAndAttachFile(file);
-                    } finally {
-                        filesCurrentlyProcessing--;
-                        updateSendButton();
+                } catch (error) {
+                    if (error?.message !== 'User cancelled photos app') {
+                        console.log(`${getToastMessage('console.imageSelectionCancelled')}:`, error);
                     }
                 }
-            } catch (error) {
-                console.log(`${getToastMessage('console.imageSelectionCancelled')}:`, error);
-            }
+            } else if (choice === 'photos') {
+                try {
+                    const result = await FilePicker.pickImages({
+                        multiple: true,
+                        readData: true,
+                    });
 
+                    if (result.files && result.files.length > 0) {
+                        await handlePickedFiles(result.files);
+                    }
+                } catch (error) {
+                    console.log(`${getToastMessage('console.imageSelectionCancelled')}:`, error);
+                }
+            }
         } else {
             elements.fileInput.accept = "image/*";
             elements.fileInput.click();
@@ -14487,7 +15160,6 @@ function setupEventListeners() {
                 const result = await FilePicker.pickFiles({
                     types: ['text/plain', 'text/markdown', 'application/javascript', 'text/css', 'text/html', 'application/json', 'application/xml', 'public.source-code'], // 尝试指定代码类型
                     multiple: true,
-                    // 原生端需要主动读取文件数据，否则不会返回 blob
                     readFile: true
                 });
 
@@ -14509,7 +15181,6 @@ function setupEventListeners() {
             try {
                 const result = await FilePicker.pickFiles({
                     multiple: true,
-                    // 原生端需要主动读取文件数据，否则不会返回 blob
                     readFile: true
                 });
 
@@ -14730,8 +15401,8 @@ function setupEventListeners() {
     const guestLoginBtn = document.getElementById('guest-login-prompt-btn');
     if (guestLoginBtn) {
         guestLoginBtn.addEventListener('click', () => {
-            hideSettingsModal();
-            openAuthOverlay('user', { mode: 'login' }, { syncRoute: true });
+            hideSettingsModal(false, { skipHandleBack: true, skipRouteNavigation: true });
+            openAuthOverlay('user', { mode: 'login' }, { syncRoute: true, routeOptions: { replace: true } });
         });
     }
 
@@ -14762,6 +15433,7 @@ function setupEventListeners() {
         const apiKeyTwo = apiKeyTwoEl ? apiKeyTwoEl.value.trim() : '';
         const selectedModeInput = document.querySelector('input[name="api-mode"]:checked');
         const selectedMode = selectedModeInput ? selectedModeInput.value : 'mixed';
+        const wasConfigured = isGuestUser ? guestHasActiveCustomKey() : hasConfiguredApiKeyForUi();
 
         if (apiKeyTwo && !apiKeyOne) {
             showToast(getToastMessage('toast.keyOneRequired'), 'error');
@@ -14794,6 +15466,9 @@ function setupEventListeners() {
                 guestApiState.keyOne = '';
                 guestApiState.keyTwo = '';
                 guestApiState.mode = selectedMode || 'mixed';
+                guestApiState.keyTier = 'free';
+                persistGuestApiState();
+                try { resetToDefaultModel(); renderModelMenu(); } catch (_) { }
                 showToast(getToastMessage('toast.apiKeyUpdateSuccess'), 'success');
                 try { updateActiveModel(); renderModelMenu(); } catch (_) { }
                 guestUsageStats.count = 0;
@@ -14810,7 +15485,7 @@ function setupEventListeners() {
                 forceBlur();
                 return;
             } else {
-                await updateApiKey('', selectedMode, { suppressToast: true });
+                await updateApiKey('', selectedMode, { suppressToast: true, keyTier: 'free' });
 
                 apiKeysChanged = false;
                 keyOneTouched = false;
@@ -14820,8 +15495,14 @@ function setupEventListeners() {
                 try {
                     const kv = document.getElementById('key-validation-modal-overlay');
                     if (kv) kv.remove();
-                    pendingKeyValidationStatus = null;
-                    keyValidationPrefetched = false;
+                } catch (_) { }
+
+                try {
+                    resetToDefaultModel();
+                    renderModelMenu();
+                } catch (_) { }
+                try {
+                    showToast(getToastMessage('toast.apiKeyUpdateSuccess'), 'success');
                 } catch (_) { }
 
                 hideSettingsModal();
@@ -14835,32 +15516,33 @@ function setupEventListeners() {
         clearApiKeyErrorStates();
 
         try {
-            const validationResults = { keyOne: { success: true }, keyTwo: { success: true } };
+            const validationResults = { keyOne: null, keyTwo: null };
             const failedKeys = [];
+            const validatedSummaries = [];
 
-            let keyOneChanged, keyTwoChanged;
-            if (isGuestUser) {
-                const prevKeyOne = (guestApiState.keyOne || '').trim();
-                const prevKeyTwo = (guestApiState.keyTwo || '').trim();
-                keyOneChanged = apiKeyOne !== prevKeyOne;
-                keyTwoChanged = apiKeyTwo !== prevKeyTwo;
-            } else {
-                keyOneChanged = apiKeyOne !== (originalApiKeys.keyOne || '');
-                keyTwoChanged = apiKeyTwo !== (originalApiKeys.keyTwo || '');
+            const prevKeyOne = isGuestUser ? (guestApiState.keyOne || '').trim() : (originalApiKeys.keyOne || '');
+            const prevKeyTwo = isGuestUser ? (guestApiState.keyTwo || '').trim() : (originalApiKeys.keyTwo || '');
+            const keyOneChanged = apiKeyOne !== prevKeyOne;
+            const keyTwoChanged = apiKeyTwo !== prevKeyTwo;
+
+            let willValidateKeyOne = !!apiKeyOne && keyOneChanged;
+            let willValidateKeyTwo = !!apiKeyTwo && keyTwoChanged;
+
+            if (prevKeyTwo && !apiKeyTwo && apiKeyOne) {
+                willValidateKeyOne = true;
             }
-
-            const willValidateKeyOne = !!(apiKeyOne && keyOneChanged);
-            const willValidateKeyTwo = !!(apiKeyTwo && keyTwoChanged);
 
             if (willValidateKeyOne) {
                 elements.settingsSaveBtn.textContent = willValidateKeyTwo
                     ? getToastMessage('toast.verifyingKeyOne')
                     : getToastMessage('status.verifying');
-                validationResults.keyOne = await validateApiKey(apiKeyOne);
+                validationResults.keyOne = await validateApiKeyWithTier(apiKeyOne);
 
                 if (!validationResults.keyOne.success) {
                     failedKeys.push('KEY_ONE');
                     highlightApiKeyError('api-key-one');
+                } else {
+                    validatedSummaries.push(validationResults.keyOne);
                 }
             }
 
@@ -14883,11 +15565,13 @@ function setupEventListeners() {
                 }
 
                 elements.settingsSaveBtn.textContent = getToastMessage('toast.verifyingKeyTwo');
-                validationResults.keyTwo = await validateApiKey(apiKeyTwo);
+                validationResults.keyTwo = await validateApiKeyWithTier(apiKeyTwo);
 
                 if (!validationResults.keyTwo.success) {
                     failedKeys.push('KEY_TWO');
                     highlightApiKeyError('api-key-two');
+                } else {
+                    validatedSummaries.push(validationResults.keyTwo);
                 }
             }
 
@@ -14902,6 +15586,10 @@ function setupEventListeners() {
                 } else if (failedKeys.length === 2) {
                     errorMessage = getToastMessage('toast.bothKeysInvalid');
                 }
+                if (!errorMessage) {
+                    const firstFailed = failedKeys[0] === 'KEY_ONE' ? validationResults.keyOne : validationResults.keyTwo;
+                    errorMessage = (firstFailed && firstFailed.message) || getToastMessage('toast.verificationError');
+                }
                 showToast(errorMessage, 'error');
 
                 keyOneTouched = false;
@@ -14912,17 +15600,61 @@ function setupEventListeners() {
                 return;
             }
 
+            const existingTier = isGuestUser
+                ? (guestApiState.keyTier || 'free')
+                : ((currentUser && currentUser.keyTier) || 'free');
+
+            const validatedPaidCount = validatedSummaries.filter(res => res.tier === 'paid').length;
+            const hasValidatedFree = validatedSummaries.some(res => res.tier === 'free');
+            const hasValidation = validatedSummaries.length > 0;
+
+            const hasKeyOne = !!apiKeyOne;
+            const hasKeyTwo = !!apiKeyTwo;
+
+            const overallKeyTier = (() => {
+                if (!hasKeyOne && !hasKeyTwo) return 'free';
+                if (hasValidatedFree) return 'free';
+                if (!hasValidation) return existingTier || 'free';
+
+                if (hasKeyOne && !hasKeyTwo) {
+                    return validatedPaidCount >= 1 ? 'paid' : 'free';
+                }
+
+                let paidCount = validatedPaidCount;
+                if (!keyOneChanged && existingTier === 'paid') paidCount += 1;
+                if (!keyTwoChanged && existingTier === 'paid') paidCount += 1;
+                return paidCount >= 2 ? 'paid' : 'free';
+            })();
+
             if (isGuestUser) {
                 guestApiState.keyOne = apiKeyOne;
                 guestApiState.keyTwo = apiKeyTwo;
                 guestApiState.mode = selectedMode || 'mixed';
+                guestApiState.keyTier = overallKeyTier;
+                persistGuestApiState();
                 showToast(getToastMessage('toast.apiKeyUpdateSuccess'), 'success');
+                if (!wasConfigured && (apiKeyOne || apiKeyTwo)) {
+                    const availableModels = getAvailableModels();
+                    userSelectedModelId = availableModels[0].id;
+                    currentModelId = availableModels[0].id;
+                }
                 try { updateActiveModel(); renderModelMenu(); } catch (_) { }
             } else {
-                await updateApiKey(combinedApiKey, selectedMode);
+                const updateResult = await updateApiKey(combinedApiKey, selectedMode, { keyTier: overallKeyTier });
                 if (currentUser) {
                     currentUser.custom_api_key = combinedApiKey || '';
                     currentUser.api_mode = selectedMode;
+                    if (updateResult && updateResult.keyTier) {
+                        currentUser.keyTier = updateResult.keyTier;
+                    } else {
+                        currentUser.keyTier = currentUser.keyTier || 'free';
+                    }
+                    if (!wasConfigured && combinedApiKey) {
+                        const availableModels = getAvailableModels();
+                        userSelectedModelId = availableModels[0].id;
+                        currentModelId = availableModels[0].id;
+                    }
+                    try { updateActiveModel(); renderModelMenu(); } catch (_) { }
                 }
             }
             hideSettingsModal();
@@ -15079,6 +15811,7 @@ function setupEventListeners() {
                     localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser)));
                 } else {
                     try { sessionStorage.setItem('guest_selectedLanguage', selectedLang); } catch (_) { }
+                    try { localStorage.setItem('selectedLanguage', selectedLang); } catch (_) { }
                 }
                 refreshSettingsI18nTexts();
 
@@ -15885,51 +16618,183 @@ function setupEventListeners() {
     updateWeeklyTimer();
 
     if (Capacitor.isNativePlatform()) {
-        let keyboardHideRaf = null;
+        try {
+            Keyboard.setScroll({ isDisabled: true });
+            Keyboard.setResizeMode({ mode: 'native' });
+        } catch (e) {
+            console.error('Failed to configure keyboard:', e);
+        }
 
-        const finalizeKeyboardHidden = () => {
-            if (keyboardHideRaf !== null) {
-                cancelAnimationFrame(keyboardHideRaf);
-                keyboardHideRaf = null;
-            }
+        let isKeyboardVisible = false;
+        let viewportUpdateRaf = null;
+        let lastKeyboardHeight = 0;
+        let pendingScrollDispatch = false;
 
-            document.body.classList.remove('keyboard-is-open');
-            document.body.style.removeProperty('--keyboard-height');
-
-            document.documentElement.style.setProperty('--native-safe-area-bottom', '0px');
-            if (window.navigator && window.navigator.userAgent) {
-                setTimeout(() => {
-                    const bottomInset = getComputedStyle(document.documentElement).getPropertyValue('--safe-area-inset-bottom') || '0px';
-                    document.documentElement.style.setProperty('--native-safe-area-bottom', bottomInset);
-                }, 100);
-            }
-
-            if (document.activeElement === elements.messageInput) {
-                elements.messageInput.blur();
-            }
-        };
-
+        // 键盘显示
         Keyboard.addListener('keyboardWillShow', (info) => {
-            if (keyboardHideRaf !== null) {
-                cancelAnimationFrame(keyboardHideRaf);
-                keyboardHideRaf = null;
-            }
+            isKeyboardVisible = true;
+            const keyboardHeight = info.keyboardHeight;
+
+            document.documentElement.classList.add('keyboard-is-open');
             document.body.classList.add('keyboard-is-open');
-            document.body.style.setProperty('--keyboard-height', `${info.keyboardHeight}px`);
+            document.documentElement.style.setProperty('--keyboard-height', `${keyboardHeight}px`);
             document.documentElement.style.setProperty('--native-safe-area-bottom', '0px');
         });
 
+        // 键盘隐藏
         Keyboard.addListener('keyboardWillHide', () => {
-            if (keyboardHideRaf !== null) {
-                cancelAnimationFrame(keyboardHideRaf);
-            }
-            keyboardHideRaf = requestAnimationFrame(() => {
-                finalizeKeyboardHidden();
+            isKeyboardVisible = false;
+            lastKeyboardHeight = 0;
+
+            document.documentElement.classList.remove('keyboard-is-open');
+            document.body.classList.remove('keyboard-is-open');
+            document.documentElement.style.setProperty('--keyboard-height', '0px');
+
+            // 延迟到 CSS 
+            setTimeout(() => {
+                const bottomInset = getComputedStyle(document.documentElement).getPropertyValue('--safe-area-inset-bottom') || '0px';
+                document.documentElement.style.setProperty('--native-safe-area-bottom', bottomInset);
+            }, 300);
+        });
+
+        let isKeyboardClosing = false;
+
+        // 统一的关闭键盘函数
+        const dismissKeyboard = () => {
+            if (isKeyboardClosing) return;
+            isKeyboardClosing = true;
+            Keyboard.hide();
+        };
+
+        // 统一处理失焦
+        Keyboard.addListener('keyboardDidHide', () => {
+            isKeyboardVisible = false;
+            isKeyboardClosing = false;
+
+            requestAnimationFrame(() => {
+                const messageInput = document.getElementById('message-input');
+                if (messageInput && document.activeElement === messageInput) {
+                    messageInput.blur();
+                }
+
+                const chatContainer = document.getElementById('chat-container');
+                if (chatContainer) {
+                    chatContainer.dispatchEvent(new Event('scroll'));
+                }
             });
         });
 
-        Keyboard.addListener('keyboardDidHide', finalizeKeyboardHidden);
+        if (window.visualViewport) {
+            const scheduleViewportUpdate = () => {
+                if (!isKeyboardVisible) return;
+                if (viewportUpdateRaf) return;
+
+                viewportUpdateRaf = requestAnimationFrame(() => {
+                    viewportUpdateRaf = null;
+                    if (!isKeyboardVisible) return;
+
+                    const currentHeight = window.visualViewport.height;
+                    const screenHeight = window.screen.height;
+                    const newKeyboardHeight = screenHeight - currentHeight - window.visualViewport.offsetTop;
+
+                    // 避免细微抖动反复重排
+                    if (newKeyboardHeight > 50 && Math.abs(newKeyboardHeight - lastKeyboardHeight) > 4) {
+                        lastKeyboardHeight = newKeyboardHeight;
+                        document.documentElement.style.setProperty('--keyboard-height', `${newKeyboardHeight}px`);
+                        const chatContainer = document.getElementById('chat-container');
+                        if (chatContainer && !pendingScrollDispatch) {
+                            pendingScrollDispatch = true;
+                            requestAnimationFrame(() => {
+                                pendingScrollDispatch = false;
+                                chatContainer.dispatchEvent(new Event('scroll'));
+                            });
+                        }
+                    }
+                });
+            };
+
+            window.visualViewport.addEventListener('resize', scheduleViewportUpdate);
+        }
+
+        App.addListener('backButton', (event) => {
+            const messageInput = document.getElementById('message-input');
+            if (document.activeElement === messageInput && isKeyboardVisible) {
+                event.canGoBack = false;
+                dismissKeyboard();
+            }
+        });
+
+        let lastKeyboardToggle = 0;
+        const KEYBOARD_DEBOUNCE_MS = 300;
+
+        document.addEventListener('mousedown', (e) => {
+            if (!isKeyboardVisible || isKeyboardClosing) return;
+
+            // 防抖检查
+            const now = Date.now();
+            if (now - lastKeyboardToggle < KEYBOARD_DEBOUNCE_MS) return;
+
+            const target = e.target;
+            const isInputElement = target.tagName === 'INPUT' ||
+                target.tagName === 'TEXTAREA' ||
+                target.isContentEditable;
+            const isInsideInputWrapper = target.closest('.input-wrapper') ||
+                target.closest('.input-outer-wrapper');
+            const isInteractiveElement = target.closest('button') ||
+                target.closest('a') ||
+                target.closest('.suggestion-chip');
+
+            if (!isInputElement && !isInsideInputWrapper && !isInteractiveElement) {
+                const messageInput = document.getElementById('message-input');
+                if (document.activeElement === messageInput) {
+                    e.preventDefault();
+
+                    lastKeyboardToggle = now;
+                    dismissKeyboard();
+                }
+            }
+        });
+
+
+        document.addEventListener('touchstart', (e) => {
+            if (!isKeyboardVisible || isKeyboardClosing) return;
+
+            const now = Date.now();
+            if (now - lastKeyboardToggle < KEYBOARD_DEBOUNCE_MS) return;
+
+            const target = e.target;
+            const isInputElement = target.tagName === 'INPUT' ||
+                target.tagName === 'TEXTAREA' ||
+                target.isContentEditable;
+            const isInsideInputWrapper = target.closest('.input-wrapper') ||
+                target.closest('.input-outer-wrapper');
+            const isInteractiveElement = target.closest('button') ||
+                target.closest('a') ||
+                target.closest('.suggestion-chip');
+
+            if (!isInputElement && !isInsideInputWrapper && !isInteractiveElement) {
+                const messageInput = document.getElementById('message-input');
+                if (document.activeElement === messageInput) {
+                    e.preventDefault();
+                    lastKeyboardToggle = now;
+                    dismissKeyboard();
+                }
+            }
+        }, { passive: false });
+
+
+        const appContainer = document.querySelector('.app-container');
+        if (appContainer) {
+            appContainer.addEventListener('touchmove', (e) => {
+                if (!isKeyboardVisible) return;
+                const chatContainer = document.getElementById('chat-container');
+                if (!chatContainer || !chatContainer.contains(e.target)) {
+                    e.preventDefault();
+                }
+            }, { passive: false });
+        }
     }
+
 
     elements.chatHistoryList.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -16087,7 +16952,7 @@ async function getLargeTextIntent(userQuery) {
 
             Respond **ONLY** with JSON: {"intent":"ANALYSIS_QA|CONTINUATION|SUMMARIZATION"}
         `.trim();
-        const intentResult = await callAISynchronously(intentPrompt, 'gemini-2.0-flash', false);
+        const intentResult = await callAISynchronously(intentPrompt, 'gemini-2.5-flash-lite', false);
         const parsed = safeJsonParse(intentResult, null);
         const rawIntent = (parsed && typeof parsed.intent === 'string') ? parsed.intent : intentResult;
         if (rawIntent) {
@@ -16168,20 +17033,20 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
         if (isTempChat) {
             if (currentUser) {
                 const result = await makeApiRequest('chats/new', { method: 'POST' });
-                        if (result.success && result.conversation) {
-                            finalChatId = result.conversation.id;
+                if (result.success && result.conversation) {
+                    finalChatId = result.conversation.id;
 
-                            const tempMessages = chats[chatId]?.messages || [];
-                            delete chats[chatId];
+                    const tempMessages = chats[chatId]?.messages || [];
+                    delete chats[chatId];
 
-                            chats[finalChatId] = {
-                                id: finalChatId,
-                                title: clampGeneratedTitleWords(result.conversation.title),
-                                model_name: result.conversation.model_name,
-                                created_at: result.conversation.created_at,
-                                updated_at: result.conversation.updated_at,
-                                messages: tempMessages,
-                                isNewlyCreated: true
+                    chats[finalChatId] = {
+                        id: finalChatId,
+                        title: clampGeneratedTitleWords(result.conversation.title),
+                        model_name: result.conversation.model_name,
+                        created_at: result.conversation.created_at,
+                        updated_at: result.conversation.updated_at,
+                        messages: tempMessages,
+                        isNewlyCreated: true
                     };
 
                     currentChatId = finalChatId;
@@ -16676,16 +17541,6 @@ async function initialize() {
         }
         sessionId = localStorage.getItem('sessionId');
 
-        try {
-            if (!sessionId) {
-                localStorage.removeItem('guest_api_key_one');
-                localStorage.removeItem('guest_api_key_two');
-                localStorage.removeItem('guest_api_mode');
-                localStorage.removeItem('guest_api_key_toggle');
-                guestApiState = { keyOne: '', keyTwo: '', mode: 'mixed', toggle: '0' };
-            }
-        } catch (_) { }
-
         let savedLanguage = null;
         let appliedTheme = false;
 
@@ -16700,12 +17555,8 @@ async function initialize() {
             }
 
             savedLanguage = localStorage.getItem('selectedLanguage');
-            if (!sessionId && savedLanguage) {
-                try { localStorage.removeItem('selectedLanguage'); } catch (_) { }
-                savedLanguage = null;
-            }
 
-            // 启动时快速渲染：优先应用本地语言；访客按系统语言但不持久化
+            // 启动时快速渲染
             if (savedLanguage) {
                 try { await applyLanguage(savedLanguage); } catch (_) { }
             } else if (!sessionId) {
@@ -16779,7 +17630,6 @@ async function initialize() {
             task4_CoreResources
         ]);
 
-        // 2 秒窗口内尝试获取并应用服务端更新；超时则保持已渲染的本地设置
         const hasSession = !!sessionId;
         let sessionValid = hasSession;
         let resolvedWithinWindow = false;
@@ -16792,6 +17642,7 @@ async function initialize() {
                 sessionValid = !!raceRes;
             }
         } catch (_) { }
+
         const initialLang = getCurrentLanguage();
         const serverLang = currentUser?.language;
 
@@ -16967,9 +17818,18 @@ async function initialize() {
             updateUI(shouldShowLogin);
         }
 
-        prefetchKeyValidationStatus().catch(e => console.warn('Prefetch key validation failed:', e));
+        if (sessionValid && currentUser && (currentUser.custom_api_key || currentUser.custom_api_key_t)) {
+            maybeTriggerScheduledKeyValidation();
+        }
         updateSelectedModelDisplay();
         resetToDefaultModel();
+
+        if (sessionValidationPromise) {
+            sessionValidationPromise.then(() => {
+                updateSelectedModelDisplay();
+                resetToDefaultModel();
+            }).catch(() => { });
+        }
 
         if (sessionValid) {
             const loadPromise = loadChats(true);
@@ -17005,12 +17865,6 @@ async function initialize() {
             handleLaunchParams();
             updateAboutPageUI();
             requestAutoVersionCheck();
-
-            if (keyValidationPrefetched && pendingKeyValidationStatus) {
-                showKeyValidationNotification(pendingKeyValidationStatus);
-                pendingKeyValidationStatus = null;
-                keyValidationPrefetched = false;
-            }
         }, 300);
 
         if (elements.apiKeyOneInput) {
@@ -17127,3 +17981,11 @@ async function commitInlineEditMode() {
         // 状态在下游复位
     }
 }
+
+
+
+
+
+
+
+

@@ -1,4 +1,4 @@
-﻿{
+{
     "appSubtitle": "지능형 AI 대화 어시스턴트",
     "loading": "핵심 리소스를 로드하는 중...",
     "login": "로그인",
@@ -146,14 +146,16 @@
         }
     },
     "models": {
+        "gemini3Pro": "Gemini 3 Pro",
+        "gemini3ProDesc": "가장 강력한 모델",
+        "thinkingLevelLow": "낮음 (빠른 응답)",
+        "thinkingLevelHigh": "높음 (심층 추론)",
         "gemini25Pro": "Gemini 2.5 Pro",
         "gemini25Flash": "Gemini 2.5 Flash",
         "gemini25FlashLite": "Gemini 2.5 Flash-Lite",
-        "gemini20Flash": "Gemini 2.0 Flash",
-        "gemini25ProDesc": "가장 뛰어난 성능의 모델",
+        "gemini25ProDesc": "강력하고 안정적",
         "gemini25FlashDesc": "빠르고 효율적",
         "gemini25FlashLiteDesc": "가장 비용 효율적",
-        "gemini20FlashDesc": "균형 잡힌 멀티모달 모델",
         "slowest": "가장 느림",
         "medium": "중간"
     },
@@ -227,7 +229,7 @@
         "deleteFailed": "삭제 실패",
         "tempChatRestored": "보류 중이던 대화를 성공적으로 복원했습니다",
         "tempChatSaveFailed": "임시 채팅 저장 실패, 삭제되었습니다",
-        "fileAlreadyExists": "\"{filename}\" 파일이 이미 존재하여 업로드를 건너뜁니다",
+        "fileDuplicate": "중복 파일, 업로드를 건너뜁니다",
         "fileTooLarge": "\"{filename}\" 파일이 너무 큽니다. {userType}의 업로드 제한은 {limit}MB입니다.",
         "unsupportedFileFormat": ".{extension} 파일 형식 미리보기는 현재 지원되지 않습니다",
         "exceedsCharacterLimit": "\"{filename}\" 파일을 추가하면 글자 수 제한을 초과합니다.",

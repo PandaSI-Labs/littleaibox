@@ -3,7 +3,7 @@
   const STORAGE_KEY_ENABLED = 'timelineFloatEnabled';
   const STORAGE_KEY_POS = 'timelineFloatPos';
   const CHAT_SELECTOR = '#chat-container';
-  const ANCHOR_SELECTOR = '.message.assistant';
+  const ANCHOR_SELECTOR = '.message.user';
 
   let rootEl, mainEl, upEl, downEl, container, observer, throttledScrollListener, debouncedScrollListener;
   let anchors = [];
@@ -20,7 +20,7 @@
     if (typeof window.isChatProcessing === 'function') {
       return window.isChatProcessing();
     }
-    return false; 
+    return false;
   }
 
   const debounce = (func, wait) => {
@@ -60,9 +60,18 @@
       anchors = [];
       return;
     }
-    const nodes = qsa(ANCHOR_SELECTOR, cont);
-    anchors = nodes.map(node => ({ node, top: node.offsetTop })).sort((a, b) => a.top - b.top);
-    updateButtonStates();
+
+    const doMeasure = () => {
+      const nodes = qsa(ANCHOR_SELECTOR, cont);
+      anchors = nodes.map(node => ({ node, top: node.offsetTop })).sort((a, b) => a.top - b.top);
+      updateButtonStates();
+    };
+
+    if (isAiBusy() && typeof requestIdleCallback === 'function') {
+      requestIdleCallback(doMeasure, { timeout: 500 });
+    } else {
+      doMeasure();
+    }
   }
 
   function updateButtonStates() {
@@ -71,12 +80,14 @@
     if (!cont) return;
 
     const st = cont.scrollTop;
+    const maxScroll = cont.scrollHeight - cont.clientHeight;
 
     const prevAnchorExists = anchors.some(a => a.top < st - 2);
     const nextAnchorExists = anchors.some(a => a.top > st + 2);
+    const canScrollToBottom = st < maxScroll - 2;
 
     upEl.disabled = !prevAnchorExists;
-    downEl.disabled = !nextAnchorExists;
+    downEl.disabled = !nextAnchorExists && !canScrollToBottom;
   }
 
   function goPrev() {
@@ -85,8 +96,7 @@
     const st = cont.scrollTop;
     const prevAnchor = [...anchors].reverse().find(a => a.top < st - 2);
     if (prevAnchor) {
-      const behavior = isAiBusy() ? 'auto' : 'smooth';
-      cont.scrollTo({ top: prevAnchor.top, behavior: behavior });
+      cont.scrollTo({ top: prevAnchor.top, behavior: 'smooth' });
     }
   }
 
@@ -96,8 +106,12 @@
     const st = cont.scrollTop;
     const nextAnchor = anchors.find(a => a.top > st + 2);
     if (nextAnchor) {
-      const behavior = isAiBusy() ? 'auto' : 'smooth';
-      cont.scrollTo({ top: nextAnchor.top, behavior: behavior });
+      cont.scrollTo({ top: nextAnchor.top, behavior: 'smooth' });
+    } else {
+      const maxScroll = cont.scrollHeight - cont.clientHeight;
+      if (st < maxScroll - 2) {
+        cont.scrollTo({ top: maxScroll, behavior: 'smooth' });
+      }
     }
   }
 
@@ -200,7 +214,7 @@
   function startScrolling(direction) {
     stopScrolling();
     const scrollFn = direction === 'up' ? goPrev : goNext;
-    scrollFn(); 
+    scrollFn();
 
     if (isAiBusy()) {
       return;
@@ -276,15 +290,14 @@
     const cont = getScrollContainer();
     if (!cont || observer) return;
 
-    observer = new MutationObserver(debounce(measureAnchors, 250));
+    observer = new MutationObserver(debounce(measureAnchors, 400));
+
     observer.observe(cont, { childList: true, subtree: true, characterData: false });
 
-    throttledScrollListener = throttle(updateButtonStates, 100);
-    cont.addEventListener('scroll', throttledScrollListener);
-
-    debouncedScrollListener = debounce(updateButtonStates, 150);
-    cont.addEventListener('scroll', debouncedScrollListener);
+    throttledScrollListener = throttle(updateButtonStates, 150);
+    cont.addEventListener('scroll', throttledScrollListener, { passive: true });
   }
+
 
   function unwatch() {
     if (observer) observer.disconnect();
