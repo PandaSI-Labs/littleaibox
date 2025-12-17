@@ -11,7 +11,7 @@
 [![Language](https://img.shields.io/badge/Language-Multi--language-blue)](https://github.com/diandiancha/LittleAIBox)
 [![Product Hunt](https://img.shields.io/badge/Product%20Hunt-LittleAIBox-orange?logo=product-hunt)](https://www.producthunt.com/products/littleaibox)
 
-[中文](README.zh-CN.md) | [English](../README.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md)
+[中文](README.zh-CN.md) | [English](../README.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md)
 
 이 프로젝트는 지능형 AI 경험을 제공하기 위해 **Google Gemini API**를 사용하여 대화 기능을 구축합니다.
 
@@ -140,7 +140,7 @@ LittleAIBox는 다음 사용자에게 완벽합니다:
   - 작업 사전 설정(코딩 어시스턴트, 작성 어시스턴트, 번역, 고전 중국어 연구, 여행 가이드, 역할 놀이 창작)
 
 ### 🌐 **다국어 지원**
-- **5개 언어**: 중국어(간체/번체), 영어, 일본어, 한국어, 스페인어
+- **6개 언어**: 중국어(간체/번체), 영어, 일본어, 한국어, 스페인어, 프랑스어
 - **스마트 감지**: 브라우저 설정에 따른 자동 언어 감지
 - **최적화된 로딩**: 즉시 언어 전환을 위한 지능형 번역 캐싱
 
@@ -409,7 +409,7 @@ LittleAIBox/
 │   ├── style.css          # 전역 스타일
 │   └── sw-custom.js       # Service Worker
 ├── public/                 # 정적 자산
-│   ├── locales/           # 번역 파일 (5개 언어)
+│   ├── locales/           # 번역 파일 (6개 언어)
 │   ├── libs/              # 서드파티 라이브러리
 │   ├── images/            # 이미지 및 아이콘
 │   └── manifest.webmanifest # PWA 매니페스트

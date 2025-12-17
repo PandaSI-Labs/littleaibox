@@ -11,7 +11,7 @@
 [![Language](https://img.shields.io/badge/Language-Multi--language-blue)](https://github.com/diandiancha/LittleAIBox)
 [![Product Hunt](https://img.shields.io/badge/Product%20Hunt-LittleAIBox-orange?logo=product-hunt)](https://www.producthunt.com/products/littleaibox)
 
-[中文](README.zh-CN.md) | [English](../README.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md)
+[中文](README.zh-CN.md) | [English](../README.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md)
 
 Este proyecto está construido utilizando **Google Gemini API** para interacciones de IA conversacional, proporcionando una experiencia de IA inteligente.
 
@@ -140,7 +140,7 @@ LittleAIBox es perfecto para:
   - Preajustes de tareas (asistente de codificación, asistente de escritura, traducción, investigación de chino clásico, guía de viajes, creación de rol)
 
 ### 🌐 **Soporte Multiidioma**
-- **5 Idiomas**: Chino (Simplificado/Tradicional), Inglés, Japonés, Coreano, Español
+- **6 Idiomas**: Chino (Simplificado/Tradicional), Inglés, Japonés, Coreano, Español, Francés
 - **Detección Inteligente**: Detección automática de idioma basada en la configuración del navegador
 - **Carga Optimizada**: Caché inteligente de traducciones para cambio instantáneo de idioma
 
@@ -409,7 +409,7 @@ LittleAIBox/
 │   ├── style.css          # Estilos globales
 │   └── sw-custom.js       # Service Worker
 ├── public/                 # Recursos estáticos
-│   ├── locales/           # Archivos de traducción (5 idiomas)
+│   ├── locales/           # Archivos de traducción (6 idiomas)
 │   ├── libs/              # Bibliotecas de terceros
 │   ├── images/            # Imágenes e iconos
 │   └── manifest.webmanifest # Manifesto PWA
