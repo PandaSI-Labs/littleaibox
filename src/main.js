@@ -5074,6 +5074,21 @@ function openSettingsForKeys() {
     }
 }
 
+function openSettingsToPage(pageName) {
+    if (elements.settingsBtn) {
+        elements.settingsBtn.click();
+        setTimeout(() => {
+            const targetTab = document.querySelector(`[data-page="${pageName}"]`);
+            if (targetTab) {
+                lastSettingsPage = pageName;
+                targetTab.click();
+            }
+        }, 100);
+    }
+}
+
+window.openSettingsToPage = openSettingsToPage;
+
 function createInitialAvatar(avatarWrapper, name) {
     if (!avatarWrapper) return;
 
@@ -5092,6 +5107,70 @@ function createInitialAvatar(avatarWrapper, name) {
         font-size: 48px; font-weight: bold; border-radius: 50%;
     `;
     avatarWrapper.appendChild(initialDiv);
+}
+
+function handleAvatarFileSelection(file) {
+    if (!file) return;
+
+    if (!file.type?.startsWith('image/')) {
+        showToast(getToastMessage('toast.pleaseSelectImage'), 'error');
+        return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+        showToast(getToastMessage('toast.imageSizeExceeded'), 'error');
+        return;
+    }
+
+    newAvatarFile = file;
+    newAvatarUrl = null;
+
+    const avatarPreview = document.getElementById('avatar-preview');
+    const avatarWrapper = document.getElementById('avatar-preview-wrapper');
+    const reader = new FileReader();
+
+    reader.onload = (event) => {
+        const initialDiv = avatarWrapper.querySelector('.avatar-initial-text');
+        if (initialDiv) {
+            initialDiv.remove();
+        }
+
+        avatarPreview.src = event.target.result;
+        avatarPreview.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+}
+
+async function pickAvatarImageNative() {
+    try {
+        try {
+            const permStatus = await FilePicker.checkPermissions();
+            if (permStatus.readExternalStorage !== 'granted') {
+                await FilePicker.requestPermissions({ permissions: ['readExternalStorage'] });
+            }
+        } catch (permError) {
+            console.log('Permission check not available for avatar:', permError);
+        }
+
+        const result = await FilePicker.pickImages({
+            multiple: false,
+            readData: true
+        });
+
+        const file = result?.files?.[0];
+        if (!file) return null;
+
+        const mimeType = file.mimeType || file.type || 'image/jpeg';
+        const blob = file.data ? base64ToBlob(file.data, mimeType) : null;
+        if (!blob) return null;
+
+        const filename = file.name || `avatar_${Date.now()}.${mimeType.split('/')[1] || 'jpg'}`;
+        return new File([blob], filename, { type: mimeType });
+    } catch (error) {
+        if (error?.message !== 'User cancelled photos app') {
+            console.log('Avatar image selection cancelled or failed:', error);
+        }
+        return null;
+    }
 }
 
 function setupSettingsModalUI() {
@@ -7525,6 +7604,7 @@ async function loadChat(chatId) {
         activeResponses.delete(currentChatId);
         resetSendButtonState();
     }
+    scrollManager.resetUserScrollState();
 
     currentLoadChatId++;
     const loadId = currentLoadChatId;
@@ -7599,8 +7679,8 @@ async function loadChat(chatId) {
 
         const messagesToRender = chats[chatId].messages;
 
-        const scheduleFinalScroll = () => {
-            if (shouldPreserveScrollPosition()) {
+        const scheduleFinalScroll = (force = false) => {
+            if (!force && shouldPreserveScrollPosition()) {
                 return;
             }
             requestAnimationFrame(() => {
@@ -7649,9 +7729,9 @@ async function loadChat(chatId) {
         if (allRenderPromises.length > 0) {
             renderCompletionPromise = Promise.allSettled(allRenderPromises)
                 .then(() => new Promise(resolve => setTimeout(resolve, 50)));
-            renderCompletionPromise.then(scheduleFinalScroll).catch(scheduleFinalScroll);
+            renderCompletionPromise.then(() => scheduleFinalScroll(true)).catch(() => scheduleFinalScroll(true));
         } else {
-            scheduleFinalScroll();
+            scheduleFinalScroll(true);
             renderCompletionPromise = new Promise(resolve => setTimeout(resolve, 50));
         }
     } catch (error) {
@@ -9356,7 +9436,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         const codeLockEnd = lastPreCloseIndex === -1 ? -1 : lastPreCloseIndex + '</pre>'.length;
 
         let mathLockEnd = -1;
-        const displayMathClosePattern = /\$\$\s*(?:<\/p>|<\/div>|<br\s*\/?>|\n|$)/gi;
+        const displayMathClosePattern = /\$\$(?:\s*(?:<\/p>|<\/div>|<br\s*\/?>)|\s*\n|\s*$|\s+(?=[^$\\]))/gi;
         let mathMatch;
         while ((mathMatch = displayMathClosePattern.exec(finalSanitizedHtml)) !== null) {
             const matchEnd = mathMatch.index + mathMatch[0].length;
@@ -9435,10 +9515,6 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 contentChanged = true;
             }
             renderState.lastLockedHtml = renderState.lockedHtml;
-
-            if (contentChanged && shouldAutoScroll() && elements?.chatContainer) {
-                elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
-            }
         }
 
         if (renderState.streamingHtml !== streamingHtml) {
@@ -9454,10 +9530,6 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 contentChanged = true;
             }
             renderState.streamingHtml = streamingHtml;
-
-            if (contentChanged && shouldAutoScroll() && elements?.chatContainer) {
-                elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
-            }
         }
         const mermaidRenderPromise = renderMermaidDiagrams(element, { loadScript, isFinalRender });
         if (mermaidRenderPromise) {
@@ -11211,9 +11283,7 @@ async function processStreamedResponse(response, contentDiv) {
                 if (shouldRenderNow) {
                     try {
                         renderMessageContent(contentDiv, globalDisplayBuffer);
-                        if (shouldAutoScroll()) {
-                            elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
-                        }
+                        scrollManager.autoScrollToBottomIfNeeded();
                     } catch (renderError) {
                         console.error(`${getToastMessage('console.renderMessageContentFailed')}:`, renderError);
                         if (contentDiv) {
@@ -11223,11 +11293,9 @@ async function processStreamedResponse(response, contentDiv) {
                     lastRenderTime = now;
                 }
             } else {
-                // 页面隐藏时，将新内容累积到后台缓冲区
                 globalBackgroundBuffer += charsToRender;
             }
 
-            // 使用setTimeout确保后台也能继续渲染
             setTimeout(() => {
                 if (isPageVisible) {
                     requestAnimationFrame(renderLoop);
@@ -11236,7 +11304,7 @@ async function processStreamedResponse(response, contentDiv) {
                 }
             }, renderSpeed === 1 ? 25 : 16);
         };
-        // 根据页面可见性选择渲染方式
+
         if (isPageVisible) {
             requestAnimationFrame(renderLoop);
         } else {
@@ -11314,11 +11382,6 @@ async function processStreamedResponse(response, contentDiv) {
                     try {
                         globalDisplayBuffer += globalBackgroundBuffer;
                         renderMessageContent(globalContentDiv, globalDisplayBuffer);
-                        if (shouldAutoScroll()) {
-                            setTimeout(() => {
-                                elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
-                            }, 10);
-                        }
                         globalBackgroundBuffer = '';
                     } catch (error) {
                         console.error('Background buffer render error:', error);
@@ -12015,12 +12078,33 @@ async function handleChatMessage(userContent, options = {}) {
             if (guestKey) body.apiKey = guestKey;
         }
 
-        const response = await fetch('/', {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(body),
-            signal: controller.signal,
-        });
+        // 带速率限制重试的请求函数
+        const maxRateLimitRetries = 5;
+        let response;
+
+        for (let rateLimitAttempt = 0; rateLimitAttempt < maxRateLimitRetries; rateLimitAttempt++) {
+            response = await fetch('/', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(body),
+                signal: controller.signal,
+            });
+
+            // 检查是否是 DO 速率限制响应
+            if (response.status === 202) {
+                try {
+                    const rateLimitData = await response.clone().json();
+                    if (rateLimitData.rateLimited && rateLimitData.wait) {
+                        const waitSeconds = parseInt(rateLimitData.wait) || 3;
+                        await new Promise(r => setTimeout(r, waitSeconds * 1000));
+                        continue;
+                    }
+                } catch (parseErr) {
+                    // 如果解析失败，不是我们的速率限制响应，跳出循环
+                }
+            }
+            break;
+        }
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -13757,6 +13841,9 @@ function setupInputPanelObserver() {
         }
 
         const updates = [];
+        const needsPadding = window.matchMedia('(pointer: coarse)').matches ||
+            isNativeApp ||
+            document.body.classList.contains('keyboard-is-open');
         for (const entry of entries) {
             const panelHeight = entry.target.offsetHeight;
             const scrollHeight = chatContainer.scrollHeight;
@@ -13767,7 +13854,7 @@ function setupInputPanelObserver() {
             updates.push({ panelHeight, isScrolledToBottom, scrollHeight });
         }
         for (const update of updates) {
-            chatContainer.style.scrollPaddingBottom = `${update.panelHeight + 16}px`;
+            chatContainer.style.scrollPaddingBottom = needsPadding ? `${update.panelHeight}px` : '0px';
             if (update.isScrolledToBottom) {
                 scrollManager.isAutoScrolling = true;
                 scrollManager.lastScrollTime = Date.now();
@@ -15135,6 +15222,21 @@ function setupEventListeners() {
                 }
             } else if (choice === 'photos') {
                 try {
+                    // 先请求媒体访问权限
+                    try {
+                        const permStatus = await FilePicker.checkPermissions();
+                        if (permStatus.readExternalStorage !== 'granted') {
+                            const requestResult = await FilePicker.requestPermissions({
+                                permissions: ['readExternalStorage']
+                            });
+                            if (requestResult.readExternalStorage === 'denied') {
+                                showToast(getToastMessage('toast.photoPermissionDenied'), 'warning');
+                            }
+                        }
+                    } catch (permError) {
+                        console.log('Permission check not available:', permError);
+                    }
+
                     const result = await FilePicker.pickImages({
                         multiple: true,
                         readData: true,
@@ -15868,43 +15970,23 @@ function setupEventListeners() {
     settingsModalEl.addEventListener('click', (e) => {
         const wrapper = e.target.closest('#avatar-preview-wrapper');
         if (wrapper) {
-            document.getElementById('avatar-file-input').click();
+            if (isNativeApp) {
+                e.preventDefault();
+                pickAvatarImageNative().then(file => {
+                    if (file) {
+                        handleAvatarFileSelection(file);
+                    }
+                });
+            } else {
+                document.getElementById('avatar-file-input').click();
+            }
         }
     });
 
     settingsModalEl.addEventListener('change', (e) => {
         if (e.target.id === 'avatar-file-input') {
             const file = e.target.files[0];
-            if (!file) return;
-
-            if (!file.type.startsWith('image/')) {
-                showToast(getToastMessage('toast.pleaseSelectImage'), 'error');
-                return;
-            }
-            if (file.size > 4 * 1024 * 1024) {
-                showToast(getToastMessage('toast.imageSizeExceeded'), 'error');
-                return;
-            }
-
-            newAvatarFile = file;
-            newAvatarUrl = null;
-
-            const avatarPreview = document.getElementById('avatar-preview');
-            const avatarWrapper = document.getElementById('avatar-preview-wrapper');
-            const reader = new FileReader();
-
-            reader.onload = (event) => {
-                const initialDiv = avatarWrapper.querySelector('.avatar-initial-text');
-                if (initialDiv) {
-                    initialDiv.remove();
-                }
-
-                avatarPreview.src = event.target.result;
-
-                avatarPreview.style.display = 'block';
-            };
-            reader.readAsDataURL(file);
-
+            handleAvatarFileSelection(file);
             e.target.value = '';
         }
     });
@@ -16743,8 +16825,9 @@ function setupEventListeners() {
             const isInteractiveElement = target.closest('button') ||
                 target.closest('a') ||
                 target.closest('.suggestion-chip');
+            const isInsideChatContainer = target.closest('#chat-container');
 
-            if (!isInputElement && !isInsideInputWrapper && !isInteractiveElement) {
+            if (!isInputElement && !isInsideInputWrapper && !isInteractiveElement && !isInsideChatContainer) {
                 const messageInput = document.getElementById('message-input');
                 if (document.activeElement === messageInput) {
                     e.preventDefault();
@@ -16771,8 +16854,9 @@ function setupEventListeners() {
             const isInteractiveElement = target.closest('button') ||
                 target.closest('a') ||
                 target.closest('.suggestion-chip');
+            const isInsideChatContainer = target.closest('#chat-container');
 
-            if (!isInputElement && !isInsideInputWrapper && !isInteractiveElement) {
+            if (!isInputElement && !isInsideInputWrapper && !isInteractiveElement && !isInsideChatContainer) {
                 const messageInput = document.getElementById('message-input');
                 if (document.activeElement === messageInput) {
                     e.preventDefault();
@@ -16788,7 +16872,9 @@ function setupEventListeners() {
             appContainer.addEventListener('touchmove', (e) => {
                 if (!isKeyboardVisible) return;
                 const chatContainer = document.getElementById('chat-container');
-                if (!chatContainer || !chatContainer.contains(e.target)) {
+                const isInsideInputWrapper = e.target.closest('.input-wrapper') ||
+                    e.target.closest('.input-outer-wrapper');
+                if (!chatContainer || (!chatContainer.contains(e.target) && !isInsideInputWrapper)) {
                     e.preventDefault();
                 }
             }, { passive: false });
@@ -17981,11 +18067,3 @@ async function commitInlineEditMode() {
         // 状态在下游复位
     }
 }
-
-
-
-
-
-
-
-

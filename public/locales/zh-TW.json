@@ -283,6 +283,7 @@
         "verificationError": "驗證過程中發生未知錯誤，請稍後重試。",
         "pleaseSelectImage": "請選取圖片檔案",
         "imageSizeExceeded": "圖片大小不能超過 4MB",
+        "photoPermissionDenied": "需要相簿存取權限才能選擇照片，請在系統設定中授予權限",
         "personalInfoUpdated": "個人資訊更新成功",
         "saveFailed": "儲存失敗",
         "allPasswordFieldsRequired": "所有密碼欄位都必須填寫",

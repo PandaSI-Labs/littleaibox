@@ -282,6 +282,7 @@
         "verificationError": "인증 중 알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도하세요.",
         "pleaseSelectImage": "이미지 파일을 선택하세요",
         "imageSizeExceeded": "이미지 크기는 4MB를 초과할 수 없습니다",
+        "photoPermissionDenied": "사진을 선택하려면 사진 라이브러리 접근 권한이 필요합니다. 시스템 설정에서 권한을 부여해 주세요.",
         "personalInfoUpdated": "개인 정보 업데이트 성공",
         "saveFailed": "저장 실패",
         "allPasswordFieldsRequired": "모든 비밀번호 필드를 입력해야 합니다",

@@ -284,6 +284,7 @@
         "verificationError": "認証中に不明なエラーが発生しました。しばらくしてから再試行してください。",
         "pleaseSelectImage": "画像ファイルを選択してください",
         "imageSizeExceeded": "画像サイズは4MBを超えることはできません",
+        "photoPermissionDenied": "写真を選択するにはフォトライブラリへのアクセス許可が必要です。システム設定で許可してください。",
         "personalInfoUpdated": "個人情報が正常に更新されました",
         "saveFailed": "保存に失敗しました",
         "allPasswordFieldsRequired": "すべてのパスワードフィールドを入力する必要があります",

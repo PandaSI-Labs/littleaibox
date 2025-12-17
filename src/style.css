@@ -1837,7 +1837,8 @@ html[data-theme='dark'] .copy-btn:hover {
     width: 100%;
     background-color: var(--main-bg);
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
     position: sticky;
     bottom: 0;
     z-index: 10;

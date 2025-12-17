@@ -283,6 +283,7 @@
         "verificationError": "Une erreur inconnue s'est produite lors de la vérification. Veuillez réessayer plus tard.",
         "pleaseSelectImage": "Veuillez sélectionner un fichier image",
         "imageSizeExceeded": "La taille de l'image ne peut pas dépasser 4 Mo",
+        "photoPermissionDenied": "L'accès à la bibliothèque de photos est requis pour sélectionner des photos. Veuillez accorder l'autorisation dans les paramètres système.",
         "personalInfoUpdated": "Informations personnelles mises à jour avec succès",
         "saveFailed": "Échec de l'enregistrement",
         "allPasswordFieldsRequired": "Tous les champs de mot de passe doivent être remplis",

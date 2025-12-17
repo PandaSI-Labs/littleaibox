@@ -283,6 +283,7 @@
         "verificationError": "Ocurrió un error desconocido durante la verificación. Por favor intente más tarde.",
         "pleaseSelectImage": "Por favor seleccione un archivo de imagen",
         "imageSizeExceeded": "El tamaño de la imagen no puede exceder 4MB",
+        "photoPermissionDenied": "Se requiere acceso a la biblioteca de fotos para seleccionar fotos. Por favor, conceda el permiso en la configuración del sistema.",
         "personalInfoUpdated": "Información personal actualizada exitosamente",
         "saveFailed": "Error al guardar",
         "allPasswordFieldsRequired": "Todos los campos de contraseña deben completarse",

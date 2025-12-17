@@ -283,6 +283,7 @@
         "verificationError": "An unknown error occurred during verification. Please try again later.",
         "pleaseSelectImage": "Please select an image file",
         "imageSizeExceeded": "Image size cannot exceed 4MB",
+        "photoPermissionDenied": "Photo library access is required to select photos. Please grant permission in system settings.",
         "personalInfoUpdated": "Personal information updated successfully",
         "saveFailed": "Save failed",
         "allPasswordFieldsRequired": "All password fields must be filled",
