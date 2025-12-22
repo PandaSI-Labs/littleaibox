@@ -2320,10 +2320,11 @@ function clampGeneratedTitleWords(title = '') {
 const models = [
     { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', descKey: 'models.gemini3ProDesc', context_window: 1000000, hasThinkingLevel: true },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', descKey: 'models.gemini25ProDesc', context_window: 1000000 },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', descKey: 'models.gemini3FlashDesc', context_window: 1000000 },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', descKey: 'models.gemini25FlashDesc', context_window: 1000000 },
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', descKey: 'models.gemini25FlashLiteDesc', context_window: 1000000 },
 ];
-const FREE_TIER_MODEL_IDS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+const FREE_TIER_MODEL_IDS = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
 const GUEST_PAID_MODEL_IDS = ['gemini-2.5-pro'];
 let currentModelId = models[0].id;
 let userSelectedModelId = models[0].id;
@@ -2368,6 +2369,7 @@ function getAvailableModels() {
 // 模型渲染速度配置
 const modelRenderSpeeds = {
     'gemini-3-pro-preview': 1,
+    'gemini-3-flash-preview': 1.2,
     'gemini-2.5-pro': 1,
     'gemini-2.5-flash': 1.2,
     'gemini-2.5-flash-lite': 2
@@ -4375,6 +4377,12 @@ class ScrollManager {
 
         // 内部状态
         this._scrollTimeout = null;
+        this._autoScrollResetTimer = null;
+        this.lastAutoScrollTop = 0;
+        this.userScrollIntentUntil = 0;
+        this._pendingAutoScrollRaf = 0;
+        this._pendingStableAutoScrollRaf = 0;
+        this.pendingSmoothScroll = false;
     }
 
     get container() {
@@ -4385,17 +4393,23 @@ class ScrollManager {
     }
 
     shouldAutoScroll() {
-        return !this.userHasScrolledUp && !this.isUserScrolling;
+        return !this.userHasScrolledUp;
     }
 
     shouldPreserveScrollPosition() {
-        return this.userHasScrolledUp || this.isUserScrolling;
+        return this.userHasScrolledUp;
     }
 
     isAtBottom() {
         const container = this.container;
         if (!container) return true;
         return container.scrollHeight - container.clientHeight <= container.scrollTop + this.bottomThreshold;
+    }
+
+    getMaxScrollTop() {
+        const container = this.container;
+        if (!container) return 0;
+        return Math.max(0, container.scrollHeight - container.clientHeight);
     }
 
     resetUserScrollState() {
@@ -4405,7 +4419,18 @@ class ScrollManager {
     scrollToBottom() {
         const container = this.container;
         if (!container) return;
-        container.scrollTop = container.scrollHeight;
+        const targetScrollTop = this.getMaxScrollTop();
+        if (Math.abs(container.scrollTop - targetScrollTop) <= 1) {
+            return;
+        }
+        this.isAutoScrolling = true;
+        this.lastScrollTime = Date.now();
+        this.lastAutoScrollTop = targetScrollTop;
+        container.scrollTop = targetScrollTop;
+        if (this._autoScrollResetTimer) clearTimeout(this._autoScrollResetTimer);
+        this._autoScrollResetTimer = setTimeout(() => {
+            this.isAutoScrolling = false;
+        }, 80);
     }
 
     smoothScrollToBottom(callback) {
@@ -4415,11 +4440,11 @@ class ScrollManager {
             return;
         }
 
-        const targetScrollTop = container.scrollHeight;
+        const targetScrollTop = this.getMaxScrollTop();
         const startScrollTop = container.scrollTop;
         const distance = targetScrollTop - startScrollTop;
 
-        if (distance <= 0) {
+        if (distance <= 1) {
             if (callback) callback();
             return;
         }
@@ -4436,7 +4461,9 @@ class ScrollManager {
             const progress = Math.min(elapsed / duration, 1);
             const easeOut = 1 - Math.pow(1 - progress, 3);
 
-            container.scrollTop = startScrollTop + (distance * easeOut);
+            const nextTop = startScrollTop + (distance * easeOut);
+            this.lastAutoScrollTop = nextTop;
+            container.scrollTop = nextTop;
 
             if (progress < 1) {
                 requestAnimationFrame(animateScroll);
@@ -4460,7 +4487,46 @@ class ScrollManager {
         }
     }
 
-    handleScrollEvent() {
+    scheduleAutoScrollToBottom() {
+        if (!this.shouldAutoScroll()) return;
+        if (this._pendingAutoScrollRaf) return;
+        this._pendingAutoScrollRaf = requestAnimationFrame(() => {
+            this._pendingAutoScrollRaf = 0;
+            this.scrollToBottom();
+        });
+    }
+
+    scheduleAutoScrollToBottomStable() {
+        if (!this.shouldAutoScroll()) return;
+        if (this._pendingStableAutoScrollRaf) return;
+        this._pendingStableAutoScrollRaf = requestAnimationFrame(() => {
+            this._pendingStableAutoScrollRaf = requestAnimationFrame(() => {
+                this._pendingStableAutoScrollRaf = 0;
+                if (!this.shouldAutoScroll()) return;
+                this.scrollToBottom();
+            });
+        });
+    }
+
+    markUserScrollIntent() {
+        this.userScrollIntentUntil = Date.now() + 300;
+    }
+
+    handleScrollEvent(event) {
+        const container = this.container;
+        if (!container) return;
+        const now = Date.now();
+        const userIntentActive = now <= this.userScrollIntentUntil;
+        if (!userIntentActive) {
+            return;
+        }
+        if (!userIntentActive && this.isAutoScrolling) {
+            const currentTop = container.scrollTop;
+            if (Math.abs(currentTop - this.lastAutoScrollTop) <= 2 || currentTop >= this.lastAutoScrollTop) {
+                return;
+            }
+            this.isAutoScrolling = false;
+        }
         this.isUserScrolling = true;
         this.lastScrollTime = Date.now();
 
@@ -4476,7 +4542,17 @@ class ScrollManager {
         const container = this.container;
         if (!container) return;
 
-        container.addEventListener('scroll', () => this.handleScrollEvent());
+        container.addEventListener('scroll', (event) => this.handleScrollEvent(event));
+        container.addEventListener('wheel', () => this.markUserScrollIntent(), { passive: true });
+        container.addEventListener('touchstart', () => this.markUserScrollIntent(), { passive: true });
+        container.addEventListener('touchmove', () => this.markUserScrollIntent(), { passive: true });
+        container.addEventListener('pointerdown', () => this.markUserScrollIntent(), { passive: true });
+        container.addEventListener('mousedown', () => this.markUserScrollIntent(), { passive: true });
+        window.addEventListener('keydown', (event) => {
+            if (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'End', 'Home', ' '].includes(event.key)) {
+                this.markUserScrollIntent();
+            }
+        }, { passive: true });
     }
 }
 
@@ -4493,8 +4569,19 @@ function shouldPreserveScrollPosition() {
     return scrollManager.shouldPreserveScrollPosition();
 }
 
+function scheduleAutoScrollToBottom() {
+    scrollManager.scheduleAutoScrollToBottom();
+}
+
+function scheduleAutoScrollToBottomStable() {
+    scrollManager.scheduleAutoScrollToBottomStable();
+}
+
 function ensureMessageActionsVisible(messageElement, gap = 12) {
     if (!messageElement || !elements.chatContainer) {
+        return;
+    }
+    if (shouldAutoScroll()) {
         return;
     }
     const actionsRow = messageElement.querySelector('.message-actions');
@@ -8510,7 +8597,9 @@ async function deleteChat(chatId, showConfirmation = true, isBatchOperation = fa
     }
 
     try {
-        if (currentUser) {
+        const isTempChat = chatId.startsWith('temp_');
+
+        if (currentUser && !isTempChat) {
             const response = await makeApiRequest(`chats/${chatId}`, {
                 method: 'DELETE'
             });
@@ -8518,6 +8607,8 @@ async function deleteChat(chatId, showConfirmation = true, isBatchOperation = fa
             if (!response.success) {
                 throw new Error(response.error || getToastMessage('errors.serverCannotDeleteConversation'));
             }
+            await saveChatsToDB(currentUser.id, chats);
+        } else if (currentUser && isTempChat) {
             await saveChatsToDB(currentUser.id, chats);
         }
 
@@ -9035,6 +9126,24 @@ const mathRenderer = new MathRenderer(KATEX_CONFIG);
 const STREAMING_HORIZONTAL_RULE_TAIL_RE = /(?:^|\r?\n)[ \t]{0,3}([\*\-_])(?:[ \t]*\1){2,}[ \t]*$/;
 const EXPLICIT_HORIZONTAL_RULE_RE = /(?:^|\r?\n)[ \t]{0,3}([*\-_])(?:[ \t]*\1){2,}[ \t]*(?:\r?\n|$)/;
 
+function findLastCompleteDisplayMathEnd(html) {
+    if (!html) return -1;
+    const indices = [];
+    for (let i = 0; i < html.length - 1; i++) {
+        if (html[i] === '$' && html[i + 1] === '$' && html[i - 1] !== '\\') {
+            indices.push(i);
+        }
+    }
+    if (indices.length < 2) return -1;
+    if (indices.length % 2 === 1) indices.pop();
+
+    const closingIndex = indices[indices.length - 1];
+    let end = closingIndex + 2;
+    const tail = html.slice(end).match(/^(?:\s*(?:<\/p>|<\/div>|<br\s*\/?>))+/i);
+    if (tail) end += tail[0].length;
+    return end;
+}
+
 function stripStreamingHorizontalRuleTail(text) {
     if (!text) return text;
     let end = text.length;
@@ -9435,15 +9544,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         const tableLockEnd = lastTableCloseIndex === -1 ? -1 : lastTableCloseIndex + '</table>'.length;
         const codeLockEnd = lastPreCloseIndex === -1 ? -1 : lastPreCloseIndex + '</pre>'.length;
 
-        let mathLockEnd = -1;
-        const displayMathClosePattern = /\$\$(?:\s*(?:<\/p>|<\/div>|<br\s*\/?>)|\s*\n|\s*$|\s+(?=[^$\\]))/gi;
-        let mathMatch;
-        while ((mathMatch = displayMathClosePattern.exec(finalSanitizedHtml)) !== null) {
-            const matchEnd = mathMatch.index + mathMatch[0].length;
-            if (matchEnd > mathLockEnd) {
-                mathLockEnd = matchEnd;
-            }
-        }
+        let mathLockEnd = findLastCompleteDisplayMathEnd(finalSanitizedHtml);
 
         const newLockEnd = syntheticFenceAdded
             ? Math.max(tableLockEnd, mathLockEnd)
@@ -9547,7 +9648,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                         elements.chatContainer.scrollTop = beforeScrollTop + heightDelta;
                     }
                 } else {
-                    elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+                    scheduleAutoScrollToBottomStable();
                 }
             });
         }
@@ -9583,7 +9684,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                         elements.chatContainer.scrollTop = vegaBeforeScrollTop + heightDelta;
                     }
                 } else {
-                    elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+                    scheduleAutoScrollToBottomStable();
                 }
             });
         } else {
@@ -10131,6 +10232,7 @@ function appendMessage(role, content) {
     const scrollTop = elements.chatContainer.scrollTop;
     const isScrolledToBottom = scrollHeight - clientHeight <= scrollTop + 20;
     const shouldForceScroll = role === 'user' && !isScrolledToBottom;
+    const deferAutoScroll = role === 'user' && shouldForceScroll;
 
     if (shouldForceScroll || isScrolledToBottom) {
         scrollManager.isAutoScrolling = true;
@@ -10139,20 +10241,31 @@ function appendMessage(role, content) {
             scrollManager.resetUserScrollState();
         }
 
-        smoothScrollToBottom();
-        setTimeout(() => {
-            scrollManager.isAutoScrolling = false;
-        }, 250);
+        if (deferAutoScroll) {
+            scrollManager.pendingSmoothScroll = true;
+        } else if (shouldForceScroll) {
+            scrollManager.smoothScrollToBottom();
+        } else {
+            scheduleAutoScrollToBottom();
+            setTimeout(() => {
+                scrollManager.isAutoScrolling = false;
+            }, 250);
+        }
 
         const ensureActions = () => ensureMessageActionsVisible(messageElement);
         if (renderPromise && typeof renderPromise.then === 'function') {
             renderPromise.finally(() => {
-                smoothScrollToBottom();
+                scheduleAutoScrollToBottom();
                 ensureActions();
             });
         } else {
             ensureActions();
         }
+    }
+
+    if (scrollManager.pendingSmoothScroll && role !== 'user') {
+        scrollManager.pendingSmoothScroll = false;
+        scrollManager.smoothScrollToBottom();
     }
 
     if (isWelcomePage) {
@@ -11282,8 +11395,21 @@ async function processStreamedResponse(response, contentDiv) {
                 const shouldRenderNow = (now - lastRenderTime) >= STREAM_RENDER_INTERVAL_MS || charQueue.length === 0;
                 if (shouldRenderNow) {
                     try {
+                        const wasAtBottom = scrollManager.isAtBottom();
+                        const beforeHeight = wasAtBottom ? elements.chatContainer.scrollHeight : 0;
+                        const beforeScrollTop = wasAtBottom ? elements.chatContainer.scrollTop : 0;
                         renderMessageContent(contentDiv, globalDisplayBuffer);
-                        scrollManager.autoScrollToBottomIfNeeded();
+                        if (wasAtBottom && shouldAutoScroll()) {
+                            const afterHeight = elements.chatContainer.scrollHeight;
+                            const heightDelta = afterHeight - beforeHeight;
+                            if (heightDelta !== 0) {
+                                const target = beforeScrollTop + heightDelta;
+                                const maxTop = scrollManager.getMaxScrollTop();
+                                elements.chatContainer.scrollTop = Math.min(target, maxTop);
+                            } else {
+                                scrollManager.scrollToBottom();
+                            }
+                        }
                     } catch (renderError) {
                         console.error(`${getToastMessage('console.renderMessageContentFailed')}:`, renderError);
                         if (contentDiv) {
@@ -12297,10 +12423,6 @@ async function handleChatMessage(userContent, options = {}) {
             requestAnimationFrame(() => {
                 const chatContainer = elements.chatContainer;
                 const prevHeight = contentDiv?.offsetHeight || 0;
-                const distanceToBottom = chatContainer
-                    ? (chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight)
-                    : null;
-
                 if (contentDiv) {
                     contentDiv.style.minHeight = `${prevHeight}px`;
                     if (contentDiv.__renderState) {
@@ -12313,7 +12435,7 @@ async function handleChatMessage(userContent, options = {}) {
                 if (isScrolledToBottom) {
                     const ensureBottom = () => requestAnimationFrame(() => {
                         if (shouldAutoScroll()) {
-                            smoothScrollToBottom();
+                            scheduleAutoScrollToBottom();
                         }
                     });
                     const ensureActions = () => {
@@ -12338,8 +12460,8 @@ async function handleChatMessage(userContent, options = {}) {
                     if (contentDiv) {
                         contentDiv.style.minHeight = '';
                     }
-                    if (distanceToBottom !== null && chatContainer && shouldAutoScroll()) {
-                        chatContainer.scrollTop = chatContainer.scrollHeight - chatContainer.clientHeight - distanceToBottom;
+                    if (chatContainer && shouldAutoScroll()) {
+                        scheduleAutoScrollToBottom();
                     }
                 };
                 if (renderPromise && typeof renderPromise.finally === 'function') {
