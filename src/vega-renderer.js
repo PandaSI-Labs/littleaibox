@@ -1,9 +1,9 @@
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 
-const VEGA_SCRIPT_SOURCES = ['/libs/vega.min.js'];
-const VEGA_LITE_SCRIPT_SOURCES = ['/libs/vega-lite.min.js'];
-const VEGA_EMBED_SCRIPT_SOURCES = ['/libs/vega-embed.min.js'];
+export const VEGA_SCRIPT_SOURCES = ['/libs/vega.min.js'];
+export const VEGA_LITE_SCRIPT_SOURCES = ['/libs/vega-lite.min.js'];
+export const VEGA_EMBED_SCRIPT_SOURCES = ['/libs/vega-embed.min.js'];
 
 let vegaInitPromise = null;
 const pendingRenders = new Set();
@@ -141,6 +141,50 @@ function safeParseSpec(raw) {
     }
 }
 
+function normalizeAdjacentArrayBrackets(text) {
+    if (!text || typeof text !== 'string') return text;
+    let result = '';
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inString) {
+            result += ch;
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch === '\\') {
+                escaped = true;
+            } else if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        if (ch === '"') {
+            inString = true;
+            result += ch;
+            continue;
+        }
+
+        if (ch === ']') {
+            let j = i + 1;
+            while (j < text.length && /\s/.test(text[j])) j++;
+            if (j < text.length && text[j] === '[') {
+                result += ', ';
+                i = j;
+                continue;
+            }
+        }
+
+        result += ch;
+    }
+
+    return result;
+}
+
 function normalizeVegaSpecString(raw) {
     if (typeof raw !== 'string') return raw;
     let text = raw;
@@ -148,6 +192,7 @@ function normalizeVegaSpecString(raw) {
     text = text.replace(/[\u00A0\u200B\u200C\u200D]/g, ' ');
     text = text.replace(/(^|[ \t])\/\/[^\n\r]*/gm, '$1');
     text = text.replace(/\/\*[\s\S]*?\*\//g, '');
+    text = normalizeAdjacentArrayBrackets(text);
     text = text.replace(/"domain"\s*:\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]/g, '"domain": [$1, $2]');
     text = text.replace(/\[\s*([-+]?\d+(?:\.\d+)?)\s*\]\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]/g, '[$1, $2]');
     return text;

@@ -15,19 +15,19 @@ import { injectAuthUI } from './auth-template.js';
 import './auth.css';
 import { deleteChatsFromDB, getChatsFromDB, getSettingsFromDB, saveChatsToDB, saveSettingsToDB } from './db.js';
 import { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLanguageApplied, preloadAllTranslations, t } from './i18n.js';
-import { renderMermaidDiagrams } from './mermaid-renderer.js';
+import { MERMAID_SCRIPT_SOURCES, renderMermaidDiagrams } from './mermaid-renderer.js';
 import { cancelMfaVerificationFlow, clearMfaChallengeState, configureMfaLogin, extractMfaChallenge, handleMfaVerificationSubmit, setActiveMfaMethod, setPendingMfaChallenge, showMfaVerificationForm } from './mfa-login.js';
 import { clearPendingOAuthState, handleOAuthCallbackRoute as handleOAuthCallbackRouteImpl, setupNativeOAuthDeepLinkHandler as setupNativeOAuthDeepLinkHandlerImpl, setupOAuthButtons as setupOAuthButtonsImpl } from './oauth-flow.js';
 import router, { DEFAULT_SETTINGS_SECTION } from './router.js';
 import './style.css';
-import { renderVegaLiteDiagrams } from './vega-renderer.js';
+import { VEGA_EMBED_SCRIPT_SOURCES, VEGA_LITE_SCRIPT_SOURCES, VEGA_SCRIPT_SOURCES, renderVegaLiteDiagrams } from './vega-renderer.js';
 
-// ==================== AI System Prompts ====================
-const ROLE_INSTRUCTION = `SYSTEM DIRECTIVE: ON SEXUAL, VIOLENT, HATEFUL, OR HIGH-RISK CONTENT, EXECUTE SAFETY MITIGATION AND REDIRECT THE USER WITH SAFE, RELEVANT ALTERNATIVES. RESPOND IN USER'S LANGUAGE. VISUALIZATION: USE MERMAID FOR DIAGRAMS, VEGA/VEGA-LITE FOR CHARTS; OUTPUT ONLY THE NEEDED CODE/DATA BLOCK.`;
-const FORMAT_INSTRUCTION = `MANDATORY: Use Markdown. Code blocks: \`\`\`lang. Math (STRICTLY REQUIRED): All math MUST be wrapped: inline $x$, display $$x$$. ABSOLUTELY FORBIDDEN: bare math chars. Chemistry: MANDATORY $\\ce{}$ format: $\\ce{H2O}$, $\\ce{A+B->C}$, $\\ce{A<=>B}$. Mermaid (STRICT): (1) Labels/text MUST use double quotes "" (2) FORBIDDEN: fullwidth chars ()（）①② (3) Arrows ONLY --> or == (4) Comments ONLY start-of-line %% (5) First line MUST be flowchart/graph directive. Vega/Vega-Lite (ABSOLUTELY STRICT): Code fences MUST be \`\`\`vega or \`\`\`vega-lite. Content MUST be valid JSON ONLY. FORBIDDEN: [min][max], trailing commas, comments/prose. Vega-Lite: REQUIRED "data","mark","encoding"; add "$schema" when known. Vega: REQUIRED "data","marks". Domain arrays MUST be [min,max]. If uncertain, SKIP Vega entirely.`;
-const SEARCH_CONTEXT_INSTRUCTION = `Answer based on the web search results below. Synthesize the information and cite sources as [1], [2] at sentence ends.`;
-const RESEARCH_MODE_INSTRUCTION = `Answer succinctly using only relevant Semantic Scholar papers [1], [2]... plus user text. Structure clearly when writing (e.g., Abstract/Intro/Methods/Results/Discussion/Conclusion). Cite in-body as [N] ONLY; do NOT output a References list. If evidence is missing/off-topic or language mismatch yields no papers, say so, then add a short "based on general knowledge" section without invented citations. Ignore irrelevant results.`;
-// ===========================================================
+const DIAGRAM_LIBS = [
+    ...MERMAID_SCRIPT_SOURCES.map(src => ({ src, global: 'mermaid' })),
+    ...VEGA_SCRIPT_SOURCES.map(src => ({ src, global: 'vega' })),
+    ...VEGA_LITE_SCRIPT_SOURCES.map(src => ({ src, global: 'vegaLite' })),
+    ...VEGA_EMBED_SCRIPT_SOURCES.map(src => ({ src, global: 'vegaEmbed' }))
+];
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const CustomSplash = registerPlugin('CustomSplash');
@@ -1401,6 +1401,27 @@ function loadScript(src, globalName) {
     return promise;
 }
 
+let diagramPreloadStarted = false;
+
+function preloadDiagramLibraries() {
+    if (diagramPreloadStarted) return;
+    diagramPreloadStarted = true;
+
+    const run = () => {
+        const chain = DIAGRAM_LIBS.reduce(
+            (promise, lib) => promise.then(() => loadScript(lib.src, lib.global)),
+            Promise.resolve()
+        );
+        Promise.allSettled([chain]);
+    };
+
+    if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(run, { timeout: 1500 });
+    } else {
+        setTimeout(run, 500);
+    }
+}
+
 async function prepareScriptSource(src) {
     if (!canUseScriptCache() || !isSameOriginResource(src)) {
         return { url: src, revoke: null };
@@ -2054,6 +2075,35 @@ try {
     }
 } catch (_) { }
 
+function buildCopyTextFromContent(contentDiv) {
+    if (!contentDiv) return '';
+    const clone = contentDiv.cloneNode(true);
+    const displayMathNodes = Array.from(clone.querySelectorAll('.katex-display'));
+    displayMathNodes.forEach((node) => {
+        const annotation = node.querySelector('annotation[encoding="application/x-tex"]');
+        const tex = annotation ? annotation.textContent : node.textContent || '';
+        const text = `$$${tex}$$`;
+        node.replaceWith(document.createTextNode(text));
+    });
+
+    const inlineMathNodes = Array.from(clone.querySelectorAll('.katex'))
+        .filter(node => !node.closest('.katex-display'));
+    inlineMathNodes.forEach((node) => {
+        const annotation = node.querySelector('annotation[encoding="application/x-tex"]');
+        const tex = annotation ? annotation.textContent : node.textContent || '';
+        const text = `$${tex}$`;
+        node.replaceWith(document.createTextNode(text));
+    });
+
+    const temp = document.createElement('div');
+    temp.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none;';
+    temp.appendChild(clone);
+    document.body.appendChild(temp);
+    const text = temp.innerText;
+    temp.remove();
+    return text;
+}
+
 let currentLoadChatId = 0;
 let currentUser = null;
 let sessionId = localStorage.getItem('sessionId');
@@ -2378,15 +2428,7 @@ const modelRenderSpeeds = {
 let currentThinkingLevel = 'high';
 
 function composeSystemPrompt(userPrompt = '') {
-    const parts = [];
-    const trimmed = (userPrompt || '').trim();
-    if (trimmed) {
-        parts.push(trimmed);
-    }
-
-    parts.push(ROLE_INSTRUCTION);
-    parts.push(FORMAT_INSTRUCTION);
-    return parts.filter(Boolean).join('\n\n');
+    return (userPrompt || '').trim();
 }
 
 // DOM元素引用
@@ -3572,22 +3614,22 @@ async function openApkInBrowser(relativePath) {
 }
 
 async function downloadAndInstallApk(version) {
+    const apkUrl = `/downloads/LittleAIBox_v${version}.apk`;
+    let browserFallbackShown = false;
+    const triggerBrowserFallback = async () => {
+        if (!browserFallbackShown) {
+            browserFallbackShown = true;
+            showToast(getToastMessage('apk.openInBrowser'), 'info');
+        }
+        const opened = await openApkInBrowser(apkUrl);
+        if (!opened) {
+            showToast(getToastMessage('apk.updateFailed'), 'error');
+        }
+        return opened;
+    };
+
     try {
         showToast(getToastMessage('apk.downloadingUpdate', { version }), 'info');
-
-        const apkUrl = `/downloads/LittleAIBox_v${version}.apk`;
-        let browserFallbackShown = false;
-        const triggerBrowserFallback = async () => {
-            if (!browserFallbackShown) {
-                browserFallbackShown = true;
-                showToast(getToastMessage('apk.openInBrowser'), 'info');
-            }
-            const opened = await openApkInBrowser(apkUrl);
-            if (!opened) {
-                showToast(getToastMessage('apk.updateFailed'), 'error');
-            }
-            return opened;
-        };
 
         const canUseNativeInstaller = (
             isNativeApp &&
@@ -3677,7 +3719,8 @@ async function downloadAndInstallApk(version) {
 
         showToast(getToastMessage('apk.installPrompt'), 'success');
     } catch (error) {
-        showToast(getToastMessage('apk.updateFailed'), 'error');
+        console.warn('APK update failed, falling back to browser download:', error);
+        await triggerBrowserFallback();
     }
 }
 
@@ -9275,6 +9318,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
 
     if (forcePlainText) {
         try { element.dataset.plainText = 'true'; } catch (_) { }
+        try { element.dataset.rawText = messageText || ''; } catch (_) { }
         element.textContent = messageText || '';
         element.style.whiteSpace = 'pre-wrap';
         if (renderTimeout) {
@@ -9303,6 +9347,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
     }
 
     try {
+        try { element.dataset.rawText = messageText || ''; } catch (_) { }
         const resourcesReady = window.marked && window.DOMPurify && window.hljs && window.renderMathInElement;
         if (!resourcesReady) {
             if (!window.renderMathInElement && typeof loadScript === 'function' && !element.__mathScriptLoading && !element.__mathScriptAttempted) {
@@ -9404,10 +9449,10 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             delete element.__parseState;
         }
 
+        let hasCitationList = false;
         const sourcesMap = new Map();
         if (localCitations && localCitations.length > 0) {
             localCitations.forEach((citation, index) => {
-
                 sourcesMap.set(index + 1, citation);
             });
         }
@@ -9441,6 +9486,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             });
             sourcesListHtml += '</ul></div>';
             citedHtml += sourcesListHtml;
+            hasCitationList = true;
         }
         html = citedHtml;
 
@@ -9648,7 +9694,9 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                         elements.chatContainer.scrollTop = beforeScrollTop + heightDelta;
                     }
                 } else {
-                    scheduleAutoScrollToBottomStable();
+                    if (shouldAutoScroll()) {
+                        scheduleAutoScrollToBottomStable();
+                    }
                 }
             });
         }
@@ -9684,7 +9732,9 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                         elements.chatContainer.scrollTop = vegaBeforeScrollTop + heightDelta;
                     }
                 } else {
-                    scheduleAutoScrollToBottomStable();
+                    if (shouldAutoScroll()) {
+                        scheduleAutoScrollToBottomStable();
+                    }
                 }
             });
         } else {
@@ -9810,6 +9860,27 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             }
         });
 
+        if (isFinalRender && hasCitationList && shouldAutoScroll() && elements?.chatContainer) {
+            const messageEl = element.closest('.message');
+            const lastMessageEl = elements.chatContainer.querySelector('.message:last-of-type');
+            if (messageEl && messageEl === lastMessageEl) {
+                const pendingDiagramPromises = [
+                    element.__mermaidRenderPromise,
+                    element.__vegaLiteRenderPromise
+                ].filter(p => p && typeof p.then === 'function');
+                const performScroll = () => {
+                    if (shouldAutoScroll()) {
+                        smoothScrollToBottom();
+                    }
+                };
+                if (pendingDiagramPromises.length > 0) {
+                    Promise.allSettled(pendingDiagramPromises).finally(() => requestAnimationFrame(performScroll));
+                } else {
+                    requestAnimationFrame(performScroll);
+                }
+            }
+        }
+
         if (renderTimeout) {
             clearTimeout(renderTimeout);
         }
@@ -9927,7 +9998,7 @@ function createMessageElement(role, messageObject) {
     quoteBtn.addEventListener('click', (e) => {
         const btn = e.currentTarget;
 
-        let quoteText = contentDiv.innerText.trim();
+        let quoteText = buildCopyTextFromContent(contentDiv).trim();
         if (!quoteText) {
             quoteText = getAttachmentQuotePlaceholder();
         }
@@ -9986,7 +10057,7 @@ function createMessageElement(role, messageObject) {
         `;
         copyBtn.addEventListener('click', async (e) => {
             const btn = e.currentTarget;
-            const textToCopy = contentDiv.innerText;
+            const textToCopy = buildCopyTextFromContent(contentDiv);
 
             try {
                 if (isNativeApp) {
@@ -10131,6 +10202,24 @@ function extractTextFromUserContent(content) {
         if (typeof content === 'string') return content;
     } catch (_) { }
     return '';
+}
+
+function buildResearchTextFromUserContent(content) {
+    if (!Array.isArray(content)) return '';
+    const textParts = [];
+    const fileLabel = getToastMessage('ui.file') || 'File';
+    const fileEndLabel = getToastMessage('ui.fileEnd') || 'End of file';
+
+    content.forEach(part => {
+        if (part?.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
+            textParts.push(part.text.trim());
+        } else if (part?.type === 'file' && typeof part.content === 'string' && part.content.trim()) {
+            const filename = part.filename || 'attachment';
+            textParts.push(`--- ${fileLabel}: ${filename} ---\n${part.content}\n--- ${fileEndLabel} ---`);
+        }
+    });
+
+    return textParts.join('\n\n').trim();
 }
 
 function cloneUserPartsWithNewText(originalContent, newText) {
@@ -10619,26 +10708,9 @@ async function isLikelyBinaryFile(file) {
 class IntentAnalyzer {
     constructor() {
         this.currentMessageIntentResult = null;
-        this._imageKeywords = null;
         this._creativeKeywords = null;
         this._roleplayKeywords = null;
         this._classicalKeywords = null;
-    }
-
-    getImageKeywords() {
-        if (!this._imageKeywords) {
-            this._imageKeywords = [
-                getToastMessage('intent.keywords.image.generate'),
-                getToastMessage('intent.keywords.image.generatePhoto'),
-                getToastMessage('intent.keywords.image.generateOne'),
-                getToastMessage('intent.keywords.image.drawOne'),
-                getToastMessage('intent.keywords.image.drawOnePicture'),
-                getToastMessage('intent.keywords.image.helpDraw'),
-                getToastMessage('intent.keywords.image.drawForMe'),
-                'generate image', 'generate a picture', 'draw a picture', 'create an image', 'make an image'
-            ];
-        }
-        return this._imageKeywords;
     }
 
     getCreativeKeywords() {
@@ -10699,15 +10771,9 @@ class IntentAnalyzer {
     }
 
     clearKeywordCache() {
-        this._imageKeywords = null;
         this._creativeKeywords = null;
         this._roleplayKeywords = null;
         this._classicalKeywords = null;
-    }
-
-    containsImageKeywords(text) {
-        const lowerText = text.toLowerCase();
-        return this.getImageKeywords().some(keyword => lowerText.includes(keyword.toLowerCase()));
     }
 
     containsCreativeKeywords(text) {
@@ -10725,27 +10791,17 @@ class IntentAnalyzer {
         return this.getClassicalKeywords().some(kw => lowerText.includes(kw.toLowerCase()));
     }
 
-    shouldTriggerIntentAnalysis(userMessageText, conversationHistory = [], options = {}) {
-        const {
-            isImageModeActive = false
-        } = options;
-
-        if (isImageModeActive) {
+    shouldTriggerIntentAnalysis(userMessageText) {
+        if (this.shouldDetectClassicalChinese(userMessageText)) {
             return true;
         }
 
-        if (!isImageModeActive) {
-            if (this.shouldDetectClassicalChinese(userMessageText)) {
-                return true;
-            }
+        if (userMessageText.length >= 20 && this.shouldDetectRoleplay(userMessageText)) {
+            return true;
+        }
 
-            if (userMessageText.length >= 20 && this.shouldDetectRoleplay(userMessageText)) {
-                return true;
-            }
-
-            if (userMessageText.length >= 20 && this.shouldDetectTextCreation(userMessageText)) {
-                return true;
-            }
+        if (userMessageText.length >= 20 && this.shouldDetectTextCreation(userMessageText)) {
+            return true;
         }
 
         return false;
@@ -10819,21 +10875,15 @@ class IntentAnalyzer {
             return `${msg.role}: ${content.substring(0, 200)}`;
         }).join('\n');
 
-        const modeHint = (typeof isImageModeActive !== 'undefined' && isImageModeActive)
-            ? '\nCurrent app mode: IMAGE MODE IS ON. If the request could be visual, prefer "image_generation" or "image_modification". Only choose another intent if the ask is clearly non-visual (e.g., code, translation, math).'
-            : '';
-        const intentAnalysisPrompt = `Analyze the user's intent and classify it into one of these categories: "image_generation", "image_modification", "CLASSICAL_CHINESE_ANALYSIS", "ROLEPLAY_CREATIVE", or "GENERAL_QUERY".
+        const intentAnalysisPrompt = `Analyze the user's intent and classify it into one of these categories: "CLASSICAL_CHINESE_ANALYSIS", "ROLEPLAY_CREATIVE", or "GENERAL_QUERY".
 
         Rules:
-        1. Image Commands: If it explicitly requests "draw", "generate image", "create picture" -> "image_generation"
-        2. Classical Chinese: If it contains classical Chinese, ancient poetry, or historical texts -> "CLASSICAL_CHINESE_ANALYSIS"
-        3. Creative Writing: If it involves roleplay, storytelling, story creation, character scenarios -> "ROLEPLAY_CREATIVE"
-        4. Default: All other cases -> "GENERAL_QUERY"
-        ${modeHint}
+        1. Classical Chinese: classical Chinese, ancient poetry, or historical texts -> "CLASSICAL_CHINESE_ANALYSIS"
+        2. Creative Writing: roleplay, storytelling, story creation, character scenarios -> "ROLEPLAY_CREATIVE"
+        3. Default: all other cases -> "GENERAL_QUERY"
 
         Examples:
-        - "Draw a sunset" -> "image_generation"
-        - "??????" -> "CLASSICAL_CHINESE_ANALYSIS"
+        - "请赏析《静夜思》" -> "CLASSICAL_CHINESE_ANALYSIS"
         - "Write a story about..." -> "ROLEPLAY_CREATIVE"
         - "What's the weather?" -> "GENERAL_QUERY"
 
@@ -10846,8 +10896,10 @@ class IntentAnalyzer {
             const response = await callAISynchronously(intentAnalysisPrompt, 'gemini-2.5-flash-lite', false);
             const result = safeJsonParse(response);
 
-            if (result && result.intent && ['image_generation', 'image_modification', 'CLASSICAL_CHINESE_ANALYSIS', 'ROLEPLAY_CREATIVE', 'GENERAL_QUERY'].includes(result.intent)) {
-                console.log(`${getToastMessage('console.aiIntentAnalysisResult')}:`, result);
+            if (result && result.intent && ['CLASSICAL_CHINESE_ANALYSIS', 'ROLEPLAY_CREATIVE', 'GENERAL_QUERY'].includes(result.intent)) {
+                console.log(`${getToastMessage('console.aiIntentAnalysisResult')}:`, {
+                    mode: result.intent
+                });
                 const finalResult = {
                     intent: result.intent,
                     confidence: result.confidence || 0.7,
@@ -10881,23 +10933,11 @@ class IntentAnalyzer {
         if (this.containsClassicalChineseKeywords(userMessageText)) {
             return { intent: 'CLASSICAL_CHINESE_ANALYSIS', confidence: 0.7, reasoning: getToastMessage('ui.classicalKeywordMatch') };
         }
-
-
-        if (this.containsImageKeywords(userMessageText)) {
-            return { intent: 'image_generation', confidence: 0.6, reasoning: getToastMessage('ui.keywordMatch') };
-        }
-
         return { intent: 'GENERAL_QUERY', confidence: 0.9, reasoning: getToastMessage('ui.defaultTextResponse') };
     }
 
-    async performUnifiedIntentAnalysis(userMessageText, conversationHistory = [], options = {}) {
-        const {
-            checkImageGeneration = false,
-            isImageModeActive = false,
-            hasFileAttachments = false
-        } = options;
-
-        const needsAIAnalysis = this.shouldTriggerIntentAnalysis(userMessageText, conversationHistory, options);
+    async performUnifiedIntentAnalysis(userMessageText, conversationHistory = []) {
+        const needsAIAnalysis = this.shouldTriggerIntentAnalysis(userMessageText);
 
         let intentResult = null;
         if (needsAIAnalysis) {
@@ -10906,57 +10946,166 @@ class IntentAnalyzer {
 
         const result = {
             shouldGenerateImage: false,
-            shouldSuggestImageMode: false,
             shouldUseClassicalChinesePrompt: false,
             shouldUseRoleplayPrompt: false,
             shouldUseCreativePrompt: false,
             intentResult
         };
 
-        if (isImageModeActive) {
-            result.shouldGenerateImage = intentResult
-                ? (intentResult.intent === 'image_generation' || intentResult.intent === 'image_modification')
-                : false;
-        } else {
-            if (this.shouldDetectClassicalChinese(userMessageText)) {
-                result.shouldUseClassicalChinesePrompt = intentResult ? intentResult.intent === 'CLASSICAL_CHINESE_ANALYSIS' : true;
-            }
+        if (this.shouldDetectClassicalChinese(userMessageText)) {
+            result.shouldUseClassicalChinesePrompt = intentResult ? intentResult.intent === 'CLASSICAL_CHINESE_ANALYSIS' : true;
+        }
 
-            if (this.shouldDetectRoleplay(userMessageText)) {
-                result.shouldUseRoleplayPrompt = intentResult ? intentResult.intent === 'ROLEPLAY_CREATIVE' : true;
-            }
+        if (this.shouldDetectRoleplay(userMessageText)) {
+            result.shouldUseRoleplayPrompt = intentResult ? intentResult.intent === 'ROLEPLAY_CREATIVE' : true;
+        }
 
-            if (this.shouldDetectTextCreation(userMessageText)) {
-                result.shouldUseCreativePrompt = intentResult ? intentResult.intent === 'ROLEPLAY_CREATIVE' : true;
-            }
-
-            if (checkImageGeneration && !hasFileAttachments) {
-                result.shouldSuggestImageMode = this.containsImageKeywords(userMessageText);
-            }
+        if (this.shouldDetectTextCreation(userMessageText)) {
+            result.shouldUseCreativePrompt = intentResult ? intentResult.intent === 'ROLEPLAY_CREATIVE' : true;
         }
 
         return result;
+    }
+
+    async analyzeIntentWithAttachmentsForImageMode(userContent, userMessageText) {
+        const inlineImages = extractInlineImagesFromContent(userContent);
+        const fileParts = userContent.filter(part =>
+            part?.type === 'file' && typeof part.content === 'string'
+        );
+
+        const allowedIntents = [
+            'IMAGE_GENERATION',
+            'GENERAL_QUERY'
+        ];
+        const MAX_FILES = 3;
+        const MAX_CHARS_PER_FILE = 2000;
+        const fileSummaries = fileParts.slice(0, MAX_FILES).map((part, index) => {
+            const rawText = part.content || '';
+            const trimmed = rawText.trim();
+            const truncated = trimmed.length > MAX_CHARS_PER_FILE
+                ? `${trimmed.slice(0, MAX_CHARS_PER_FILE)}\n[Content truncated]`
+                : trimmed;
+            const filename = part.filename || `file_${index + 1}`;
+            return `File ${index + 1}: ${filename}\n${truncated}`;
+        });
+
+        const prompt = `Intent analysis (IMAGE MODE).
+        Decide IMAGE_GENERATION vs GENERAL_QUERY.
+        If IMAGE_GENERATION: extract detailed visual intent (subjects, attributes, style, setting, composition, lighting) from request+attachments; no inventions; include image_summary if images exist. If images contain readable text, include key OCR text in image_text (short, essential only) and use it for intent.
+        If GENERAL_QUERY: return a concise combined_request for normal chat.
+        Return ONLY JSON: {"combined_request":"detailed sentence","intent":"IMAGE_GENERATION|GENERAL_QUERY","confidence":0.0,"reasoning":"","image_summary":"","image_text":""}
+        Rules: Use English for combined_request, image_summary, and image_text; be detailed for image generation; avoid sexual content/minors/unsafe content. Do NOT include unescaped double quotes in any value; replace them or paraphrase.
+
+        User request: "${userMessageText || ''}"
+        Attachments: ${fileSummaries.length ? fileSummaries.join(' | ') : '[No file text provided]'}
+        `;
+
+        try {
+            const summary = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false, inlineImages);
+            const parsed = safeJsonParse(summary, null);
+            const combined = parsed && typeof parsed.combined_request === 'string'
+                ? parsed.combined_request.trim()
+                : null;
+            const intent = parsed && typeof parsed.intent === 'string'
+                ? parsed.intent.trim()
+                : null;
+            const confidence = parsed && typeof parsed.confidence === 'number'
+                ? parsed.confidence
+                : null;
+            const reasoning = parsed && typeof parsed.reasoning === 'string'
+                ? parsed.reasoning
+                : '';
+            const imageSummary = parsed && typeof parsed.image_summary === 'string'
+                ? parsed.image_summary.trim()
+                : '';
+            const imageText = parsed && typeof parsed.image_text === 'string'
+                ? parsed.image_text.trim()
+                : '';
+            if (!combined || !intent || !allowedIntents.includes(intent)) {
+                return { combinedUserMessageText: combined || null, intentResult: null, imageSummary: '', imageText: '' };
+            }
+            return {
+                combinedUserMessageText: combined,
+                intentResult: {
+                    intent,
+                    confidence: typeof confidence === 'number' ? confidence : 0.7,
+                    reasoning
+                },
+                imageSummary,
+                imageText
+            };
+        } catch (error) {
+            return null;
+        }
+    }
+
+    async analyzeImageModeIntent(userContent, userMessageText, hasImageAttachments, hasFileAttachments) {
+        const attachmentAnalysis = await this.analyzeIntentWithAttachmentsForImageMode(userContent, userMessageText);
+        let combinedUserMessageText = attachmentAnalysis?.combinedUserMessageText || userMessageText;
+        if (attachmentAnalysis?.intentResult) {
+            console.log(`${getToastMessage('console.aiIntentAnalysisResult')}:`, {
+                mode: attachmentAnalysis.intentResult.intent
+            });
+            if (attachmentAnalysis.intentResult.intent === 'IMAGE_GENERATION') {
+                const parts = [];
+                const imageSummary = attachmentAnalysis.imageSummary;
+                const imageText = attachmentAnalysis.imageText;
+                if (imageSummary) {
+                    parts.push(imageSummary);
+                }
+                if (imageText) {
+                    parts.push(`Image text: ${imageText}`);
+                }
+                if (userMessageText) {
+                    parts.push(`User request: ${userMessageText}`);
+                }
+                if (parts.length > 0) {
+                    combinedUserMessageText = parts.join('\n').trim();
+                }
+            }
+            return {
+                combinedUserMessageText,
+                intentAnalysis: {
+                    shouldGenerateImage: attachmentAnalysis.intentResult.intent === 'IMAGE_GENERATION',
+                    shouldSuggestImageMode: false,
+                    shouldUseClassicalChinesePrompt: false,
+                    shouldUseRoleplayPrompt: false,
+                    shouldUseCreativePrompt: false,
+                    intentResult: attachmentAnalysis.intentResult
+                }
+            };
+        }
+
+        const fallbackIntentResult = {
+            intent: 'GENERAL_QUERY',
+            confidence: 0.7,
+            reasoning: getToastMessage('ui.defaultTextResponse')
+        };
+        console.log(`${getToastMessage('console.intentAnalysisFailed')}:`, {
+            mode: fallbackIntentResult.intent
+        });
+        return {
+            combinedUserMessageText,
+            intentAnalysis: {
+                shouldGenerateImage: false,
+                shouldSuggestImageMode: false,
+                shouldUseClassicalChinesePrompt: false,
+                shouldUseRoleplayPrompt: false,
+                shouldUseCreativePrompt: false,
+                intentResult: fallbackIntentResult
+            }
+        };
     }
 }
 
 const intentAnalyzer = new IntentAnalyzer();
 
-async function performUnifiedIntentAnalysis(userMessageText, conversationHistory = [], options = {}) {
-    return await intentAnalyzer.performUnifiedIntentAnalysis(userMessageText, conversationHistory, options);
-}
-
-function containsImageKeywords(text) {
-    return intentAnalyzer.containsImageKeywords(text);
+async function performUnifiedIntentAnalysis(userMessageText, conversationHistory = []) {
+    return await intentAnalyzer.performUnifiedIntentAnalysis(userMessageText, conversationHistory);
 }
 
 function extractImagePrompt(userMessageText) {
     let prompt = userMessageText;
-    const instructionWords = intentAnalyzer.getImageKeywords();
-
-    instructionWords.forEach(word => {
-        prompt = prompt.replace(new RegExp(word, 'gi'), '').trim();
-    });
-
     const fillerWords = [getToastMessage('ui.please'), getToastMessage('ui.helpMe'), getToastMessage('ui.giveMe'), getToastMessage('ui.iWant'), getToastMessage('ui.iNeed'), 'please', 'help me', 'i want', 'i need'];
     fillerWords.forEach(word => {
         prompt = prompt.replace(new RegExp(`^${word}`, 'gi'), '').trim();
@@ -10982,23 +11131,6 @@ function extractInlineImagesFromContent(userContent) {
     return images;
 }
 
-async function describeImagesWithToolUse(userContent, userMessageText) {
-    const inlineImages = extractInlineImagesFromContent(userContent);
-    if (!inlineImages.length) return null;
-
-    const prompt = `You are a vision assistant. Describe the key subjects, style, and setting of the provided image(s). 
-        Use the SAME LANGUAGE as this user request if it exists, keep it concise (10-30 words per image), and number multiple images.
-        If you cannot access the image, reply exactly "Image not available". 
-        User request: "${userMessageText || ''}"`;
-
-    try {
-        const description = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false, inlineImages);
-        return typeof description === 'string' ? description.trim() : null;
-    } catch (error) {
-        console.warn('Image description via tool-use failed:', error);
-        return null;
-    }
-}
 
 async function generateCombinedImagePrompt(userMessageText, conversationHistory, intent, imageDescription = null) {
     const userPrompt = extractImagePrompt(userMessageText);
@@ -11006,7 +11138,7 @@ async function generateCombinedImagePrompt(userMessageText, conversationHistory,
         ? `${imageDescription}\nUser request: ${userPrompt}`
         : userPrompt;
 
-    if (intent === 'image_generation') {
+    if (intent === 'IMAGE_GENERATION') {
         const promptForAI = `Act as a strict AI image prompt builder. Rewrite the user's description into a single detailed English prompt for Midjourney/Stable Diffusion. Maximize clarity, quality, and style. Return ONLY the final prompt, nothing else.
         User's description: "${sourcePrompt}"`;
 
@@ -11052,7 +11184,8 @@ async function generateCombinedImagePrompt(userMessageText, conversationHistory,
         Original prompt: "${originalPrompt}"
         User's modification request: "${userMessageText}"`;
 
-        const localizedDescriptionPrompt = `Write a concise 10-20 word description in the user's language for the modified image. Be direct and highlight key features. Return ONLY the description text.
+        const targetLang = getCurrentLanguage() || currentUser?.language || 'zh-CN';
+        const localizedDescriptionPrompt = `Write a concise 10-20 word description in ${targetLang} for the modified image. Be direct and highlight key features. Return ONLY the description text.
         Original image info: "${originalPrompt}"
         User's modification request: "${userMessageText}"`;
 
@@ -11220,9 +11353,10 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
                 let localizedDescription = promptObject.localizedDescription || null;
                 if (!localizedDescription) {
                     try {
-                        const localizedDescriptionPrompt = `Write a concise 15-30 word description in the user's language for this generated image request. Be direct and highlight key subjects, style, and setting. Return ONLY the description text.
-Request: "${promptObject.original}"
-English prompt: "${englishPrompt}"`;
+                        const targetLang = getCurrentLanguage() || currentUser?.language || 'zh-CN';
+                        const localizedDescriptionPrompt = `Write a concise 15-30 word description in ${targetLang} for this generated image request. Be direct and highlight key subjects, style, and setting. Return ONLY the description text.
+                        Request: "${promptObject.original}"
+                        English prompt: "${englishPrompt}"`;
                         const localizedDescriptionRaw = await callAISynchronously(localizedDescriptionPrompt, 'gemini-2.5-flash-lite');
                         localizedDescription = await translateToUserLanguage(
                             (localizedDescriptionRaw || promptObject.original || '').toString().trim().replace(/^["']|["']$/g, '')
@@ -11251,6 +11385,23 @@ English prompt: "${englishPrompt}"`;
                 const messages = chats[chatIdForRequest].messages;
                 if (messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
                     messages[messages.length - 1] = assistantMessage;
+                }
+                if (shouldAutoScroll()) {
+                    const renderedImg = contentDiv?.querySelector('img[data-image-url]');
+                    const scheduleScroll = () => {
+                        if (shouldAutoScroll()) {
+                            smoothScrollToBottom();
+                        }
+                    };
+                    if (renderedImg) {
+                        if (renderedImg.complete) {
+                            requestAnimationFrame(scheduleScroll);
+                        } else {
+                            renderedImg.addEventListener('load', () => requestAnimationFrame(scheduleScroll), { once: true });
+                        }
+                    } else {
+                        requestAnimationFrame(scheduleScroll);
+                    }
                 }
                 activeResponses.delete(chatIdForRequest);
 
@@ -11570,9 +11721,7 @@ async function handleSearchAndChat(userMessageText) {
                 <span>${getToastMessage('ui.integratingWebInfo')}</span>
             </div>`;
 
-        const instructionHeader = `${ROLE_INSTRUCTION}\n${FORMAT_INSTRUCTION}\n\n---\n\n`;
-
-        let searchContext = instructionHeader + SEARCH_CONTEXT_INSTRUCTION + "\n\n【" + getToastMessage('ui.networkSearchResults') + "】:\n\n";
+        let searchContext = "【" + getToastMessage('ui.networkSearchResults') + "】:\n\n";
         searchResults.results.forEach((result, index) => {
             searchContext += `[${index + 1}] ${getToastMessage('ui.title')}: ${result.title}\n${getToastMessage('ui.url')}: ${result.url}\n${getToastMessage('ui.summary')}: ${result.content}\n\n`;
         });
@@ -11601,7 +11750,8 @@ async function handleSearchAndChat(userMessageText) {
             temperature: aiParameters.temperature,
             top_p: aiParameters.topP,
             top_k: aiParameters.topK,
-            system_prompt: composeSystemPrompt(aiParameters.systemPrompt)
+            system_prompt: composeSystemPrompt(aiParameters.systemPrompt),
+            context_mode: 'search'
         };
 
         if (currentModelId === 'gemini-3-pro-preview' && currentThinkingLevel) {
@@ -11638,11 +11788,11 @@ async function handleSearchAndChat(userMessageText) {
             }
         } catch (_) { }
 
-        const { fullResponse } = await processStreamedResponse(response, contentDiv);
+        const { fullResponse, finalCitations } = await processStreamedResponse(response, contentDiv);
 
-        const searchCitations = searchResults.success
+        const searchCitations = finalCitations || (searchResults.success
             ? searchResults.results.map(r => ({ uri: r.url, title: r.title }))
-            : null;
+            : null);
 
         assistantMessageToSave = {
             role: 'assistant',
@@ -11658,6 +11808,8 @@ async function handleSearchAndChat(userMessageText) {
         }
 
         chats[chatIdForRequest].messages.push(assistantMessageToSave);
+        const userIdForDb = currentUser?.id || 'guest';
+        saveChatsToDB(userIdForDb, chats).catch(err => console.error('Failed to save chats to cache:', err));
         requestSuccessful = true;
 
     } catch (error) {
@@ -11701,6 +11853,8 @@ async function handleSearchAndChat(userMessageText) {
         renderMessageContent(contentDiv, `${getToastMessage('ui.searchProcessError')}: ${errorMessage}`);
         assistantMessageToSave = { role: 'assistant', content: `${getToastMessage('ui.searchProcessError')}: ${errorMessage}` };
         chats[chatIdForRequest].messages.push(assistantMessageToSave);
+        const userIdForDb = currentUser?.id || 'guest';
+        saveChatsToDB(userIdForDb, chats).catch(err => console.error('Failed to save chats to cache:', err));
     } finally {
         resetSendButtonState();
     }
@@ -11766,7 +11920,7 @@ async function handleResearchAndChat(userContent, userMessageText) {
             </div>`;
     };
 
-    renderPlaceholder(getToastMessage('aiProcessing.intelligentChunking'));
+    renderPlaceholder(getToastMessage('ui.thinking'));
 
     let researchSourceText = queryText;
     let userMessageToSave = { role: 'user', content: cloneMessageParts(userMessage) || userMessage };
@@ -11774,48 +11928,95 @@ async function handleResearchAndChat(userContent, userMessageText) {
     let requestSuccessful = false;
 
     try {
-        const totalTextLength = (() => {
-            let len = queryText.length;
-            (userContent || []).forEach(part => {
-                if (part.type === 'text' && part.text) len += part.text.length;
-                if (part.type === 'file' && typeof part.content === 'string') len += part.content.length;
-            });
-            return len;
-        })();
+        const combinedContentText = buildResearchTextFromUserContent(userContent) || queryText;
+        const totalTextLength = combinedContentText.length;
 
         if (totalTextLength > LARGE_TEXT_THRESHOLD) {
             showToast(getToastMessage('toast.largeAttachmentProcessing'), 'info');
             renderPlaceholder(getToastMessage('aiProcessing.intelligentChunking'));
-            try {
-                const deepResult = await handleDeepAnalysis(userContent, queryText, null);
-                if (deepResult?.content) {
-                    if (typeof deepResult.content === 'string') {
-                        researchSourceText = deepResult.content;
-                    } else {
-                        const extracted = extractTextFromUserContent(deepResult.content);
-                        if (extracted && extracted.trim()) {
-                            researchSourceText = extracted;
+
+            const summarizeLargeContent = async () => {
+                let allChunks = [];
+                userContent.forEach(part => {
+                    let partChunks = [];
+                    if (part.type === 'text' && part.text) {
+                        partChunks = smartChunkingByParagraphs(part.text, CHUNK_CONFIG.summarize.size);
+                        if (partChunks.length === 0) {
+                            partChunks = smartChunking(part.text, CHUNK_CONFIG.summarize.size, CHUNK_CONFIG.summarize.overlap);
+                        }
+                    } else if (part.type === 'file' && typeof part.content === 'string') {
+                        const filename = part.filename || 'attachment';
+                        const fileType = detectFileType(filename, part.content);
+                        const fileLabel = getToastMessage('ui.file') || 'File';
+                        const fileEndLabel = getToastMessage('ui.fileEnd') || 'End of file';
+                        let fileContent = `--- ${fileLabel}: ${filename} ---\n${part.content}\n--- ${fileEndLabel} ---`;
+                        switch (fileType) {
+                            case 'code': partChunks = chunkCode(fileContent, CHUNK_CONFIG.summarize.size); break;
+                            case 'markdown': partChunks = chunkMarkdown(fileContent, CHUNK_CONFIG.summarize.size); break;
+                            case 'table': partChunks = chunkTable(fileContent, CHUNK_CONFIG.analyze.size); break;
+                            default:
+                                partChunks = smartChunkingByParagraphs(fileContent, CHUNK_CONFIG.summarize.size);
+                                if (partChunks.length === 0) {
+                                    partChunks = smartChunking(fileContent, CHUNK_CONFIG.summarize.size, CHUNK_CONFIG.summarize.overlap);
+                                }
+                                break;
                         }
                     }
+                    allChunks.push(...partChunks);
+                });
+
+                let cumulativeSummary = '';
+                for (let i = 0; i < allChunks.length; i++) {
+                    const chunk = allChunks[i];
+                    if (contentDiv) {
+                        contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.analyzingPart', { current: i + 1, total: allChunks.length })}</div>`;
+                    }
+
+                    const MAX_PROMPT_LENGTH = 30000;
+                    let prompt = i === 0
+                        ? `Summarize this text part (${i + 1}/${allChunks.length}):\n${chunk}`
+                        : `Update summary with new content. Previous: ${cumulativeSummary}\n\nNew part (${i + 1}/${allChunks.length}):\n${chunk}`;
+
+                    if (prompt.length > MAX_PROMPT_LENGTH) {
+                        prompt = prompt.substring(0, MAX_PROMPT_LENGTH) + '\n\n[Content truncated due to length limit]';
+                    }
+
+                    await applyChunkProcessingCooldown(false);
+                    const chunkSummary = await callAISynchronously(prompt);
+                    cumulativeSummary = chunkSummary;
+
+                    if (i < allChunks.length - 1) {
+                        await sleep(1500);
+                    }
                 }
+
+                if (contentDiv) {
+                    contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.allPartsAnalyzed')}</div>`;
+                }
+
+                return cumulativeSummary;
+            };
+
+            try {
+                const summaryText = await summarizeLargeContent();
+                const mergedText = [summaryText, queryText].filter(Boolean).join('\n\n');
+                researchSourceText = mergedText || queryText;
             } catch (e) {
-                researchSourceText = queryText;
+                researchSourceText = combinedContentText || queryText;
             }
+
             renderPlaceholder(getToastMessage('ui.collectingLiterature'));
         } else {
+            researchSourceText = combinedContentText;
             renderPlaceholder(getToastMessage('ui.collectingLiterature'));
         }
 
-        const translatedResearchText = await translateQueryToEnglishForResearch(researchSourceText);
-        if (translatedResearchText) {
-            researchSourceText = translatedResearchText;
-        }
-
-        const semanticScholarQuery = await buildSemanticScholarQuery(researchSourceText);
+        const inlineImages = extractInlineImagesFromContent(userContent);
+        const semanticScholarQuery = await buildSemanticScholarQuery(researchSourceText, inlineImages);
         const finalResearchQuery = semanticScholarQuery || researchSourceText;
         await sleep(1000);
 
-        const researchResults = await makeApiRequest('semantic-scholar', {
+        const researchResults = await makeApiRequest('research-search', {
             method: 'POST',
             body: JSON.stringify({
                 query: finalResearchQuery,
@@ -11829,10 +12030,6 @@ async function handleResearchAndChat(userContent, userMessageText) {
         const noPapersFound = !researchResults.results.length;
 
         renderPlaceholder(getToastMessage('ui.integratingLiterature'));
-
-        const preferredLanguage = getCurrentLanguage() || currentUser?.language || 'zh-CN';
-        const languageInstruction = preferredLanguage ? `\nRespond in ${preferredLanguage}.` : '';
-        const systemContext = `${ROLE_INSTRUCTION}\n${FORMAT_INSTRUCTION}\n\n${RESEARCH_MODE_INSTRUCTION}${languageInstruction}`;
 
         let researchContext =
             `${getToastMessage('ui.networkSearchResults') || 'Search Results'}:\n`;
@@ -11869,13 +12066,11 @@ async function handleResearchAndChat(userContent, userMessageText) {
         const conversationHistory = chats[chatIdForRequest]?.messages || [];
         const historyToSend = conversationHistory.slice(-10);
 
-        const messagesForAI = [{ role: 'system', content: systemContext }];
-        historyToSend.forEach((msg, index) => {
+        const messagesForAI = historyToSend.map((msg, index) => {
             if (index === historyToSend.length - 1 && msg.role === 'user') {
-                messagesForAI.push({ role: 'user', content: researchContext });
-            } else {
-                messagesForAI.push(msg);
+                return { role: 'user', content: researchContext };
             }
+            return msg;
         });
 
         const headers = { 'Content-Type': 'application/json' };
@@ -11891,7 +12086,8 @@ async function handleResearchAndChat(userContent, userMessageText) {
             temperature: aiParameters.temperature,
             top_p: aiParameters.topP,
             top_k: aiParameters.topK,
-            system_prompt: composeSystemPrompt(aiParameters.systemPrompt)
+            system_prompt: composeSystemPrompt(aiParameters.systemPrompt),
+            context_mode: 'research'
         };
 
         if (currentModelId === 'gemini-3-pro-preview' && currentThinkingLevel) {
@@ -11927,16 +12123,21 @@ async function handleResearchAndChat(userContent, userMessageText) {
             }
         } catch (_) { }
 
-        const { fullResponse } = await processStreamedResponse(response, contentDiv);
+        const { fullResponse, finalCitations } = await processStreamedResponse(response, contentDiv);
 
-        const researchCitations = (!noPapersFound && Array.isArray(researchResults.results))
+        const researchCitations = finalCitations || ((!noPapersFound && Array.isArray(researchResults.results))
             ? researchResults.results
                 .map(r => {
-                    const uri = r.url || r.paperUrl || r.link || (r.paperId ? `https://www.semanticscholar.org/paper/${r.paperId}` : '');
-                    return uri ? { uri, title: r.title } : null;
+                    const title = r.title || 'Untitled';
+                    const uri = r.url
+                        || r.paperUrl
+                        || r.link
+                        || (r.paperId ? `https://www.semanticscholar.org/paper/${r.paperId}` : '')
+                        || (title ? `https://www.semanticscholar.org/search?q=${encodeURIComponent(title)}` : '');
+                    return uri ? { uri, title } : null;
                 })
                 .filter(Boolean)
-            : null;
+            : null);
 
         assistantMessageToSave = {
             role: 'assistant',
@@ -11952,6 +12153,8 @@ async function handleResearchAndChat(userContent, userMessageText) {
         }
 
         chats[chatIdForRequest].messages.push(assistantMessageToSave);
+        const userIdForDb = currentUser?.id || 'guest';
+        saveChatsToDB(userIdForDb, chats).catch(err => console.error('Failed to save chats to cache:', err));
         requestSuccessful = true;
 
     } catch (error) {
@@ -11960,6 +12163,8 @@ async function handleResearchAndChat(userContent, userMessageText) {
         renderMessageContent(contentDiv, `${getToastMessage('ui.searchProcessError')}: ${errorMessage}`);
         assistantMessageToSave = { role: 'assistant', content: `${getToastMessage('ui.searchProcessError')}: ${errorMessage}` };
         chats[chatIdForRequest].messages.push(assistantMessageToSave);
+        const userIdForDb = currentUser?.id || 'guest';
+        saveChatsToDB(userIdForDb, chats).catch(err => console.error('Failed to save chats to cache:', err));
     } finally {
         resetSendButtonState();
     }
@@ -12023,10 +12228,14 @@ function showUsageLimitModal() {
     };
     elements.limitModalOverlay.classList.add('visible');
 }
+
 async function handleChatMessage(userContent, options = {}) {
-    const { existingAssistantElement = null, skipLengthCheck = false, contentForDisplay = null } = options;
-    const contentToDisplayAndSave = contentForDisplay || userContent;
+    const {
+        existingAssistantElement = null,
+        intentAnalysisOverride = null
+    } = options;
     let progressTimer = null;
+    let resolvedCitations = null;
 
     if (!currentChatId) await startNewChat(true);
     const chatIdForRequest = currentChatId;
@@ -12036,9 +12245,9 @@ async function handleChatMessage(userContent, options = {}) {
     const conversationHistory = chats[chatIdForRequest]?.messages || [];
 
     // 使用统一的意图分析函数
-    const intentAnalysis = await performUnifiedIntentAnalysis(userMessageText, conversationHistory, {
-        checkImageGeneration: false
-    });
+    const intentAnalysis = intentAnalysisOverride
+        ? intentAnalysisOverride
+        : await performUnifiedIntentAnalysis(userMessageText, conversationHistory);
 
     const previousHistory = chats[chatIdForRequest]?.messages || [];
     const WARNING_CHAR_LIMIT = 60000;
@@ -12164,16 +12373,6 @@ async function handleChatMessage(userContent, options = {}) {
         activeResponses.set(chatIdForRequest, { controller, timestamp });
 
         let progressTimer = null;
-        const shouldShowLongWaitMessage = () => {
-            const messageText = messagesForAI[messagesForAI.length - 1]?.content;
-            const hasLargeContent = JSON.stringify(messageText).length > 10000;
-            const hasFiles = Array.isArray(messageText) && messageText.some(part => part.type === 'file');
-            const isComplexQuery = typeof messageText === 'string' &&
-                (messageText.includes(getToastMessage('ui.detailed')) || messageText.includes(getToastMessage('ui.analyze')) ||
-                    messageText.includes(getToastMessage('ui.explain')) || messageText.length > 500);
-
-            return hasLargeContent || hasFiles || isComplexQuery;
-        };
 
         const headers = { 'Content-Type': 'application/json' };
         if (sessionId) {
@@ -12338,6 +12537,9 @@ async function handleChatMessage(userContent, options = {}) {
 
         const { fullResponse: responseText, finalCitations, finishReason, interrupted } = await processStreamedResponse(response, contentDiv);
         fullResponse = responseText.trim();
+        resolvedCitations = Array.isArray(finalCitations) && finalCitations.length > 0
+            ? finalCitations
+            : null;
 
         if (finishReason || interrupted) {
             let warningMessage = '';
@@ -12430,7 +12632,7 @@ async function handleChatMessage(userContent, options = {}) {
                     }
                 }
 
-                const renderPromise = renderMessageContent(contentDiv, processedResponse, null, true);
+                const renderPromise = renderMessageContent(contentDiv, processedResponse, resolvedCitations, true);
 
                 if (isScrolledToBottom) {
                     const ensureBottom = () => requestAnimationFrame(() => {
@@ -12480,7 +12682,12 @@ async function handleChatMessage(userContent, options = {}) {
     }
 
     const assistantMessage = { role: 'assistant', content: fullResponse };
+    if (resolvedCitations) {
+        assistantMessage.citations = resolvedCitations;
+    }
     chats[chatIdForRequest].messages.push(assistantMessage);
+    const userIdForDb = currentUser?.id || 'guest';
+    saveChatsToDB(userIdForDb, chats).catch(err => console.error('Failed to save chats to cache:', err));
     return assistantMessage;
 }
 
@@ -12550,7 +12757,7 @@ async function _processAndSendMessage(userContent, userMessageText) {
 
             switch (intent) {
                 case 'CONTINUATION':
-                    assistantMessageToSave = await handleContinuationTask(userContent, null, assistantPlaceholderElement);
+                    assistantMessageToSave = await handleContinuationTask(userContent, assistantPlaceholderElement);
                     break;
                 case 'ANALYSIS_QA': {
                     assistantMessageToSave = await handleDeepAnalysis(userContent, userMessageText, assistantPlaceholderElement);
@@ -12562,7 +12769,7 @@ async function _processAndSendMessage(userContent, userMessageText) {
                     break;
                 }
             }
-        } else if (historyLength > 60000) {
+        } else if (historyLength > 60000 && !isImageModeActive) {
             let combinedStory = "";
 
             conversationHistory.forEach(msg => {
@@ -12595,21 +12802,26 @@ async function _processAndSendMessage(userContent, userMessageText) {
                 role: 'user',
                 content: cloneMessageParts(originalUserContent) || originalUserContent
             };
-            assistantMessageToSave = await handleContinuationTask(continuationContentForAI, userContent, assistantPlaceholderElement);
+            assistantMessageToSave = await handleContinuationTask(continuationContentForAI, assistantPlaceholderElement);
         } else {
             const contentDiv = assistantPlaceholderElement.querySelector('.content');
 
-            // 执行统一的意图分析
-            const intentAnalysis = await performUnifiedIntentAnalysis(userMessageText, conversationHistory, {
-                checkImageGeneration: true,
-                isImageModeActive
-            });
-            if (isImageModeActive && hasImageAttachments) {
-                intentAnalysis.shouldGenerateImage = true;
-                intentAnalysis.intentResult.intent = 'image_generation';
-            }
+            let combinedUserMessageText = userMessageText;
+            let intentAnalysis = null;
+            if (isImageModeActive) {
+                const imageModeResult = await intentAnalyzer.analyzeImageModeIntent(
+                    userContent,
+                    userMessageText,
+                    hasImageAttachments,
+                    hasFileAttachments
+                );
+                combinedUserMessageText = imageModeResult.combinedUserMessageText;
+                intentAnalysis = imageModeResult.intentAnalysis;
+                if (hasImageAttachments) {
+                    intentAnalysis.shouldGenerateImage = true;
+                    if (intentAnalysis.intentResult) intentAnalysis.intentResult.intent = 'IMAGE_GENERATION';
+                }
 
-            if (!hasFileAttachments && isImageModeActive) {
                 if (contentDiv) {
                     contentDiv.querySelector('span').textContent = getToastMessage('status.understandingYourNeeds');
                 }
@@ -12617,15 +12829,11 @@ async function _processAndSendMessage(userContent, userMessageText) {
                     if (contentDiv) {
                         contentDiv.querySelector('span').textContent = getToastMessage('status.generatingImageForYou');
                     }
-                    let imageVisionDescription = null;
-                    if (hasImageAttachments) {
-                        imageVisionDescription = await describeImagesWithToolUse(userContent, userMessageText);
-                    }
                     const newImagePromptObject = await generateCombinedImagePrompt(
-                        userMessageText,
+                        combinedUserMessageText,
                         conversationHistory,
                         intentAnalysis.intentResult.intent,
-                        imageVisionDescription
+                        null
                     );
                     const imageResult = await handleImageGeneration(userContent, newImagePromptObject, {
                         existingAssistantElement: assistantPlaceholderElement
@@ -12652,28 +12860,16 @@ async function _processAndSendMessage(userContent, userMessageText) {
                     }
                 } else {
                     assistantMessageToSave = await handleChatMessage(userContent, {
-                        existingAssistantElement: assistantPlaceholderElement
+                        existingAssistantElement: assistantPlaceholderElement,
+                        intentAnalysisOverride: intentAnalysis
                     });
                 }
             } else if (!isImageModeActive && !hasFileAttachments) {
-                let shouldSuggestImageMode = intentAnalysis.shouldSuggestImageMode;
-
-                if (!shouldSuggestImageMode && userMessageText.length < 120 && containsImageKeywords(userMessageText)) {
-                    shouldSuggestImageMode = true;
-                }
-
-                if (shouldSuggestImageMode) {
-                    const message = getToastMessage('ui.enableImageGeneration');
-                    renderMessageContent(contentDiv, message);
-                    assistantMessageToSave = { role: 'assistant', content: message };
-                    chats[chatIdForRequest].messages.push(assistantMessageToSave);
-                    requestSuccessful = true;
-                } else {
-                    assistantMessageToSave = await handleChatMessage(userContent, { existingAssistantElement: assistantPlaceholderElement });
-                }
+                assistantMessageToSave = await handleChatMessage(userContent, { existingAssistantElement: assistantPlaceholderElement });
             } else {
                 assistantMessageToSave = await handleChatMessage(userContent, {
-                    existingAssistantElement: assistantPlaceholderElement
+                    existingAssistantElement: assistantPlaceholderElement,
+                    intentAnalysisOverride: isImageModeActive ? intentAnalysis : null
                 });
             }
         }
@@ -12785,6 +12981,7 @@ async function sendMessage() {
         }
     });
 
+    const hasImageAttachments = userContent.some(p => p.type === 'image_url');
     const hasContentToSend = userContent.some(p => p.type !== 'quote' && (p.type !== 'text' || p.text.trim() !== ''));
     if (!hasContentToSend) {
         if (currentQuote) showToast(getToastMessage('toast.pleaseEnterReply'), 'info');
@@ -12810,7 +13007,9 @@ async function sendMessage() {
         setSendButtonLoading();
         wasImageGenerated = false;
 
-        if (isSearchModeActive) {
+        if (isImageModeActive) {
+            await _processAndSendMessage(userContent, userMessageText);
+        } else if (isSearchModeActive) {
             await handleSearchAndChat(userMessageText);
             if (pendingMessage) {
                 const nextMessage = pendingMessage;
@@ -13029,6 +13228,9 @@ function getAiOptimizedContentForMessage(message) {
 async function handleLargeTextAnalysis(userContent, originalQuery, existingAssistantElement = null) {
     if (!currentChatId) await startNewChat(true);
     const chatIdForRequest = currentChatId;
+    const imageParts = Array.isArray(userContent)
+        ? userContent.filter(part => part?.type === 'image_url' && part.image_url?.url)
+        : [];
 
     const assistantMessageElement = existingAssistantElement || appendMessage('assistant', '');
     const contentDiv = assistantMessageElement.querySelector('.content');
@@ -13083,8 +13285,8 @@ async function handleLargeTextAnalysis(userContent, originalQuery, existingAssis
 
             const MAX_PROMPT_LENGTH = 30000;
             let prompt = i === 0
-                ? `Summarize this text part (${i + 1}/${chunks.length}):\n${chunk}`
-                : `Update summary with new content. Previous: ${cumulativeSummary}\n\nNew part (${i + 1}/${chunks.length}):\n${chunk}`;
+                ? `Summarize this text part (${i + 1}/${chunks.length}) from the provided content only. Center the summary on the user's core topic: "${originalQuery}". Preserve key facts, definitions, claims, and citations. If the chunk includes a filename header, keep the filename in the summary.\n\nText:\n${chunk}`
+                : `Update the summary with NEW information from the next part only. Keep prior facts unless contradicted. Center the summary on the user's core topic: "${originalQuery}". Preserve filenames if present.\n\nPrevious summary:\n${cumulativeSummary}\n\nNew part (${i + 1}/${chunks.length}):\n${chunk}`;
 
             if (prompt.length > MAX_PROMPT_LENGTH) {
                 prompt = prompt.substring(0, MAX_PROMPT_LENGTH) + '\n\n[Content truncated due to length limit]';
@@ -13101,8 +13303,11 @@ async function handleLargeTextAnalysis(userContent, originalQuery, existingAssis
 
         contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.allPartsAnalyzed')}</div>`;
 
-        const finalPromptForUserChoiceModel = `Based on this summary, answer: "${originalQuery}"\n\nSummary: ${cumulativeSummary}`;
-        const finalUserContent = [{ type: 'text', text: finalPromptForUserChoiceModel }];
+        const finalPromptForUserChoiceModel = `Based on this summary, answer the user's core topic and expand in related angles while staying grounded in the summary.\n\nUser core topic: "${originalQuery}"\n\nSummary: ${cumulativeSummary}`;
+        const finalUserContent = [
+            { type: 'text', text: finalPromptForUserChoiceModel },
+            ...imageParts
+        ];
         setAiOptimizedContentForLastUserMessage(chatIdForRequest, finalUserContent);
 
         await applyChunkProcessingCooldown(true);
@@ -13128,6 +13333,9 @@ async function handleLargeTextAnalysis(userContent, originalQuery, existingAssis
 async function handleDeepAnalysis(userContent, originalQuery, existingAssistantElement = null) {
     if (!currentChatId) await startNewChat(true);
     const chatIdForRequest = currentChatId;
+    const imageParts = Array.isArray(userContent)
+        ? userContent.filter(part => part?.type === 'image_url' && part.image_url?.url)
+        : [];
 
     const assistantMessageElement = existingAssistantElement || appendMessage('assistant', '');
     const contentDiv = assistantMessageElement.querySelector('.content');
@@ -13195,7 +13403,7 @@ async function handleDeepAnalysis(userContent, originalQuery, existingAssistantE
                 ? chunk.text.substring(0, MAX_CHUNK_LENGTH) + '\n\n[Content truncated due to length limit]'
                 : chunk.text;
 
-            const indexPrompt = `Extract keywords and create a summary from the following text block.\n\nText Block Content:\n"""${chunkText}"""\n\nReturn in JSON format only, no other text, format: {"keywords": ["keyword1", "keyword2"], "summary": "summary content"}`;
+            const indexPrompt = `You are indexing a document chunk for retrieval. Extract precise keywords and a faithful summary from the text only.\n- Keep filenames if present.\n- Keep proper nouns, key terms, dates, and numbers.\n- Avoid invention.\n\nText Block Content:\n"""${chunkText}"""\n\nReturn ONLY JSON: {"keywords":["keyword1","keyword2"],"summary":"summary content"}`;
             try {
                 await applyChunkProcessingCooldown(false);
                 const indexDataStr = await callAISynchronously(indexPrompt);
@@ -13220,14 +13428,14 @@ async function handleDeepAnalysis(userContent, originalQuery, existingAssistantE
 
         contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step3Extracting')}</div>`;
 
-        const extractionPrompt = `Extract search keywords from the user query: "${originalQuery}"\n\nReturn ONLY a JSON object in this exact format: {"keywords": ["keyword1", "keyword2"]}`;
+        const extractionPrompt = `Extract concise, high-recall search keywords from the user query below. Prefer nouns, names, key terms, and domain phrases. Do not invent.\n\nUser query:\n"${originalQuery}"\n\nReturn ONLY JSON: {"keywords":["keyword1","keyword2"]}`;
         await applyChunkProcessingCooldown(false);
         const keywordsResult = await callAISynchronously(extractionPrompt);
         const searchKeywords = safeJsonParse(keywordsResult, { keywords: [originalQuery.substring(0, 20)] }).keywords;
 
         contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step3Searching')}</div>`;
 
-        const retrievalPrompt = `Find the most relevant document chunks based on the search keywords.\n\nSearch Keywords: "${searchKeywords.join(', ')}"\n\nDocument Index:\n${JSON.stringify(documentIndex.map(d => ({ id: d.chunkId, keywords: d.keywords, summary: d.summary })), null, 2)}\n\nPlease return ONLY a JSON array of chunk IDs, like: ["chunk1", "chunk2", "chunk3"]`;
+        const retrievalPrompt = `Select the most relevant document chunks based on the search keywords. Use the index only. Return the chunk IDs as numbers.\n\nSearch Keywords: "${searchKeywords.join(', ')}"\n\nDocument Index:\n${JSON.stringify(documentIndex.map(d => ({ id: d.chunkId, keywords: d.keywords, summary: d.summary })), null, 2)}\n\nReturn ONLY JSON array of numeric IDs, like: [1, 2, 3]`;
         await applyChunkProcessingCooldown(false);
         const relevantIdsStr = await callAISynchronously(retrievalPrompt);
 
@@ -13266,8 +13474,11 @@ async function handleDeepAnalysis(userContent, originalQuery, existingAssistantE
 
         contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step4Generating')}</div>`;
 
-        const finalPromptForUserChoiceModel = `Answer: "${originalQuery}"\n\nRelevant content:\n${relevantChunks.map(c => `[${c.chunkId} from ${c.sourceFile}]:\n${c.content}`).join('\n\n')}`;
-        const finalUserContent = [{ type: 'text', text: finalPromptForUserChoiceModel }];
+        const finalPromptForUserChoiceModel = `Answer the user's core topic, then expand in related angles while staying grounded in the provided content. Do not invent facts.\n\nUser core topic: "${originalQuery}"\n\nRelevant content:\n${relevantChunks.map(c => `[${c.chunkId} from ${c.sourceFile}]:\n${c.content}`).join('\n\n')}`;
+        const finalUserContent = [
+            { type: 'text', text: finalPromptForUserChoiceModel },
+            ...imageParts
+        ];
         setAiOptimizedContentForLastUserMessage(chatIdForRequest, finalUserContent);
 
         await applyChunkProcessingCooldown(true);
@@ -13294,26 +13505,25 @@ function safeJsonParse(text, fallback = null) {
     if (typeof text !== 'string' || !text || text.trim() === '') {
         return fallback;
     }
+    const normalizedText = text
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'");
 
     try {
-        // 首先尝试直接解析
-        return JSON.parse(text.trim());
+        return JSON.parse(normalizedText.trim());
     } catch (e) {
-        // 如果直接解析失败，尝试从代码块中提取JSON
         try {
-            let match = text.match(/```json\s*([\s\S]*?)\s*```/);
+            let match = normalizedText.match(/```json\s*([\s\S]*?)\s*```/);
             if (match && match[1]) {
                 return JSON.parse(match[1].trim());
             }
 
-            // 尝试从文本中提取JSON对象或数组
-            match = text.match(/(\[[\s\S]*?\]|\{[\s\S]*?\})/);
+            match = normalizedText.match(/(\[[\s\S]*?\]|\{[\s\S]*?\})/);
             if (match && match[0]) {
                 return JSON.parse(match[0].trim());
             }
 
-            // 尝试修复常见的JSON错误
-            const repairedText = text.trim()
+            const repairedText = normalizedText.trim()
                 .replace(/,\s*([\}\]])/g, '$1')
                 .replace(/([^\\])\\([^"\\\/bfnrt])/g, '$1\\\\$2');
 
@@ -13326,49 +13536,36 @@ function safeJsonParse(text, fallback = null) {
     }
 }
 
-async function translateQueryToEnglishForResearch(text) {
-    if (!text || !text.trim()) return null;
-    const prompt = `Translate the following user query into fluent English. Return ONLY the translated text.\n\n"""${text.trim()}"""`;
-    const tryDefault = async () => {
-        try {
-            const translated = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false);
-            if (translated && typeof translated === 'string') {
-                return translated.trim();
-            }
-        } catch (e) {
-            console.warn('Research mode translation attempt failed', e);
-        }
-        return null;
-    };
-
-    let result = await tryDefault();
-    if (!result) {
-        await sleep(300);
-        result = await tryDefault();
+async function buildSemanticScholarQuery(text, images = null) {
+    const hasImages = Array.isArray(images) && images.length > 0;
+    if (!text || !text.trim()) {
+        if (!hasImages) return '';
     }
-    return result;
-}
-
-async function buildSemanticScholarQuery(text) {
-    if (!text || !text.trim()) return '';
-    const base = text.trim().slice(0, 500);
+    const base = (text && text.trim())
+        ? text.trim()
+        : 'No text provided. Infer the topic from images only.';
     const prompt = [
-        'Generate a compact English search query (3-8 key terms, include acronyms) for Semantic Scholar.',
+        'Extract the core research question(s), then generate a search query (6-12 key terms, include acronyms) based on the core question(s) and the user content.',
+        'If images are provided, extract key visual/text cues and include them as keywords.',
+        'Include closely related keywords if helpful.',
         'Keep it keyword-style, no full sentences, no fillers.',
-        'Use common ML/NLP abbreviations when present.',
         'Return ONLY the query string.',
         '',
         `Topic:\n"""${base}"""`
     ].join('\n');
 
     try {
-        const res = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false);
+        const res = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false, images);
         if (res && typeof res === 'string') {
             const cleaned = res.replace(/[`"]/g, '').trim();
-            if (cleaned) return cleaned;
+            if (cleaned) {
+                const normalized = await normalizeEnglishKeywords(cleaned);
+                if (normalized) return normalized;
+                return cleaned;
+            }
         }
     } catch (e) {
-        console.warn('buildSemanticScholarQuery failed, fallback to raw text', e);
+        console.warn('buildSemanticScholarQuery failed.', e);
     }
     return base;
 }
@@ -13383,9 +13580,39 @@ async function translateToUserLanguage(text) {
             return translated.trim();
         }
     } catch (e) {
-        console.warn('translateToUserLanguage failed, using original text.', e);
+        console.warn('translateToUserLanguage failed.', e);
     }
     return text;
+}
+
+async function translateToEnglish(text) {
+    if (!text || !text.trim()) return text;
+    const prompt = `Translate the following text into English. Return ONLY the translated text.\n\n"""${text.trim()}"""`;
+    try {
+        const translated = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false);
+        if (translated && typeof translated === 'string' && translated.trim()) {
+            return translated.trim();
+        }
+    } catch (e) {
+        console.warn('translateToEnglish failed.', e);
+    }
+    return text;
+}
+
+async function normalizeEnglishKeywords(raw) {
+    if (!raw || !raw.trim()) return '';
+    let text = raw.trim();
+    const hasNonAscii = /[^\x00-\x7F]/.test(text);
+    if (hasNonAscii) {
+        text = await translateToEnglish(text);
+    }
+    const parts = text
+        .replace(/[`"']/g, ' ')
+        .split(/[,;|\n]+/)
+        .map(p => p.trim())
+        .filter(Boolean);
+    const cleaned = parts.map(p => p.replace(/[^a-zA-Z0-9\-\s]/g, '').trim()).filter(Boolean);
+    return cleaned.join(', ');
 }
 
 async function callAISynchronously(prompt, model = 'gemini-2.5-flash-lite', incrementUsage = false, images = null) {
@@ -15501,7 +15728,8 @@ function setupEventListeners() {
                 renameChat(chatId);
             } else if (action === 'copy-title') {
                 safeNavigationCall('popUiState');
-                const titleToCopy = historyItem.querySelector('.title').textContent;
+                const titleNode = historyItem.querySelector('.title');
+                const titleToCopy = buildCopyTextFromContent(titleNode);
                 navigator.clipboard.writeText(titleToCopy).then(() => {
                     showToast(getToastMessage('toast.titleCopied'), 'success');
                 }).catch(err => {
@@ -15566,7 +15794,17 @@ function setupEventListeners() {
     });
 
     document.getElementById('copy-file-content').addEventListener('click', function () {
-        navigator.clipboard.writeText(elements.fileViewerCode.textContent).then(() => {
+        const textContainer = document.getElementById('file-viewer-text-container');
+        const codeContainer = document.getElementById('file-viewer-code-container');
+        let textToCopy = '';
+
+        if (textContainer && textContainer.style.display !== 'none') {
+            textToCopy = buildCopyTextFromContent(textContainer);
+        } else if (codeContainer && codeContainer.style.display !== 'none' && elements.fileViewerCode) {
+            textToCopy = elements.fileViewerCode.textContent || '';
+        }
+
+        navigator.clipboard.writeText(textToCopy).then(() => {
             showToast(getToastMessage('toast.contentCopied'), 'success');
         });
     });
@@ -17175,7 +17413,7 @@ async function getLargeTextIntent(userQuery) {
     return "SUMMARIZATION";
 }
 
-async function handleContinuationTask(userContent, contentForDisplay, existingAssistantElement = null) {
+async function handleContinuationTask(userContent, existingAssistantElement = null) {
     const MAX_CONTINUATION_CONTEXT = 75000;
     let modifiedContent = [...userContent];
     let totalLength = 0;
@@ -17227,7 +17465,7 @@ async function handleContinuationTask(userContent, contentForDisplay, existingAs
         return true;
     });
 
-    return await handleChatMessage(modifiedContent, { skipLengthCheck: true, contentForDisplay: contentForDisplay, existingAssistantElement });
+    return await handleChatMessage(modifiedContent, { existingAssistantElement });
 }
 
 async function saveChatToServer(chatId, userMessage, assistantMessage, pendingChatData = null) {
@@ -18060,6 +18298,7 @@ async function initialize() {
         if (!resourcesReady) {
             showToast(getToastMessage('toast.coreResourcesLoadFailed'), "error");
         }
+        preloadDiagramLibraries();
 
         setTimeout(() => {
             if (sessionValid) {

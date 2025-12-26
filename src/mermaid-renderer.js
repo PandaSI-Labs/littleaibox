@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 
-const MERMAID_SCRIPT_SOURCES = [
+export const MERMAID_SCRIPT_SOURCES = [
     '/libs/mermaid.min.js'
 ];
 const MERMAID_GLOBAL = 'mermaid';
