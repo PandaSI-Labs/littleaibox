@@ -14,6 +14,8 @@ import { API_BASE_URL, isNativeApp } from './api-config.js';
 import { injectAuthUI } from './auth-template.js';
 import './auth.css';
 import { deleteChatsFromDB, getChatsFromDB, getSettingsFromDB, saveChatsToDB, saveSettingsToDB } from './db.js';
+import { createFileParsers } from './file-parsers/index.js';
+import { LocalStore } from './file-parsers/local-store.js';
 import { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLanguageApplied, preloadAllTranslations, t } from './i18n.js';
 import { MERMAID_SCRIPT_SOURCES, renderMermaidDiagrams } from './mermaid-renderer.js';
 import { cancelMfaVerificationFlow, clearMfaChallengeState, configureMfaLogin, extractMfaChallenge, handleMfaVerificationSubmit, setActiveMfaMethod, setPendingMfaChallenge, showMfaVerificationForm } from './mfa-login.js';
@@ -1535,6 +1537,21 @@ function setupVisibilityRerender() {
     };
 
     document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(); });
+
+    window.addEventListener('pagehide', () => {
+        flushPendingDocUploads();
+    });
+
+    if (typeof App?.addListener === 'function') {
+        App.addListener('appStateChange', ({ isActive }) => {
+            if (!isActive) {
+                flushPendingDocUploads();
+            }
+        });
+        App.addListener('pause', () => {
+            flushPendingDocUploads();
+        });
+    }
     window.addEventListener('focus', schedule);
     window.addEventListener('pageshow', () => schedule());
 }
@@ -1619,7 +1636,7 @@ function smartChunkingByParagraphs(text, maxSize = 15000) {
         chunks.push(currentChunk.trim());
     }
 
-    return chunks;
+    return fixBrokenCidChunks(chunks);
 }
 
 function createDialog(title, contentHtml, iconSvg, onConfirm, onCancel, options = {}) {
@@ -2321,21 +2338,33 @@ async function preloadChatContents(chatList, userId) {
             const batch = chatIds.slice(i, i + batchSize);
             const promises = batch.map(async (chatId) => {
                 const chat = chatList[chatId];
+                let messagesLoaded = Array.isArray(chat.messages) && chat.messages.length > 0;
                 if (!chat.messages || chat.messages.length === 0) {
                     try {
                         const result = await makeApiRequest(`chats/messages?conversationId=${chatId}`);
                         if (result.success && result.messages) {
                             chat.messages = result.messages;
+                            messagesLoaded = true;
                         }
                     } catch (error) {
                         console.warn(`Failed to preload messages for chat ${chatId}:`, error);
                     }
                 }
+                await ensureDocAttachmentContextForChat(chatId, chat, messagesLoaded);
             });
 
             await Promise.allSettled(promises);
 
             try {
+                try {
+                    const rebuildTasks = Object.entries(chatList).map(([chatId, chat]) => {
+                        const messagesLoaded = Array.isArray(chat?.messages) && chat.messages.length > 0;
+                        return ensureDocAttachmentContextForChat(chatId, chat, messagesLoaded);
+                    });
+                    await Promise.allSettled(rebuildTasks);
+                } catch (error) {
+                    console.warn('Failed to rebuild doc attachment cache:', error);
+                }
                 await saveChatsToDB(userId, chatList);
             } catch (error) {
                 console.warn('Failed to save preloaded chats to cache:', error);
@@ -2352,7 +2381,7 @@ async function preloadChatContents(chatList, userId) {
 
 // 使用限制配置
 const GUEST_LIMIT = 5;
-const LOGGED_IN_LIMIT = 12;
+const LOGGED_IN_LIMIT = 15;
 const USAGE_FETCH_TIMEOUT_MS = 10000;
 
 let currentUserUsage = { count: 0, limit: LOGGED_IN_LIMIT, apiMode: 'mixed' };
@@ -2427,8 +2456,29 @@ const modelRenderSpeeds = {
 // Gemini 3 Pro thinking level 配置
 let currentThinkingLevel = 'high';
 
-function composeSystemPrompt(userPrompt = '') {
-    return (userPrompt || '').trim();
+function hasImageCidInMessages(messages) {
+    if (!Array.isArray(messages)) return false;
+    for (const msg of messages) {
+        const content = msg?.content;
+        if (typeof content === 'string' && /cid:[a-z0-9]+/i.test(content)) {
+            return true;
+        }
+        if (Array.isArray(content)) {
+            for (const part of content) {
+                if (part?.type === 'text' && typeof part.text === 'string' && /cid:[a-z0-9]+/i.test(part.text)) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+function composeSystemPromptWithImageHint(userPrompt, hasImageCids) {
+    const basePrompt = (userPrompt || '').trim();
+    if (!hasImageCids) return basePrompt;
+    const hint = 'Images in the document are placeholders; do not invent visual details. If the context includes cid image references and the user explicitly asks about a specific section or visual detail, respond in plain text with a line starting "fetch_image_details" followed by the relevant cids (e.g., "fetch_image_details cid:..."). If you need global images to answer, respond with a line starting "request_global_images". Otherwise answer from text only. Do NOT use function calling or JSON.';
+    return basePrompt ? `${basePrompt}\n${hint}` : hint;
 }
 
 // DOM元素引用
@@ -3488,11 +3538,6 @@ async function clearCacheAndReload() {
     await Promise.all([
         clearCachesAndSettings(),
         (async () => {
-            if (currentUser) {
-                await deleteChatsFromDB(currentUser.id);
-            }
-        })(),
-        (async () => {
             try {
                 await clearTranslationCache();
             } catch (error) {
@@ -3547,7 +3592,13 @@ async function clearCacheAndReload() {
     } catch (_) { }
 
     await new Promise(r => setTimeout(r, 300));
-    try { location.reload(true); } catch (_) { location.reload(); }
+    try {
+        const url = new URL(window.location.origin);
+        url.searchParams.set('_', Date.now().toString());
+        window.location.replace(url.toString());
+    } catch (_) {
+        try { location.reload(true); } catch (_) { location.reload(); }
+    }
 }
 
 function resolveApkDownloadUrl(relativePath) {
@@ -3722,481 +3773,6 @@ async function downloadAndInstallApk(version) {
         console.warn('APK update failed, falling back to browser download:', error);
         await triggerBrowserFallback();
     }
-}
-
-async function readDocxFile(file) {
-    await loadScript('/libs/mammoth.browser.min.js', 'mammoth');
-
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = function (event) {
-            mammoth.convertToHtml({ arrayBuffer: event.target.result })
-                .then(result => {
-                    resolve(result.value);
-                })
-                .catch(reject);
-        };
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(file);
-    });
-}
-
-async function readPdfFile(file) {
-    await loadScript('/libs/pdf.min.js', 'pdfjsLib');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '/libs/pdf.worker.min.js';
-
-    const reader = new FileReader();
-    return new Promise((resolve, reject) => {
-        reader.onload = async function (event) {
-            try {
-                const loadingTask = pdfjsLib.getDocument({
-                    data: event.target.result,
-                    cMapUrl: '/libs/cmaps/',
-                    cMapPacked: true,
-                });
-
-                const pdf = await loadingTask.promise;
-
-                let allText = '';
-
-                for (let i = 1; i <= pdf.numPages; i++) {
-                    try {
-                        const page = await pdf.getPage(i);
-                        const textContent = await page.getTextContent();
-
-                        const pageText = textContent.items
-                            .map(item => {
-                                // 保留空格和换行
-                                if (item.str) {
-                                    return item.str;
-                                }
-                                if (item.hasEOL) {
-                                    return '\n';
-                                }
-                                return '';
-                            })
-                            .join('');
-
-                        if (pageText.trim()) {
-                            allText += `--- ${getToastMessage('fileManagement.pageNumber', { number: i })} ---\n${pageText}\n\n`;
-                        }
-                    } catch (pageError) {
-                        console.warn(getToastMessage('fileManagement.pageParseFailed', { number: i }), pageError);
-                    }
-                }
-
-                if (!allText.trim()) {
-                    resolve(getToastMessage('fileManagement.pdfScanVersion'));
-                } else {
-                    resolve(allText);
-                }
-            } catch (error) {
-                console.error(getToastMessage('console.pdfParseError') + ':', error);
-                reject(new Error(`${getToastMessage('console.pdfParseFailed')}: ${error.message}`));
-            }
-        };
-
-        reader.onerror = (error) => {
-            console.error(getToastMessage('console.fileReadError') + ':', error);
-            reject(new Error(getToastMessage('console.readFileFailed')));
-        };
-
-        reader.readAsArrayBuffer(file);
-    });
-}
-
-async function readExcelFile(file) {
-    await loadScript('/libs/xlsx.full.min.js', 'XLSX');
-
-    return new Promise((resolve, reject) => {
-        const convertWorkbookToMarkdown = (workbook) => {
-            let allMarkdown = '';
-            workbook.SheetNames.forEach(sheetName => {
-                allMarkdown += `\n\n## ${getToastMessage('fileProcessing.worksheet')}: ${sheetName}\n\n`;
-                const worksheet = workbook.Sheets[sheetName];
-                const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-                if (json.length > 0 && json[0].length > 0) {
-                    allMarkdown += `| ${json[0].join(' | ')} |\n`;
-                    allMarkdown += `| ${json[0].map(() => '---').join(' | ')} |\n`;
-                    json.slice(1).forEach(row => {
-                        const newRow = [...row];
-                        while (newRow.length < json[0].length) {
-                            newRow.push('');
-                        }
-                        allMarkdown += `| ${newRow.slice(0, json[0].length).join(' | ')} |\n`;
-                    });
-                }
-            });
-            return allMarkdown;
-        };
-
-        const reader = new FileReader();
-
-        reader.onload = function (event) {
-            const data = new Uint8Array(event.target.result);
-            let decodedContent;
-
-            try {
-                decodedContent = new TextDecoder('utf-8', { fatal: true }).decode(data);
-            } catch (error) {
-                try {
-                    decodedContent = new TextDecoder('gb18030').decode(data);
-                } catch (gbkError) {
-                    console.error(getToastMessage('console.failedToDecodeFileWithBothEncodings'), gbkError);
-                    reject(new Error(getToastMessage('console.unrecognizedEncoding')));
-                    return;
-                }
-            }
-
-            try {
-                const workbook = XLSX.read(decodedContent, { type: 'string' });
-                resolve(convertWorkbookToMarkdown(workbook));
-            } catch (parseError) {
-                console.error(getToastMessage('console.failedToParseDecodedContent'), parseError);
-                reject(parseError);
-            }
-        };
-
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(file);
-    });
-}
-
-async function readPptxFile(file) {
-    await loadScript('/libs/jszip.min.js', 'JSZip');
-    return convertPptxToPlainText(file);
-}
-
-async function convertPptxToPlainText(file) {
-    const JSZipGlobal = window.JSZip;
-    if (typeof JSZipGlobal === 'undefined' || JSZipGlobal === null) {
-        throw new Error('JSZip is unavailable for PPTX fallback extraction');
-    }
-    const arrayBuffer = await file.arrayBuffer();
-    const zip = await JSZipGlobal.loadAsync(arrayBuffer);
-    const slideNames = Object.keys(zip.files)
-        .filter(name => name.startsWith('ppt/slides/slide') && name.endsWith('.xml'))
-        .sort((a, b) => {
-            const getIndex = (name) => Number(name.match(/slide(\d+)\.xml$/)?.[1] || 0);
-            return getIndex(a) - getIndex(b);
-        });
-
-    const slidesMarkdown = await Promise.all(slideNames.map(async (slideName, index) => {
-        const xmlContent = await zip.files[slideName].async('text');
-        const textContent = extractTextFromSlideXml(xmlContent);
-        const sections = [];
-        if (textContent) {
-            sections.push(textContent);
-        }
-
-        const notesName = slideName.replace('slides/slide', 'notesSlides/notesSlide');
-        if (zip.files[notesName]) {
-            try {
-                const notesXml = await zip.files[notesName].async('text');
-                const notesText = extractTextFromSlideXml(notesXml);
-                if (notesText) {
-                    const notesLabel = getPptxNotesLabel();
-                    sections.push(`**${notesLabel}**\n${formatAsBlockQuote(notesText)}`);
-                }
-            } catch (notesError) {
-                console.debug('Failed to parse PPTX notes:', notesError);
-            }
-        }
-
-        const body = sections.length ? `\n\n${sections.join('\n\n')}` : '';
-        return `## ${getToastMessage('fileProcessing.slide')} ${index + 1}${body}`;
-    }));
-
-    if (slidesMarkdown.length === 0) {
-        throw new Error('PPTX fallback extraction produced no slides');
-    }
-
-    return slidesMarkdown.join('\n\n').trim();
-}
-
-const ELEMENT_NODE = typeof Node === 'undefined' ? 1 : Node.ELEMENT_NODE;
-
-function getPptxNotesLabel() {
-    if (typeof getToastMessage === 'function') {
-        try {
-            const label = getToastMessage('fileProcessing.notes');
-            if (label && label !== 'fileProcessing.notes') {
-                return label;
-            }
-        } catch (_) { }
-    }
-    return 'Notes';
-}
-
-function formatAsBlockQuote(text) {
-    return text
-        .split('\n')
-        .map(line => line.trim().length ? `> ${line}` : '>')
-        .join('\n');
-}
-
-function extractTextFromSlideXml(xmlContent) {
-    try {
-        const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(xmlContent, 'application/xml');
-        const spTree = xmlDoc.getElementsByTagName('p:spTree')[0];
-        const sections = [];
-
-        if (spTree) {
-            const processContainer = (container) => {
-                const elementChildren = Array.from(container.childNodes || [])
-                    .filter(node => node.nodeType === ELEMENT_NODE);
-
-                elementChildren.forEach(child => {
-                    if (child.tagName === 'p:sp') {
-                        const textBody = child.getElementsByTagName('a:txBody')[0];
-                        if (!textBody) {
-                            return;
-                        }
-                        const paragraphElements = Array.from(textBody.childNodes || [])
-                            .filter(node => node.nodeType === Node.ELEMENT_NODE && node.tagName === 'a:p');
-                        if (!paragraphElements.length) {
-                            return;
-                        }
-                        const bulletState = new Map();
-                        const lines = paragraphElements
-                            .map(paragraph => buildParagraphMarkdown(paragraph, bulletState))
-                            .filter(Boolean);
-                        if (lines.length) {
-                            sections.push(lines.join('\n'));
-                        }
-                    } else if (child.tagName === 'p:graphicFrame') {
-                        const tableNode = child.getElementsByTagName('a:tbl')[0];
-                        if (tableNode) {
-                            const tableMarkdown = convertTableNodeToMarkdown(tableNode);
-                            if (tableMarkdown) {
-                                sections.push(tableMarkdown);
-                            }
-                        }
-                    } else if (child.tagName === 'p:grpSp') {
-                        processContainer(child);
-                    }
-                });
-            };
-
-            processContainer(spTree);
-        }
-
-        if (sections.length) {
-            return sections.join('\n\n');
-        }
-
-        return legacySlideTextExtraction(xmlDoc);
-    } catch (_) {
-        return legacySlideTextFallback(xmlContent);
-    }
-}
-
-function buildParagraphMarkdown(paragraph, bulletState, options = {}) {
-    const allowBullets = options.allowBullets !== false;
-    const text = extractParagraphText(paragraph);
-    if (!text) {
-        return null;
-    }
-
-    const bulletInfo = allowBullets ? detectBulletInfo(paragraph) : { type: 'none', level: 0 };
-    return formatParagraphText(text, bulletInfo, bulletState);
-}
-
-function extractParagraphText(paragraph) {
-    const parts = [];
-    paragraph.childNodes.forEach(child => {
-        if (child.nodeType !== ELEMENT_NODE) {
-            return;
-        }
-        if (child.tagName === 'a:r' || child.tagName === 'a:fld') {
-            const textNode = child.getElementsByTagName('a:t')[0];
-            if (textNode && textNode.textContent) {
-                parts.push(textNode.textContent);
-            }
-            const breaks = Array.from(child.getElementsByTagName('a:br'));
-            breaks.forEach(() => parts.push('\n'));
-        } else if (child.tagName === 'a:br') {
-            parts.push('\n');
-        }
-    });
-
-    const combined = parts.join('').replace(/\r/g, '');
-    const cleaned = combined
-        .split('\n')
-        .map(line => line.trimEnd())
-        .join('\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-    return cleaned || null;
-}
-
-function detectBulletInfo(paragraph) {
-    const pPr = paragraph.getElementsByTagName('a:pPr')[0];
-    if (!pPr) {
-        return { type: 'none', level: 0 };
-    }
-    if (pPr.getElementsByTagName('a:buNone').length > 0) {
-        return { type: 'none', level: 0 };
-    }
-
-    let level = 0;
-    const lvlAttr = pPr.getAttribute('lvl');
-    if (lvlAttr) {
-        const parsed = parseInt(lvlAttr, 10);
-        if (!Number.isNaN(parsed)) {
-            level = parsed;
-        }
-    } else {
-        const marLAttr = pPr.getAttribute('marL');
-        if (marLAttr) {
-            const parsed = parseInt(marLAttr, 10);
-            if (!Number.isNaN(parsed)) {
-                level = Math.min(6, Math.max(0, Math.round(parsed / 342900)));
-            }
-        }
-    }
-
-    const autoNum = pPr.getElementsByTagName('a:buAutoNum')[0];
-    if (autoNum) {
-        return { type: 'number', level: level };
-    }
-
-    const buChar = pPr.getElementsByTagName('a:buChar')[0];
-    if (buChar) {
-        const charAttr = buChar.getAttribute('char') || '-';
-        return { type: 'bullet', level: level, char: charAttr };
-    }
-
-    return { type: 'bullet', level: level, char: '-' };
-}
-
-function formatParagraphText(text, bulletInfo, bulletState) {
-    const indentUnit = '  ';
-    if (!text) {
-        return null;
-    }
-
-    if (bulletInfo.type === 'none') {
-        bulletState.clear();
-        return text;
-    }
-
-    const level = Math.min(Math.max(bulletInfo.level || 0, 0), 6);
-    Array.from(bulletState.keys())
-        .filter(existingLevel => existingLevel > level)
-        .forEach(existingLevel => bulletState.delete(existingLevel));
-
-    if (bulletInfo.type === 'number') {
-        const nextValue = (bulletState.get(level) || 0) + 1;
-        bulletState.set(level, nextValue);
-        const firstLinePrefix = `${indentUnit.repeat(level)}${nextValue}. `;
-        const continuationPrefix = `${indentUnit.repeat(level)}  `;
-        return text.split('\n')
-            .map((line, index) => (index === 0 ? firstLinePrefix + line : continuationPrefix + line))
-            .join('\n');
-    }
-
-    bulletState.delete(level);
-    const bulletChar = (bulletInfo.char || '-').trim();
-    const safeBullet = bulletChar.length === 1 && !/\s/.test(bulletChar) ? bulletChar : '-';
-    const firstLinePrefix = `${indentUnit.repeat(level)}${safeBullet} `;
-    const continuationPrefix = `${indentUnit.repeat(level)}  `;
-    return text.split('\n')
-        .map((line, index) => (index === 0 ? firstLinePrefix + line : continuationPrefix + line))
-        .join('\n');
-}
-
-function convertTableNodeToMarkdown(tableNode) {
-    const rowElements = Array.from(tableNode.childNodes || [])
-        .filter(node => node.nodeType === ELEMENT_NODE && node.tagName === 'a:tr');
-
-    if (!rowElements.length) {
-        return '';
-    }
-
-    const rows = rowElements.map(row => {
-        const cellElements = Array.from(row.childNodes || [])
-            .filter(node => node.nodeType === ELEMENT_NODE && node.tagName === 'a:tc');
-        return cellElements.map(cell => {
-            const textBody = cell.getElementsByTagName('a:txBody')[0];
-            if (!textBody) {
-                return '';
-            }
-            const paragraphs = Array.from(textBody.childNodes || [])
-                .filter(node => node.nodeType === ELEMENT_NODE && node.tagName === 'a:p');
-            if (!paragraphs.length) {
-                return '';
-            }
-            const bulletState = new Map();
-            const cellLines = paragraphs
-                .map(paragraph => buildParagraphMarkdown(paragraph, bulletState, { allowBullets: false }))
-                .filter(Boolean);
-            const cellText = cellLines.join('\n')
-                .replace(/\|/g, '\\|')
-                .replace(/\n+/g, '<br>');
-            return cellText;
-        });
-    }).filter(row => row.some(cell => cell.trim().length > 0));
-
-    if (!rows.length) {
-        return '';
-    }
-
-    const columnCount = Math.max(...rows.map(row => row.length));
-    if (columnCount === 0) {
-        return '';
-    }
-
-    rows.forEach(row => {
-        while (row.length < columnCount) {
-            row.push('');
-        }
-    });
-
-    const header = rows[0];
-    const separator = new Array(columnCount).fill('---');
-    const markdown = [];
-    markdown.push(`| ${header.join(' | ')} |`);
-    markdown.push(`| ${separator.join(' | ')} |`);
-    rows.slice(1).forEach(row => {
-        markdown.push(`| ${row.join(' | ')} |`);
-    });
-    return markdown.join('\n');
-}
-
-function legacySlideTextExtraction(xmlDoc) {
-    const paragraphNodes = Array.from(xmlDoc.getElementsByTagName('a:p'));
-    const paragraphs = paragraphNodes
-        .map(p => Array.from(p.getElementsByTagName('a:t'))
-            .map(node => node.textContent || '')
-            .join('')
-            .trim())
-        .filter(Boolean);
-
-    if (paragraphs.length > 0) {
-        return paragraphs.join('\n\n');
-    }
-
-    const textNodes = Array.from(xmlDoc.getElementsByTagName('a:t'))
-        .map(node => node.textContent || '')
-        .filter(Boolean);
-    if (textNodes.length > 0) {
-        return textNodes.join(' ');
-    }
-
-    return '';
-}
-
-function legacySlideTextFallback(xmlContent) {
-    return xmlContent
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/\s+/g, ' ')
-        .trim();
 }
 
 function isPlainTextFile(filename) {
@@ -6320,7 +5896,7 @@ async function fetchUsageStats(forceRefresh = false) {
             currentUserUsage.fallbackCount = typeof result.fallbackCount === 'number'
                 ? result.fallbackCount
                 : ((result.fallbackRequestCount || 0) + (result.serverFallbackCount || 0));
-            currentUserUsage.fallbackLimit = typeof result.fallbackLimit === 'number' ? result.fallbackLimit : 12;
+            currentUserUsage.fallbackLimit = typeof result.fallbackLimit === 'number' ? result.fallbackLimit : 15;
             currentUserUsage.totalCount = typeof result.totalCount === 'number' ? result.totalCount : currentUserUsage.count;
 
             if (fetchId === usageFetchSeq) {
@@ -6369,12 +5945,12 @@ function refreshUsageStats(forceRefresh = false) {
 
 function checkUsageLimit() {
     if (!currentUser || !currentUserUsage) {
-        return { count: 0, limit: 12 };
+        return { count: 0, limit: 15 };
     }
 
     return {
         count: currentUserUsage.count || 0,
-        limit: currentUserUsage.limit || 12
+        limit: currentUserUsage.limit || 15
     };
 }
 
@@ -7428,10 +7004,16 @@ async function loadChats(isSessionValid = false) {
                     if (cachedChats) {
                         for (const [chatId, serverChat] of Object.entries(serverChats)) {
                             const localChat = cachedChats[chatId];
-                            if (localChat && localChat.messages && localChat.messages.length > 0) {
+                            if (localChat && (localChat.messages && localChat.messages.length > 0)) {
                                 mergedChats[chatId] = {
                                     ...serverChat,
-                                    messages: localChat.messages
+                                    messages: localChat.messages,
+                                    docAttachments: Array.isArray(localChat.docAttachments) ? localChat.docAttachments : []
+                                };
+                            } else if (localChat && Array.isArray(localChat.docAttachments) && localChat.docAttachments.length > 0) {
+                                mergedChats[chatId] = {
+                                    ...serverChat,
+                                    docAttachments: localChat.docAttachments
                                 };
                             }
                         }
@@ -7491,6 +7073,10 @@ async function loadChats(isSessionValid = false) {
         const localChats = await getChatsFromDB('guest');
         replaceChatsPreservingEphemeral(localChats || {});
         renderSidebar();
+    }
+
+    if (currentUser) {
+        resumePendingDocImageUploadsOnce();
     }
 }
 
@@ -7797,6 +7383,11 @@ async function loadChat(chatId) {
                     chats[chatId].messages = [];
                 }
             }
+        }
+        const messagesLoaded = Array.isArray(chats[chatId].messages) && chats[chatId].messages.length > 0;
+        await ensureDocAttachmentContextForChat(chatId, chats[chatId], messagesLoaded);
+        if (currentUser && hasCidInChat(chats[chatId])) {
+            scheduleDocImageUpload(chatId);
         }
 
         if (loadId !== currentLoadChatId) {
@@ -8654,6 +8245,7 @@ async function deleteChat(chatId, showConfirmation = true, isBatchOperation = fa
         } else if (currentUser && isTempChat) {
             await saveChatsToDB(currentUser.id, chats);
         }
+        await cleanupDocumentImagesForDeletedChats([chatToDelete]);
 
         if (showConfirmation) {
             showToast(getToastMessage('toast.conversationDeleted'), 'success');
@@ -9163,9 +8755,18 @@ class MathRenderer {
             }
         } catch (_) { }
     }
+
+    renderElement(element, isFinalRender = false) {
+        this.renderMath(element, { isFinalRender: !!isFinalRender });
+    }
 }
 
 const mathRenderer = new MathRenderer(KATEX_CONFIG);
+const { readDocxFile, readPdfFile, readExcelFile, readPptxFile } = createFileParsers({
+    loadScript,
+    mathRenderer,
+    getToastMessage
+});
 const STREAMING_HORIZONTAL_RULE_TAIL_RE = /(?:^|\r?\n)[ \t]{0,3}([\*\-_])(?:[ \t]*\1){2,}[ \t]*$/;
 const EXPLICIT_HORIZONTAL_RULE_RE = /(?:^|\r?\n)[ \t]{0,3}([*\-_])(?:[ \t]*\1){2,}[ \t]*(?:\r?\n|$)/;
 
@@ -9206,6 +8807,54 @@ function stripStreamingHorizontalRuleTail(text) {
     const removalStart = withoutTrailingNewlines.length - match[0].length;
     const trimmed = withoutTrailingNewlines.slice(0, removalStart);
     return trimmed + text.slice(end);
+}
+
+let cidHydrationScheduled = false;
+const CID_IMAGE_CACHE = new Map();
+
+function scheduleCidImageHydration(element) {
+    if (!element || cidHydrationScheduled) return;
+    cidHydrationScheduled = true;
+    requestAnimationFrame(() => {
+        cidHydrationScheduled = false;
+        hydrateCidImages(element).catch(() => { });
+    });
+}
+
+async function hydrateCidImages(container) {
+    const imgs = Array.from(container.querySelectorAll('img[data-cid]'));
+    if (imgs.length === 0) return;
+    for (const img of imgs) {
+        const hash = img.dataset.cid;
+        if (!hash || img.dataset.cidLoaded === '1') continue;
+        img.dataset.cidLoaded = '1';
+        try {
+            let url = CID_IMAGE_CACHE.get(hash);
+            if (!url) {
+                const blob = await LocalStore.getImage(hash, currentChatId);
+                if (!blob) continue;
+                url = URL.createObjectURL(blob);
+                CID_IMAGE_CACHE.set(hash, url);
+            }
+            try {
+                const meta = await LocalStore.getMeta(hash);
+                if (meta?.width && meta?.height) {
+                    img.width = meta.width;
+                    img.height = meta.height;
+                    const maxSide = Math.max(meta.width, meta.height);
+                    if (maxSide > 300) {
+                        img.classList.add('cid-image-large');
+                    }
+                }
+            } catch (_) { }
+            img.src = url;
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+            img.style.verticalAlign = 'middle';
+        } catch (_) {
+            // Ignore missing images.
+        }
+    }
 }
 
 function renderMessageContent(element, content, citations = null, isFinalRender = false, options = {}) {
@@ -9495,7 +9144,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
 
         const sanitizedHtml = DOMPurify.sanitize(html, {
             ADD_TAGS: ['div', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'img', 'br', 'a', 'h4', 'ul', 'li'],
-            ADD_ATTR: ['style', 'class', 'aria-hidden', 'src', 'alt', 'title', 'href', 'target', 'rel']
+            ADD_ATTR: ['style', 'class', 'aria-hidden', 'src', 'alt', 'title', 'href', 'target', 'rel', 'data-cid']
         });
 
         const tempContainer = document.createElement('div');
@@ -9572,6 +9221,17 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                     }
                 }
             }
+        } catch (_) { }
+
+        try {
+            tempContainer.querySelectorAll('img').forEach(img => {
+                const src = img.getAttribute('src') || '';
+                if (src.startsWith('cid:')) {
+                    img.setAttribute('data-cid', src.slice(4));
+                    img.setAttribute('src', '');
+                    img.classList.add('cid-image-placeholder');
+                }
+            });
         } catch (_) { }
 
         const finalSanitizedHtml = tempContainer.innerHTML;
@@ -9677,6 +9337,10 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 contentChanged = true;
             }
             renderState.streamingHtml = streamingHtml;
+        }
+
+        if (isFinalRender) {
+            scheduleCidImageHydration(element);
         }
         const mermaidRenderPromise = renderMermaidDiagrams(element, { loadScript, isFinalRender });
         if (mermaidRenderPromise) {
@@ -10392,7 +10056,8 @@ function persistCurrentDraft(chatId = currentChatId) {
     const clonedAttachments = attachments.map(att => ({
         file: att.file || null,
         type: att.type,
-        content: att.content || null
+        content: att.content || null,
+        images: att.images || null
     }));
     chatDraftStore.set(key, { text, attachments: clonedAttachments });
 }
@@ -10418,11 +10083,13 @@ function restoreDraftForChat(chatId = currentChatId) {
 
     if (Array.isArray(draft.attachments)) {
         draft.attachments.forEach((att) => {
-            if (!att || (!att.file && !att.content)) return;
+            if (!att || (!att.file && !att.content && !att.images)) return;
             const isImage = att.type === 'image' || (att.file?.type || '').startsWith('image/');
             const newId = addAttachment(att.file, isImage ? 'image' : (att.type || 'file'));
             if (att.content) {
-                completeUpload(newId, att.content);
+                completeUpload(newId, att.content, att.images || null);
+            } else if (att.images) {
+                completeUpload(newId, '', att.images);
             }
         });
     }
@@ -10449,7 +10116,33 @@ function cleanupEmptyMessagePlaceholders() {
     });
 }
 
+function normalizeParsedResult(result) {
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+        const text = typeof result.text === 'string' ? result.text : (result.text == null ? '' : String(result.text));
+        const images = result.images && typeof result.images === 'object' ? result.images : null;
+        return { text, images };
+    }
+    return { text: typeof result === 'string' ? result : (result == null ? '' : String(result)), images: null };
+}
+
+function buildImagePartsFromAttachment(attachment) {
+    if (!attachment?.images || typeof attachment.images !== 'object') return [];
+    const parts = [];
+    Object.values(attachment.images).forEach((image) => {
+        if (!image || !image.data) return;
+        const mime = image.mime || 'image/png';
+        parts.push({
+            type: 'image_url',
+            image_url: { url: `data:${mime};base64,${image.data}` }
+        });
+    });
+    return parts;
+}
+
 async function processAndAttachFile(file) {
+    if (!currentUser) {
+        await ensureStoragePersistence();
+    }
     // 生成内容哈希用于重复检测
     const contentHash = await generateFileHash(file);
     const isDuplicate = attachments.some(att => att.contentHash === contentHash);
@@ -10472,14 +10165,15 @@ async function processAndAttachFile(file) {
 
     try {
         let content = '';
+        let images = null;
         const extension = file.name.split('.').pop()?.toLowerCase();
 
         if (file.type.startsWith('image/')) {
             content = await imageToBase64(file);
         } else if (extension === 'docx') {
-            content = await readDocxFile(file);
+            ({ text: content, images } = normalizeParsedResult(await readDocxFile(file)));
         } else if (extension === 'pdf') {
-            content = await readPdfFile(file);
+            ({ text: content, images } = normalizeParsedResult(await readPdfFile(file)));
         } else if (['xlsx', 'xls', 'csv'].includes(extension)) {
             content = await readExcelFile(file);
         } else if (['pptx'].includes(extension)) {
@@ -10497,7 +10191,7 @@ async function processAndAttachFile(file) {
                         }
                     }
                 }
-                content = await readPptxFile(file);
+                ({ text: content, images } = normalizeParsedResult(await readPptxFile(file)));
             } catch (pptxError) {
                 const errorMessage = pptxError.message || getToastMessage('errors.markdownConverterLoadFailed');
                 showToast(`${getToastMessage('console.skipFile', { filename: file.name })}: ${errorMessage}`, 'info');
@@ -10519,7 +10213,7 @@ async function processAndAttachFile(file) {
             removeAttachment(attachmentId);
             throw new Error(`Unsupported file type: .${extension}`);
         }
-        completeUpload(attachmentId, content);
+        completeUpload(attachmentId, content, images);
 
         const { isOverLimit } = updateCharacterCountUI();
         if (isOverLimit) {
@@ -10573,7 +10267,7 @@ async function handlePaste(e) {
 
 function addAttachment(file, type, contentHash = null) {
     const attachmentId = attachmentIdCounter++;
-    const attachment = { id: attachmentId, file, type, content: null, contentHash };
+    const attachment = { id: attachmentId, file, type, content: null, images: null, contentHash };
     attachments.push(attachment);
     const element = document.createElement('div');
     element.dataset.attachmentId = attachmentId;
@@ -10599,10 +10293,11 @@ function addAttachment(file, type, contentHash = null) {
     return attachmentId;
 }
 
-function completeUpload(attachmentId, content) {
+function completeUpload(attachmentId, content, images = null) {
     const attachment = attachments.find(a => a.id === attachmentId);
     if (!attachment) return;
     attachment.content = content;
+    attachment.images = images;
     const element = document.querySelector(`[data-attachment-id="${attachmentId}"]`);
     if (element) {
         element.classList.remove('uploading');
@@ -10705,9 +10400,812 @@ async function isLikelyBinaryFile(file) {
     }
 }
 
+const DOC_ATTACHMENT_EXTENSIONS = new Set(['pdf', 'docx', 'pptx', 'csv', 'xls', 'xlsx']);
+const DOC_ATTACHMENT_MARKER_PREFIX = '[DOC_ATTACHMENTS:';
+const DOC_ATTACHMENT_MARKER_SUFFIX = ']';
+const DOC_DATA_REMOTE_SAVE_DEBOUNCE_MS = 1200;
+const DOC_IMAGE_UPLOAD_DEBOUNCE_MS = 1500;
+const DOC_IMAGE_UPLOAD_BATCH_SIZE = 6;
+const DOC_IMAGE_UPLOAD_BATCH_BYTES = 6 * 1024 * 1024;
+const docDataSaveTimers = new Map();
+const docDataSaveSignatures = new Map();
+const docImageUploadTimers = new Map();
+const docImageUploadCache = new Map();
+const pendingDocDataSaves = new Set();
+const pendingDocImageUploads = new Set();
+const DOC_IMAGE_UPLOAD_QUEUE_KEY = 'pending_doc_image_uploads';
+let hasResumedDocImageUploads = false;
+
+function getDocImageUploadQueueKey() {
+    if (!currentUser?.id) return null;
+    return `${DOC_IMAGE_UPLOAD_QUEUE_KEY}_${currentUser.id}`;
+}
+
+function loadDocImageUploadQueue() {
+    const key = getDocImageUploadQueueKey();
+    if (!key) return {};
+    try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : {};
+    } catch (error) {
+        console.warn('Failed to read doc image upload queue:', error);
+        return {};
+    }
+}
+
+function saveDocImageUploadQueue(queue) {
+    const key = getDocImageUploadQueueKey();
+    if (!key) return;
+    const entries = Object.entries(queue || {}).filter(([, value]) => Array.isArray(value?.hashes) && value.hashes.length > 0);
+    if (entries.length === 0) {
+        localStorage.removeItem(key);
+        return;
+    }
+    const compact = Object.fromEntries(entries);
+    localStorage.setItem(key, JSON.stringify(compact));
+}
+
+function queueDocImageUpload(chatId, hashes = null) {
+    if (!currentUser || !chatId) return;
+    let hashList = Array.isArray(hashes) ? hashes.filter(Boolean) : null;
+    if (!hashList || hashList.length === 0) {
+        const chat = chats?.[chatId];
+        if (!chat) return;
+        hashList = Array.from(collectCidHashesFromChat(chat));
+    }
+    if (hashList.length === 0) return;
+    const queue = loadDocImageUploadQueue();
+    const existing = new Set(queue[chatId]?.hashes || []);
+    hashList.forEach(hash => existing.add(hash));
+    queue[chatId] = { hashes: Array.from(existing), updatedAt: Date.now() };
+    saveDocImageUploadQueue(queue);
+}
+
+function clearDocImageUploadQueueForChat(chatId) {
+    if (!currentUser || !chatId) return;
+    const queue = loadDocImageUploadQueue();
+    if (!queue[chatId]) return;
+    delete queue[chatId];
+    saveDocImageUploadQueue(queue);
+}
+
+function resumePendingDocImageUploadsOnce() {
+    if (!currentUser || hasResumedDocImageUploads) return;
+    hasResumedDocImageUploads = true;
+    const queue = loadDocImageUploadQueue();
+    Object.entries(queue).forEach(([chatId, entry]) => {
+        if (!Array.isArray(entry?.hashes) || entry.hashes.length === 0) return;
+        uploadDocImagesForChat(chatId, entry.hashes);
+    });
+}
+
+function extractDocAttachmentExtensionsFromContent(content) {
+    if (!Array.isArray(content)) return [];
+    const extensions = new Set();
+    content.forEach((part) => {
+        if (part?.type !== 'file' || typeof part.filename !== 'string') return;
+        const ext = part.filename.split('.').pop()?.toLowerCase();
+        if (ext && DOC_ATTACHMENT_EXTENSIONS.has(ext)) {
+            extensions.add(ext);
+        }
+    });
+    return Array.from(extensions);
+}
+
+function buildDocAttachmentMarkerFromContent(content) {
+    const extensions = extractDocAttachmentExtensionsFromContent(content);
+    if (extensions.length === 0) return '';
+    return `${DOC_ATTACHMENT_MARKER_PREFIX}${extensions.join(',')}${DOC_ATTACHMENT_MARKER_SUFFIX}`;
+}
+
+function appendDocAttachmentMarker(text, content) {
+    if (typeof text !== 'string') return text;
+    if (text.includes(DOC_ATTACHMENT_MARKER_PREFIX)) return text;
+    const marker = buildDocAttachmentMarkerFromContent(content);
+    if (!marker) return text;
+    return `${text}\n\n${marker}`;
+}
+
+function hasDocAttachmentsInHistory(messages) {
+    if (!Array.isArray(messages)) return false;
+    for (const msg of messages) {
+        const content = msg?.content;
+        if (typeof content === 'string' && content.includes(DOC_ATTACHMENT_MARKER_PREFIX)) {
+            return true;
+        }
+        if (!Array.isArray(content)) continue;
+        for (const part of content) {
+            if (part?.type === 'text' && typeof part.text === 'string' && part.text.includes(DOC_ATTACHMENT_MARKER_PREFIX)) {
+                return true;
+            }
+            if (part?.type !== 'file' || typeof part.filename !== 'string') continue;
+            const ext = part.filename.split('.').pop()?.toLowerCase();
+            if (ext && DOC_ATTACHMENT_EXTENSIONS.has(ext)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+const docAttachmentTextCache = new Map();
+
+function buildDocAttachmentContextText(entries) {
+    if (!Array.isArray(entries) || entries.length === 0) return '';
+    const fileLabel = getToastMessage('ui.file') || 'File';
+    const fileEndLabel = getToastMessage('ui.fileEnd') || 'End of file';
+    return entries.map(entry => {
+        const filename = entry.filename || 'attachment';
+        const text = typeof entry.text === 'string' ? entry.text.trim() : '';
+        if (!text) return '';
+        return `--- ${fileLabel}: ${filename} ---\n${text}\n--- ${fileEndLabel} ---`;
+    }).filter(Boolean).join('\n\n');
+}
+
+async function saveDocDataToRemote(chatId, docAttachments, cidHashes) {
+    if (!currentUser || !chatId) return;
+    try {
+        const result = await makeApiRequest('docdata/save', {
+            method: 'POST',
+            keepalive: true,
+            body: JSON.stringify({
+                chatId,
+                docAttachments: Array.isArray(docAttachments) ? docAttachments : [],
+                cidHashes: Array.isArray(cidHashes) ? cidHashes : []
+            })
+        });
+        if (!result?.success) {
+            console.warn('Failed to persist doc data to R2:', result?.error || 'unknown_error');
+        }
+    } catch (error) {
+        console.warn('Failed to persist doc data to R2:', error);
+    }
+}
+
+async function fetchDocDataFromRemote(chatId) {
+    if (!currentUser || !chatId) return null;
+    try {
+        const result = await makeApiRequest(`docdata/load?chatId=${encodeURIComponent(chatId)}`, {
+            method: 'GET'
+        });
+        if (!result?.success) return null;
+        return result;
+    } catch (error) {
+        console.warn('Failed to load doc data from R2:', error);
+        return null;
+    }
+}
+
+async function deleteDocDataFromRemote(chatIds) {
+    if (!currentUser) return;
+    const ids = Array.isArray(chatIds) ? chatIds.filter(Boolean) : [];
+    if (ids.length === 0) return;
+    try {
+        await makeApiRequest('docdata/delete', {
+            method: 'POST',
+            body: JSON.stringify({ chatIds: ids })
+        });
+    } catch (error) {
+        console.warn('Failed to delete doc data from R2:', error);
+    }
+}
+
+async function deleteDocImagesFromRemote(chatId) {
+    if (!currentUser || !chatId) return;
+    try {
+        await makeApiRequest('docdata/image-delete-chat', {
+            method: 'POST',
+            body: JSON.stringify({ chatId })
+        });
+    } catch (error) {
+        console.warn('Failed to delete doc images from R2:', error);
+    }
+    clearDocImageUploadQueueForChat(chatId);
+}
+
+async function moveDocDataRemote(fromChatId, toChatId) {
+    if (!currentUser || !fromChatId || !toChatId || fromChatId === toChatId) return;
+    try {
+        await makeApiRequest('docdata/move', {
+            method: 'POST',
+            body: JSON.stringify({ fromChatId, toChatId })
+        });
+    } catch (error) {
+        console.warn('Failed to move doc data on R2:', error);
+    }
+}
+
+function transferDocDataCaches(fromChatId, toChatId) {
+    if (!fromChatId || !toChatId || fromChatId === toChatId) return;
+    if (docAttachmentTextCache.has(fromChatId)) {
+        docAttachmentTextCache.set(toChatId, docAttachmentTextCache.get(fromChatId));
+        docAttachmentTextCache.delete(fromChatId);
+    }
+    if (docDataSaveSignatures.has(fromChatId)) {
+        docDataSaveSignatures.set(toChatId, docDataSaveSignatures.get(fromChatId));
+        docDataSaveSignatures.delete(fromChatId);
+    }
+    if (docDataSaveTimers.has(fromChatId)) {
+        clearTimeout(docDataSaveTimers.get(fromChatId));
+        docDataSaveTimers.delete(fromChatId);
+    }
+    if (docImageUploadCache.has(fromChatId)) {
+        docImageUploadCache.delete(fromChatId);
+    }
+    if (docImageUploadTimers.has(fromChatId)) {
+        clearTimeout(docImageUploadTimers.get(fromChatId));
+        docImageUploadTimers.delete(fromChatId);
+    }
+    clearDocImageUploadQueueForChat(fromChatId);
+}
+
+async function uploadDocImagesForChat(chatId, hashes = null) {
+    if (!currentUser || !chatId || !sessionId) return;
+    const queue = loadDocImageUploadQueue();
+    const queuedHashes = Array.isArray(queue?.[chatId]?.hashes) ? queue[chatId].hashes : [];
+    const chat = chats?.[chatId];
+    let hashList = Array.isArray(hashes) && hashes.length > 0
+        ? hashes
+        : (queuedHashes.length > 0 ? queuedHashes : (chat ? Array.from(collectCidHashesFromChat(chat)) : []));
+    if (hashList.length === 0) return;
+    queueDocImageUpload(chatId, hashList);
+
+    let uploadedSet = docImageUploadCache.get(chatId);
+    if (!uploadedSet) {
+        uploadedSet = new Set();
+        docImageUploadCache.set(chatId, uploadedSet);
+    }
+
+    let uploadedCount = 0;
+    let batchItems = [];
+    let batchBytes = 0;
+
+    const flushBatch = async () => {
+        if (batchItems.length === 0) return;
+        const formData = new FormData();
+        formData.append('chatId', chatId);
+        batchItems.forEach(item => {
+            formData.append('hash', item.hash);
+            formData.append('mime', item.mime || item.blob.type || 'application/octet-stream');
+            formData.append('file', item.blob, `${item.hash}.bin`);
+        });
+
+        try {
+            const response = await fetch('/api/docdata/image-save-batch', {
+                method: 'POST',
+                keepalive: true,
+                headers: {
+                    'X-Session-ID': sessionId
+                },
+                body: formData
+            });
+            if (response.ok) {
+                const result = await response.json().catch(() => null);
+                const uploaded = Array.isArray(result?.uploaded) ? result.uploaded : [];
+                for (const hash of uploaded) {
+                    uploadedSet.add(hash);
+                    await LocalStore.markUploadedForChat(hash, chatId);
+                    uploadedCount += 1;
+                }
+            } else {
+                const errorText = await response.text();
+            }
+        } catch (error) {
+            console.warn('Failed to upload doc image batch to R2:', error);
+        } finally {
+            batchItems = [];
+            batchBytes = 0;
+        }
+    };
+
+    for (const hash of hashList) {
+        if (uploadedSet.has(hash)) continue;
+        if (await LocalStore.isUploadedForChat(hash, chatId)) {
+            uploadedSet.add(hash);
+            continue;
+        }
+        try {
+            const blob = await LocalStore.getImage(hash, chatId);
+            if (!blob) {
+                continue;
+            }
+            const blobSize = blob.size || 0;
+            if ((batchBytes + blobSize) > DOC_IMAGE_UPLOAD_BATCH_BYTES && batchItems.length > 0) {
+                await flushBatch();
+            }
+            batchItems.push({ hash, blob, mime: blob.type });
+            batchBytes += blobSize;
+            if (batchItems.length >= DOC_IMAGE_UPLOAD_BATCH_SIZE) {
+                await flushBatch();
+            }
+        } catch (error) {
+            console.warn('Failed to upload doc image to R2:', error);
+        }
+    }
+    await flushBatch();
+    const remaining = hashList.filter(hash => !uploadedSet.has(hash));
+    if (remaining.length > 0) {
+        queueDocImageUpload(chatId, remaining);
+    } else {
+        clearDocImageUploadQueueForChat(chatId);
+    }
+}
+
+function scheduleDocImageUpload(chatId, hashes = null) {
+    if (!currentUser || !chatId) return;
+    const hashList = Array.isArray(hashes) && hashes.length > 0 ? hashes : null;
+    pendingDocImageUploads.add(chatId);
+    queueDocImageUpload(chatId, hashList);
+    if (docImageUploadTimers.has(chatId)) {
+        clearTimeout(docImageUploadTimers.get(chatId));
+    }
+    const timer = setTimeout(() => {
+        docImageUploadTimers.delete(chatId);
+        uploadDocImagesForChat(chatId, hashList);
+        pendingDocImageUploads.delete(chatId);
+    }, DOC_IMAGE_UPLOAD_DEBOUNCE_MS);
+    docImageUploadTimers.set(chatId, timer);
+}
+
+function scheduleDocDataSave(chatId) {
+    if (!currentUser || !chatId) return;
+    const chat = chats?.[chatId];
+    if (!chat || !Array.isArray(chat.docAttachments) || chat.docAttachments.length === 0) return;
+    const cidHashes = Array.from(collectCidHashesFromChat(chat));
+    if (cidHashes.length === 0) return;
+    const signature = JSON.stringify({
+        docAttachments: chat.docAttachments,
+        cidHashes
+    });
+    const previousSignature = docDataSaveSignatures.get(chatId);
+    if (signature === previousSignature) return;
+    docDataSaveSignatures.set(chatId, signature);
+
+    if (docDataSaveTimers.has(chatId)) {
+        clearTimeout(docDataSaveTimers.get(chatId));
+    }
+    pendingDocDataSaves.add(chatId);
+    const timer = setTimeout(() => {
+        docDataSaveTimers.delete(chatId);
+        saveDocDataToRemote(chatId, chat.docAttachments, cidHashes);
+        pendingDocDataSaves.delete(chatId);
+    }, DOC_DATA_REMOTE_SAVE_DEBOUNCE_MS);
+    docDataSaveTimers.set(chatId, timer);
+}
+
+function flushPendingDocUploads() {
+    if (!currentUser) return;
+    const docChats = Array.from(pendingDocDataSaves);
+    const imageChats = Array.from(pendingDocImageUploads);
+    docChats.forEach(chatId => {
+        const chat = chats?.[chatId];
+        if (!chat || !Array.isArray(chat.docAttachments)) return;
+        const cidHashes = Array.from(collectCidHashesFromChat(chat));
+        if (cidHashes.length === 0) return;
+        saveDocDataToRemote(chatId, chat.docAttachments, cidHashes);
+    });
+    imageChats.forEach(chatId => {
+        queueDocImageUpload(chatId);
+        uploadDocImagesForChat(chatId);
+    });
+}
+
+function cacheDocAttachmentsForChat(chatId, content) {
+    if (!chatId || !Array.isArray(content)) return;
+    const chat = chats?.[chatId];
+    if (!chat) return;
+    const entries = content
+        .filter(part => {
+            if (part?.type !== 'file' || typeof part.content !== 'string' || !part.content.trim()) {
+                return false;
+            }
+            if (typeof part.filename !== 'string') return false;
+            const ext = part.filename.split('.').pop()?.toLowerCase();
+            return !!ext && DOC_ATTACHMENT_EXTENSIONS.has(ext);
+        })
+        .map(part => ({
+            hash: typeof part.contentHash === 'string' ? part.contentHash : null,
+            filename: part.filename || 'attachment',
+            text: part.content
+        }));
+    if (entries.length === 0) return;
+    if (!Array.isArray(chat.docAttachments)) {
+        chat.docAttachments = [];
+    }
+    const existingHashes = new Set(
+        chat.docAttachments.map(entry => entry?.hash).filter(Boolean)
+    );
+    const additions = entries.filter(entry => !entry.hash || !existingHashes.has(entry.hash));
+    if (additions.length === 0) return;
+    chat.docAttachments.push(...additions);
+    const mergedText = buildDocAttachmentContextText(chat.docAttachments);
+    if (mergedText) {
+        docAttachmentTextCache.set(chatId, mergedText);
+    }
+    const contentHashes = new Set();
+    collectCidHashesFromContent(content, contentHashes);
+    if (contentHashes.size > 0) {
+        scheduleDocDataSave(chatId);
+        scheduleDocImageUpload(chatId, Array.from(contentHashes));
+    }
+}
+
+function getDocAttachmentContextForChat(chatId) {
+    if (!chatId) return '';
+    const cached = docAttachmentTextCache.get(chatId);
+    if (cached) return cached;
+    const chat = chats?.[chatId];
+    if (!chat || !Array.isArray(chat.docAttachments) || chat.docAttachments.length === 0) return '';
+    const text = buildDocAttachmentContextText(chat.docAttachments);
+    if (text) docAttachmentTextCache.set(chatId, text);
+    return text;
+}
+
+function clearDocAttachmentCacheForChats(deletedChats) {
+    if (!Array.isArray(deletedChats)) return;
+    deletedChats.forEach(chat => {
+        if (!chat?.id) return;
+        docAttachmentTextCache.delete(chat.id);
+        docDataSaveSignatures.delete(chat.id);
+        if (docDataSaveTimers.has(chat.id)) {
+            clearTimeout(docDataSaveTimers.get(chat.id));
+            docDataSaveTimers.delete(chat.id);
+        }
+        docImageUploadCache.delete(chat.id);
+        if (docImageUploadTimers.has(chat.id)) {
+            clearTimeout(docImageUploadTimers.get(chat.id));
+            docImageUploadTimers.delete(chat.id);
+        }
+    });
+}
+
+function hasFileContentInParts(content) {
+    if (!Array.isArray(content)) return false;
+    return content.some(part =>
+        part?.type === 'file' &&
+        typeof part.content === 'string' &&
+        part.content.trim()
+    );
+}
+
+const CID_HASH_REGEX = /cid:([a-f0-9]+)/ig;
+
+function collectCidHashesFromText(text, collector) {
+    if (!text || typeof text !== 'string') return;
+    CID_HASH_REGEX.lastIndex = 0;
+    let match = null;
+    while ((match = CID_HASH_REGEX.exec(text)) !== null) {
+        if (match[1]) collector.add(match[1]);
+    }
+}
+
+function collectCidHashesFromContent(content, collector) {
+    if (typeof content === 'string') {
+        collectCidHashesFromText(content, collector);
+        return;
+    }
+    if (!Array.isArray(content)) return;
+    content.forEach(part => {
+        if (typeof part === 'string') {
+            collectCidHashesFromText(part, collector);
+            return;
+        }
+        if (!part || typeof part !== 'object') return;
+        if (typeof part.text === 'string') {
+            collectCidHashesFromText(part.text, collector);
+        }
+        if (typeof part.content === 'string') {
+            collectCidHashesFromText(part.content, collector);
+        }
+    });
+}
+
+function hasCidInContent(input) {
+    const hashes = new Set();
+    if (Array.isArray(input)) {
+        input.forEach(item => {
+            if (item && typeof item === 'object' && 'content' in item) {
+                collectCidHashesFromContent(item.content, hashes);
+            } else {
+                collectCidHashesFromContent(item, hashes);
+            }
+        });
+    } else {
+        collectCidHashesFromContent(input, hashes);
+    }
+    return hashes.size > 0;
+}
+
+function hasPersistedDocContext(chatId) {
+    if (!chatId) return false;
+    return !!getDocAttachmentContextForChat(chatId);
+}
+
+function rebuildDocAttachmentsFromMessages(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) return [];
+    const entries = [];
+    messages.forEach(msg => {
+        const parts = Array.isArray(msg?.content) ? msg.content : [];
+        parts.forEach(part => {
+            if (part?.type !== 'file' || typeof part.content !== 'string' || !part.content.trim()) {
+                return;
+            }
+            if (typeof part.filename !== 'string') return;
+            const ext = part.filename.split('.').pop()?.toLowerCase();
+            if (!ext || !DOC_ATTACHMENT_EXTENSIONS.has(ext)) return;
+            entries.push({
+                hash: typeof part.contentHash === 'string' ? part.contentHash : null,
+                filename: part.filename || 'attachment',
+                text: part.content
+            });
+        });
+    });
+    return entries;
+}
+
+async function ensureDocAttachmentContextForChat(chatId, chat, allowCleanup = true) {
+    if (!chatId || !chat) return;
+    const isLoggedIn = !!currentUser;
+    const hasAttachments = Array.isArray(chat.docAttachments) && chat.docAttachments.length > 0;
+    const cached = docAttachmentTextCache.get(chatId);
+    if (hasAttachments && cached) return;
+
+    if (!hasAttachments) {
+        if (isLoggedIn) {
+            const remoteData = await fetchDocDataFromRemote(chatId);
+            if (remoteData && Array.isArray(remoteData.docAttachments) && remoteData.docAttachments.length > 0) {
+                chat.docAttachments = remoteData.docAttachments;
+            } else if (allowCleanup) {
+                chat.docAttachments = [];
+                docAttachmentTextCache.delete(chatId);
+                return;
+            } else {
+                return;
+            }
+        } else {
+            const rebuilt = rebuildDocAttachmentsFromMessages(chat.messages || []);
+            if (rebuilt.length > 0) {
+                chat.docAttachments = rebuilt;
+                scheduleDocDataSave(chatId);
+            } else if (allowCleanup) {
+                chat.docAttachments = [];
+                docAttachmentTextCache.delete(chatId);
+                return;
+            } else {
+                return;
+            }
+        }
+    }
+
+    if (Array.isArray(chat.docAttachments) && chat.docAttachments.length > 0) {
+        const mergedText = buildDocAttachmentContextText(chat.docAttachments);
+        if (mergedText) {
+            docAttachmentTextCache.set(chatId, mergedText);
+        } else if (allowCleanup) {
+            chat.docAttachments = [];
+            docAttachmentTextCache.delete(chatId);
+        }
+    }
+}
+
+function collectCidHashesFromChat(chat) {
+    const hashes = new Set();
+    if (!chat || !Array.isArray(chat.messages)) return hashes;
+    chat.messages.forEach(msg => {
+        collectCidHashesFromContent(msg?.content, hashes);
+    });
+    if (Array.isArray(chat.docAttachments)) {
+        chat.docAttachments.forEach(entry => {
+            if (entry && typeof entry.text === 'string') {
+                collectCidHashesFromText(entry.text, hashes);
+            }
+        });
+    }
+    return hashes;
+}
+
+function hasCidInChat(chat) {
+    return collectCidHashesFromChat(chat).size > 0;
+}
+
+function collectCidHashesFromChats(chatsMap, excludedChatIds = new Set()) {
+    const hashes = new Set();
+    if (!chatsMap) return hashes;
+    Object.entries(chatsMap).forEach(([chatId, chat]) => {
+        if (excludedChatIds.has(chatId)) return;
+        const chatHashes = collectCidHashesFromChat(chat);
+        chatHashes.forEach(hash => hashes.add(hash));
+    });
+    return hashes;
+}
+
+async function cleanupDocumentImagesForDeletedChats(deletedChats) {
+    if (!Array.isArray(deletedChats) || deletedChats.length === 0) return;
+    clearDocAttachmentCacheForChats(deletedChats);
+    if (currentUser) {
+        const ids = deletedChats.map(chat => chat?.id).filter(Boolean);
+        deleteDocDataFromRemote(ids);
+    }
+    const candidateHashes = new Set();
+    deletedChats.forEach(chat => {
+        const hashes = collectCidHashesFromChat(chat);
+        hashes.forEach(hash => candidateHashes.add(hash));
+    });
+    if (candidateHashes.size === 0) return;
+
+    const remainingHashes = collectCidHashesFromChats(chats);
+    const hashesToDelete = [];
+    candidateHashes.forEach(hash => {
+        if (!remainingHashes.has(hash)) {
+            hashesToDelete.push(hash);
+        }
+    });
+
+    if (hashesToDelete.length === 0) return;
+    try {
+        await LocalStore.deleteImages(hashesToDelete);
+    } catch (error) {
+        console.warn('Failed to delete document images after chat removal:', error);
+    }
+    deletedChats.forEach(chat => {
+        if (!chat?.id) return;
+        deleteDocImagesFromRemote(chat.id);
+    });
+}
+
+const TOOL_IMAGE_CALL_REGEX = /fetch_image_details/i;
+const GLOBAL_IMAGE_REQUEST_REGEX = /request_global_images/i;
+const CID_INLINE_REGEX = /cid:([a-f0-9]{10,})/ig;
+const CID_HASH_ONLY_REGEX = /\b[a-f0-9]{40}\b/ig;
+const MAX_TOOL_IMAGE_FETCH = 8;
+
+function extractToolCallHashes(text) {
+    if (!text || typeof text !== 'string' || !TOOL_IMAGE_CALL_REGEX.test(text)) return [];
+    const hashes = new Set();
+    CID_INLINE_REGEX.lastIndex = 0;
+    let match = null;
+    while ((match = CID_INLINE_REGEX.exec(text)) !== null) {
+        if (match[1]) hashes.add(match[1]);
+    }
+    if (hashes.size === 0) {
+        CID_HASH_ONLY_REGEX.lastIndex = 0;
+        while ((match = CID_HASH_ONLY_REGEX.exec(text)) !== null) {
+            if (match[0]) hashes.add(match[0]);
+        }
+    }
+    return Array.from(hashes);
+}
+
+function includeAdjacentChunks(relevantChunks, documentIndex, distance = 1) {
+    if (!Array.isArray(relevantChunks) || !Array.isArray(documentIndex)) return relevantChunks || [];
+    if (relevantChunks.length === 0) return relevantChunks;
+    const orderedIds = documentIndex.map(chunk => chunk.chunkId);
+    const indexMap = new Map();
+    orderedIds.forEach((id, idx) => indexMap.set(id, idx));
+    const idSet = new Set(relevantChunks.map(chunk => chunk.chunkId));
+    relevantChunks.forEach(chunk => {
+        const idx = indexMap.get(chunk.chunkId);
+        if (idx === undefined) return;
+        for (let offset = 1; offset <= distance; offset += 1) {
+            const prevId = orderedIds[idx - offset];
+            const nextId = orderedIds[idx + offset];
+            if (prevId !== undefined) idSet.add(prevId);
+            if (nextId !== undefined) idSet.add(nextId);
+        }
+    });
+    return documentIndex.filter(chunk => idSet.has(chunk.chunkId));
+}
+
+async function selectRelevantCidsForQuestion(userMessageText, sourceText) {
+    if (!sourceText || !userMessageText) {
+        return { relevantText: '', hashes: new Set() };
+    }
+    const MAX_TOOL_TEXT = 12000;
+    const truncatedSource = sourceText.length > MAX_TOOL_TEXT
+        ? `${sourceText.slice(0, MAX_TOOL_TEXT)}\n\n[Content truncated]`
+        : sourceText;
+    const toolPrompt = `You are selecting relevant document passages and image references for a user's question. Return JSON only.
+{"relevant_text":"...","cids":["cid:hash1","cid:hash2"]} 
+Rules:
+- relevant_text must be quotes from the provided content (no invention).
+- Do NOT include markdown image syntax or backticks in relevant_text.
+- Escape newlines as \\n and quotes as \\" inside relevant_text.
+- cids should include only those mentioned in relevant_text, prefer up to ${MAX_TOOL_IMAGE_FETCH}.
+- If no image is needed, return an empty cids array.
+
+User question: "${userMessageText}"
+
+Content:
+${truncatedSource}`;
+
+    try {
+        const toolResult = await callAISynchronously(toolPrompt, 'gemini-2.5-flash-lite', false);
+        const { relevantText, cidList } = parseDetailQueryToolResult(toolResult);
+        const hashes = new Set();
+        const cids = cidList.length > 0 ? cidList : extractToolCallHashes(toolResult);
+        cids.forEach((cid) => {
+            if (typeof cid !== 'string') return;
+            const match = cid.match(/cid:([a-f0-9]{10,})/i);
+            if (match && match[1]) hashes.add(match[1].toLowerCase());
+            if (!match) {
+                const raw = cid.trim();
+                if (/^[a-f0-9]{40}$/i.test(raw)) hashes.add(raw.toLowerCase());
+            }
+        });
+        return { relevantText: relevantText || '', hashes };
+    } catch (error) {
+        console.warn('Global image selection failed:', error);
+        return { relevantText: '', hashes: new Set() };
+    }
+}
+
+function tryParseJsonObject(rawText) {
+    if (typeof rawText !== 'string') return null;
+    let text = rawText.trim();
+    if (text.startsWith('```')) {
+        text = text.replace(/^```[a-zA-Z]*\s*/m, '').replace(/\s*```$/m, '').trim();
+    }
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start === -1 || end === -1 || end <= start) return null;
+    const candidate = text.slice(start, end + 1);
+    let quoteCount = 0;
+    let escaped = false;
+    for (let i = 0; i < candidate.length; i += 1) {
+        const ch = candidate[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (ch === '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch === '"') quoteCount += 1;
+    }
+    if (quoteCount % 2 !== 0) return null;
+    try {
+        return JSON.parse(candidate);
+    } catch (_) {
+        return null;
+    }
+}
+
+function parseDetailQueryToolResult(rawText) {
+    const parsed = tryParseJsonObject(rawText);
+    const relevantText = parsed && typeof parsed.relevant_text === 'string'
+        ? parsed.relevant_text.trim()
+        : '';
+    const cidList = Array.isArray(parsed?.cids) ? parsed.cids : [];
+    return { relevantText, cidList };
+}
+
+async function buildImagePartsFromCids(hashes, chatId = null) {
+    if (!Array.isArray(hashes) || hashes.length === 0) return [];
+    const parts = [];
+    const limit = Math.min(hashes.length, MAX_TOOL_IMAGE_FETCH);
+    for (let i = 0; i < limit; i += 1) {
+        const hash = hashes[i];
+        try {
+            const blob = await LocalStore.getImage(hash, chatId);
+            if (!blob) continue;
+            const base64 = await LocalStore.blobToBase64(blob);
+            if (!base64) continue;
+            parts.push({
+                type: 'image_url',
+                image_url: { url: `data:${blob.type || 'image/png'};base64,${base64}` }
+            });
+        } catch (_) {
+            // Skip missing or failed images.
+        }
+    }
+    return parts;
+}
+
 class IntentAnalyzer {
     constructor() {
         this.currentMessageIntentResult = null;
+        this.currentMessageGtAnalysisResult = null;
         this._creativeKeywords = null;
         this._roleplayKeywords = null;
         this._classicalKeywords = null;
@@ -10768,6 +11266,7 @@ class IntentAnalyzer {
 
     reset() {
         this.currentMessageIntentResult = null;
+        this.currentMessageGtAnalysisResult = null;
     }
 
     clearKeywordCache() {
@@ -10921,6 +11420,67 @@ class IntentAnalyzer {
         }
     }
 
+    async analyzeGtAnalysisIntent(userMessageText, conversationHistory = []) {
+        if (this.currentMessageGtAnalysisResult) {
+            return this.currentMessageGtAnalysisResult;
+        }
+
+        if (!hasDocAttachmentsInHistory(conversationHistory)) {
+            return null;
+        }
+
+        const trimmedQuery = (userMessageText || '').trim();
+        const intentPrompt = `Classify a request about an uploaded doc:
+        - "GT_ANALYSIS": overall/broad analysis.
+        - "DETAIL_QUERY": specific section/page/figure/table/diagram/formula/“this part”.
+        If unrelated or unsure -> "GT_ANALYSIS" and needs_images=false.
+
+        Return ONLY JSON: {"intent":"GT_ANALYSIS|DETAIL_QUERY","needs_images":true|false,"confidence":0.0,"reasoning":""}
+
+        User request: "${trimmedQuery.substring(0, 800)}"`;
+
+        try {
+            const response = await callAISynchronously(intentPrompt, 'gemini-2.5-flash-lite', false);
+            const parsed = safeJsonParse(response, null);
+            const intent = parsed && typeof parsed.intent === 'string'
+                ? parsed.intent.trim().toUpperCase()
+                : '';
+            const needsImages = parsed && typeof parsed.needs_images === 'boolean'
+                ? parsed.needs_images
+                : (intent === 'DETAIL_QUERY');
+            const confidence = parsed && typeof parsed.confidence === 'number'
+                ? parsed.confidence
+                : 0.7;
+            const reasoning = parsed && typeof parsed.reasoning === 'string'
+                ? parsed.reasoning
+                : '';
+
+            if (intent === 'GT_ANALYSIS' || intent === 'DETAIL_QUERY') {
+                const result = {
+                    intent,
+                    needsImages,
+                    confidence,
+                    reasoning
+                };
+                console.log(`${getToastMessage('console.aiIntentAnalysisResult')}: ${intent}`);
+                this.currentMessageGtAnalysisResult = result;
+                return result;
+            }
+        } catch (error) {
+            console.error('GT analysis intent detection failed:', error);
+        }
+
+        const fallbackResult = {
+            intent: 'GT_ANALYSIS',
+            needsImages: false,
+            confidence: 0.6,
+            reasoning: ''
+        };
+        console.log(`${getToastMessage('console.aiIntentAnalysisResult')}: ${fallbackResult.intent}`);
+        this.currentMessageGtAnalysisResult = fallbackResult;
+        return fallbackResult;
+    }
+
     fallbackIntentDetection(userMessageText) {
         if (this.containsRoleplayKeywords(userMessageText)) {
             return { intent: 'ROLEPLAY_CREATIVE', confidence: 0.7, reasoning: getToastMessage('ui.roleplayKeywordMatch') };
@@ -10936,8 +11496,9 @@ class IntentAnalyzer {
         return { intent: 'GENERAL_QUERY', confidence: 0.9, reasoning: getToastMessage('ui.defaultTextResponse') };
     }
 
-    async performUnifiedIntentAnalysis(userMessageText, conversationHistory = []) {
+    async performUnifiedIntentAnalysis(userMessageText, conversationHistory = [], options = {}) {
         const needsAIAnalysis = this.shouldTriggerIntentAnalysis(userMessageText);
+        const enableGtAnalysis = options?.enableGtAnalysis !== false;
 
         let intentResult = null;
         if (needsAIAnalysis) {
@@ -10951,6 +11512,13 @@ class IntentAnalyzer {
             shouldUseCreativePrompt: false,
             intentResult
         };
+
+        if (enableGtAnalysis) {
+            const gtAnalysisResult = await this.analyzeGtAnalysisIntent(userMessageText, conversationHistory);
+            if (gtAnalysisResult) {
+                result.gtAnalysis = gtAnalysisResult;
+            }
+        }
 
         if (this.shouldDetectClassicalChinese(userMessageText)) {
             result.shouldUseClassicalChinesePrompt = intentResult ? intentResult.intent === 'CLASSICAL_CHINESE_ANALYSIS' : true;
@@ -11100,8 +11668,8 @@ class IntentAnalyzer {
 
 const intentAnalyzer = new IntentAnalyzer();
 
-async function performUnifiedIntentAnalysis(userMessageText, conversationHistory = []) {
-    return await intentAnalyzer.performUnifiedIntentAnalysis(userMessageText, conversationHistory);
+async function performUnifiedIntentAnalysis(userMessageText, conversationHistory = [], options = {}) {
+    return await intentAnalyzer.performUnifiedIntentAnalysis(userMessageText, conversationHistory, options);
 }
 
 function extractImagePrompt(userMessageText) {
@@ -11744,13 +12312,14 @@ async function handleSearchAndChat(userMessageText) {
             headers['X-Visitor-ID'] = await getGuestVisitorId();
         }
 
+        const hasImageCids = hasImageCidInMessages(messagesForAI);
         const body = {
             messages: messagesForAI,
             model: currentModelId,
             temperature: aiParameters.temperature,
             top_p: aiParameters.topP,
             top_k: aiParameters.topK,
-            system_prompt: composeSystemPrompt(aiParameters.systemPrompt),
+            system_prompt: composeSystemPromptWithImageHint(aiParameters.systemPrompt, hasImageCids),
             context_mode: 'search'
         };
 
@@ -12080,13 +12649,14 @@ async function handleResearchAndChat(userContent, userMessageText) {
             headers['X-Visitor-ID'] = await getGuestVisitorId();
         }
 
+        const hasImageCids = hasImageCidInMessages(messagesForAI);
         const body = {
             messages: messagesForAI,
             model: currentModelId,
             temperature: aiParameters.temperature,
             top_p: aiParameters.topP,
             top_k: aiParameters.topK,
-            system_prompt: composeSystemPrompt(aiParameters.systemPrompt),
+            system_prompt: composeSystemPromptWithImageHint(aiParameters.systemPrompt, hasImageCids),
             context_mode: 'research'
         };
 
@@ -12206,7 +12776,6 @@ function showUsageLimitModal() {
     const isLoggedIn = !!currentUser;
     const usageLimit = isLoggedIn ? LOGGED_IN_LIMIT : GUEST_LIMIT;
 
-    // ??????
     elements.limitModalTitle.textContent = isLoggedIn ? getToastMessage('status.dailyLimitReached') : getToastMessage('status.trialLimitReached');
     elements.limitModalText.textContent = isLoggedIn
         ? getToastMessage('status.dailyLimitReachedMessage', { limit: usageLimit })
@@ -12217,7 +12786,6 @@ function showUsageLimitModal() {
         if (isLoggedIn) {
             document.getElementById('settings-modal-overlay').classList.add('visible');
 
-            // ???API??
             const apiNavItem = document.querySelector('.settings-nav-item[data-page="api"]');
             if (apiNavItem) {
                 apiNavItem.click();
@@ -12232,7 +12800,8 @@ function showUsageLimitModal() {
 async function handleChatMessage(userContent, options = {}) {
     const {
         existingAssistantElement = null,
-        intentAnalysisOverride = null
+        intentAnalysisOverride = null,
+        suppressImageRecallHint = false
     } = options;
     let progressTimer = null;
     let resolvedCitations = null;
@@ -12245,9 +12814,87 @@ async function handleChatMessage(userContent, options = {}) {
     const conversationHistory = chats[chatIdForRequest]?.messages || [];
 
     // 使用统一的意图分析函数
+    const cachedDocContext = getDocAttachmentContextForChat(chatIdForRequest);
+    const hasDocContext = !!cachedDocContext || hasPersistedDocContext(chatIdForRequest);
+    const chatHasCid = hasCidInChat(chats[chatIdForRequest]);
+    const shouldRunGtAnalysis = chatHasCid && (
+        hasCidInContent(userContent)
+        || hasCidInContent(conversationHistory)
+        || chatHasCid
+    );
     const intentAnalysis = intentAnalysisOverride
         ? intentAnalysisOverride
-        : await performUnifiedIntentAnalysis(userMessageText, conversationHistory);
+        : await performUnifiedIntentAnalysis(userMessageText, conversationHistory, {
+            enableGtAnalysis: shouldRunGtAnalysis
+        });
+    const gtAnalysis = intentAnalysis?.gtAnalysis || null;
+    const shouldSuppressImageRecallHint = suppressImageRecallHint || (gtAnalysis && gtAnalysis.needsImages === false);
+    const shouldSelectDetailImages = !!gtAnalysis
+        && gtAnalysis.intent === 'DETAIL_QUERY'
+        && chatHasCid;
+
+    if (shouldSelectDetailImages && !shouldSuppressImageRecallHint) {
+        try {
+            const inlineDocText = hasFileContentInParts(userContent)
+                ? buildResearchTextFromUserContent(userContent)
+                : '';
+            const cachedDocText = cachedDocContext || getDocAttachmentContextForChat(chatIdForRequest);
+            const sourceText = inlineDocText || cachedDocText || extractTextFromUserContent(userContent);
+            if (sourceText) {
+                const MAX_TOOL_TEXT = 12000;
+                const truncatedSource = sourceText.length > MAX_TOOL_TEXT
+                    ? `${sourceText.slice(0, MAX_TOOL_TEXT)}\n\n[Content truncated]`
+                    : sourceText;
+                const toolPrompt = `You are selecting relevant document passages and image references for a user's detail question. Return JSON only.
+                {"relevant_text":"...","cids":["cid:hash1","cid:hash2"]} 
+                Rules:
+                - relevant_text must be quotes from the provided content (no invention).
+                - Do NOT include markdown image syntax or backticks in relevant_text.
+                - Escape newlines as \\n and quotes as \\" inside relevant_text.
+                - cids should include only those mentioned in relevant_text, prefer up to ${MAX_TOOL_IMAGE_FETCH}.
+                - If no image is needed, return an empty cids array.
+
+                User question: "${userMessageText}"
+
+                Content:
+                ${truncatedSource}`;
+                const toolResult = await callAISynchronously(toolPrompt, 'gemini-2.5-flash-lite', false);
+                const { relevantText, cidList: parsedCids } = parseDetailQueryToolResult(toolResult);
+                const candidateText = relevantText;
+                const cidList = parsedCids.length > 0
+                    ? parsedCids
+                    : extractToolCallHashes(toolResult);
+                const hashes = new Set();
+                cidList.forEach((cid) => {
+                    if (typeof cid !== 'string') return;
+                    const match = cid.match(/cid:([a-f0-9]{10,})/i);
+                    if (match && match[1]) hashes.add(match[1].toLowerCase());
+                    if (!match) {
+                        const raw = cid.trim();
+                        if (/^[a-f0-9]{40}$/i.test(raw)) hashes.add(raw.toLowerCase());
+                    }
+                });
+                const detailText = candidateText
+                    ? appendDocAttachmentMarker(
+                        `User question: "${userMessageText}"\n\nRelevant content:\n${candidateText}`,
+                        userContent
+                    )
+                    : '';
+                if (detailText || hashes.size > 0) {
+                    const optimizedParts = cloneUserPartsWithNewText(userContent, detailText || userMessageText);
+                    if (hashes.size > 0) {
+                        const detailImages = await buildImagePartsFromCids(Array.from(hashes), chatIdForRequest);
+                        if (detailImages.length > 0) {
+                            optimizedParts.push(...detailImages);
+                        }
+                    }
+                    setAiOptimizedContentForLastUserMessage(chatIdForRequest, optimizedParts);
+                }
+            }
+        } catch (error) {
+            console.warn('DETAIL_QUERY tool selection failed:', error);
+        }
+    }
 
     const previousHistory = chats[chatIdForRequest]?.messages || [];
     const WARNING_CHAR_LIMIT = 60000;
@@ -12298,7 +12945,6 @@ async function handleChatMessage(userContent, options = {}) {
             const otherContentParts = [];
             let quoteText = '';
             let replyText = '';
-
             sourceContent.forEach(part => {
                 if (part.type === 'quote') {
                     quoteText = part.text;
@@ -12381,7 +13027,8 @@ async function handleChatMessage(userContent, options = {}) {
             headers['X-Visitor-ID'] = await getGuestVisitorId();
         }
 
-        let finalSystemPrompt = composeSystemPrompt(aiParameters.systemPrompt);
+        const hasImageCids = !shouldSuppressImageRecallHint && hasImageCidInMessages(messagesForAI);
+        let finalSystemPrompt = composeSystemPromptWithImageHint(aiParameters.systemPrompt, hasImageCids);
 
         const body = {
             messages: messagesForAI,
@@ -12535,11 +13182,194 @@ async function handleChatMessage(userContent, options = {}) {
             }
         } catch (_) { }
 
-        const { fullResponse: responseText, finalCitations, finishReason, interrupted } = await processStreamedResponse(response, contentDiv);
+        const {
+            fullResponse: responseText,
+            finalCitations,
+            finishReason: initialFinishReason,
+            interrupted: initialInterrupted
+        } = await processStreamedResponse(response, contentDiv);
         fullResponse = responseText.trim();
         resolvedCitations = Array.isArray(finalCitations) && finalCitations.length > 0
             ? finalCitations
             : null;
+
+        let finishReason = initialFinishReason;
+        let interrupted = initialInterrupted;
+
+        if (!fullResponse && finishReason === 'MALFORMED_FUNCTION_CALL') {
+            try {
+                const retryPromptBase = aiParameters.systemPrompt || '';
+                const retryPrompt = retryPromptBase
+                    ? `${retryPromptBase}\nDo not call tools.`
+                    : 'Do not call tools.';
+                const retryBody = {
+                    ...body,
+                    system_prompt: retryPrompt
+                };
+
+                const retryResponse = await fetch('/', {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(retryBody),
+                    signal: controller.signal,
+                });
+
+                if (retryResponse.ok) {
+                    const retryResult = await processStreamedResponse(retryResponse, contentDiv);
+                    fullResponse = retryResult.fullResponse.trim();
+                    resolvedCitations = Array.isArray(retryResult.finalCitations) && retryResult.finalCitations.length > 0
+                        ? retryResult.finalCitations
+                        : null;
+                    finishReason = retryResult.finishReason || finishReason;
+                    interrupted = retryResult.interrupted || interrupted;
+                }
+            } catch (retryError) {
+                console.warn('Retry after malformed function call failed:', retryError);
+            }
+        }
+
+        const wantsGlobalImages = GLOBAL_IMAGE_REQUEST_REGEX.test(fullResponse);
+        if (!shouldSuppressImageRecallHint || wantsGlobalImages) {
+            const toolCallHashes = extractToolCallHashes(fullResponse);
+            if (wantsGlobalImages) {
+                const inlineDocText = hasFileContentInParts(userContent)
+                    ? buildResearchTextFromUserContent(userContent)
+                    : '';
+                const cachedDocText = cachedDocContext || getDocAttachmentContextForChat(chatIdForRequest);
+                const sourceText = inlineDocText || cachedDocText || '';
+                const { hashes } = await selectRelevantCidsForQuestion(userMessageText, sourceText);
+                if (hashes.size > 0) {
+                    const imageParts = await buildImagePartsFromCids(Array.from(hashes), chatIdForRequest);
+                    if (imageParts.length > 0) {
+                        if (contentDiv) {
+                            contentDiv.innerHTML = `
+                            <div class="thinking-indicator-new">
+                                <svg class="spinner" viewBox="0 0 50 50">
+                                    <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle>
+                                </svg>
+                                <span>${getToastMessage('ui.thinking')}</span>
+                            </div>
+                        `;
+                        }
+
+                        const toolPrompt = `Requested global images are provided. Use them to answer the user's last question. Provide the final answer only.`;
+                        const toolMessages = [
+                            ...messagesForAI,
+                            { role: 'user', content: [{ type: 'text', text: toolPrompt }, ...imageParts] }
+                        ];
+
+                        const toolBody = {
+                            messages: toolMessages,
+                            model: currentModelId,
+                            temperature: aiParameters.temperature,
+                            top_p: aiParameters.topP,
+                            top_k: aiParameters.topK,
+                            system_prompt: composeSystemPromptWithImageHint(aiParameters.systemPrompt, false),
+                            intent_analysis: intentAnalysis.intentResult
+                        };
+
+                        if (currentModelId === 'gemini-3-pro-preview' && currentThinkingLevel) {
+                            toolBody.thinking_level = currentThinkingLevel;
+                        }
+
+                        if (!currentUser) {
+                            const guestKey = selectGuestApiKeyForRequest();
+                            if (guestKey) toolBody.apiKey = guestKey;
+                        }
+
+                        const toolController = new AbortController();
+                        activeResponses.set(chatIdForRequest, { controller: toolController, timestamp: Date.now() });
+
+                        try {
+                            const toolResponse = await fetch('/', {
+                                method: 'POST',
+                                headers,
+                                body: JSON.stringify(toolBody),
+                                signal: toolController.signal
+                            });
+
+                            if (toolResponse.ok) {
+                                const toolResult = await processStreamedResponse(toolResponse, contentDiv);
+                                fullResponse = (toolResult.fullResponse || '').trim();
+                                resolvedCitations = Array.isArray(toolResult.finalCitations) && toolResult.finalCitations.length > 0
+                                    ? toolResult.finalCitations
+                                    : null;
+                            }
+                        } catch (toolError) {
+                            console.warn('Global image follow-up failed:', toolError);
+                        } finally {
+                            activeResponses.delete(chatIdForRequest);
+                        }
+                    }
+                }
+                if (!fullResponse || GLOBAL_IMAGE_REQUEST_REGEX.test(fullResponse)) {
+                    fullResponse = fullResponse.replace(GLOBAL_IMAGE_REQUEST_REGEX, '').trim();
+                }
+            } else if (toolCallHashes.length > 0) {
+                const imageParts = await buildImagePartsFromCids(toolCallHashes, chatIdForRequest);
+                if (imageParts.length > 0) {
+                    if (contentDiv) {
+                        contentDiv.innerHTML = `
+                        <div class="thinking-indicator-new">
+                            <svg class="spinner" viewBox="0 0 50 50">
+                                <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle>
+                            </svg>
+                            <span>${getToastMessage('ui.thinking')}</span>
+                        </div>
+                    `;
+                    }
+
+                    const toolPrompt = `Tool fetch_image_details returned ${imageParts.length} image(s). Use them to answer the user's last question. Provide the final answer only.`;
+                    const toolMessages = [
+                        ...messagesForAI,
+                        { role: 'user', content: [{ type: 'text', text: toolPrompt }, ...imageParts] }
+                    ];
+
+                    const toolBody = {
+                        messages: toolMessages,
+                        model: currentModelId,
+                        temperature: aiParameters.temperature,
+                        top_p: aiParameters.topP,
+                        top_k: aiParameters.topK,
+                        system_prompt: composeSystemPromptWithImageHint(aiParameters.systemPrompt, false),
+                        intent_analysis: intentAnalysis.intentResult
+                    };
+
+                    if (currentModelId === 'gemini-3-pro-preview' && currentThinkingLevel) {
+                        toolBody.thinking_level = currentThinkingLevel;
+                    }
+
+                    if (!currentUser) {
+                        const guestKey = selectGuestApiKeyForRequest();
+                        if (guestKey) toolBody.apiKey = guestKey;
+                    }
+
+                    const toolController = new AbortController();
+                    activeResponses.set(chatIdForRequest, { controller: toolController, timestamp: Date.now() });
+
+                    try {
+                        const toolResponse = await fetch('/', {
+                            method: 'POST',
+                            headers,
+                            body: JSON.stringify(toolBody),
+                            signal: toolController.signal
+                        });
+
+                        if (toolResponse.ok) {
+                            const toolResult = await processStreamedResponse(toolResponse, contentDiv);
+                            fullResponse = (toolResult.fullResponse || '').trim();
+                            resolvedCitations = Array.isArray(toolResult.finalCitations) && toolResult.finalCitations.length > 0
+                                ? toolResult.finalCitations
+                                : null;
+                            finishReason = toolResult.finishReason;
+                            interrupted = toolResult.interrupted;
+                        }
+                    } catch (_) {
+                        // Fall back to the original response when tool execution fails.
+                    }
+                }
+            }
+        }
 
         if (finishReason || interrupted) {
             let warningMessage = '';
@@ -12711,6 +13541,7 @@ async function _processAndSendMessage(userContent, userMessageText) {
     let chatIdForRequest = currentChatId;
 
     const originalUserContent = cloneMessageParts(userContent) || userContent;
+    cacheDocAttachmentsForChat(chatIdForRequest, originalUserContent);
 
     appendMessage('user', userContent);
     chats[chatIdForRequest].messages.push({ role: 'user', content: cloneMessageParts(originalUserContent) || originalUserContent });
@@ -12754,13 +13585,25 @@ async function _processAndSendMessage(userContent, userMessageText) {
             }
             showToast(getToastMessage('toast.largeAttachmentProcessing'), 'info');
             const intent = await getLargeTextIntent(userMessageText);
+            const shouldRunGtAnalysis = hasCidInContent(userContent)
+                || hasCidInContent(conversationHistory)
+                || hasDocAttachmentsInHistory(conversationHistory);
+            const gtAnalysisResult = shouldRunGtAnalysis
+                ? await intentAnalyzer.analyzeGtAnalysisIntent(userMessageText, conversationHistory)
+                : null;
+            const suppressGtImageRecallHint = !!gtAnalysisResult && gtAnalysisResult.needsImages === false;
 
+            if (gtAnalysisResult && gtAnalysisResult.intent === 'DETAIL_QUERY') {
+                assistantMessageToSave = await handleChunkedDetailQuery(userContent, userMessageText, assistantPlaceholderElement);
+            } else {
             switch (intent) {
                 case 'CONTINUATION':
                     assistantMessageToSave = await handleContinuationTask(userContent, assistantPlaceholderElement);
                     break;
                 case 'ANALYSIS_QA': {
-                    assistantMessageToSave = await handleDeepAnalysis(userContent, userMessageText, assistantPlaceholderElement);
+                    assistantMessageToSave = await handleDeepAnalysis(userContent, userMessageText, assistantPlaceholderElement, {
+                        suppressImageRecallHint: suppressGtImageRecallHint
+                    });
                     break;
                 }
                 case 'SUMMARIZATION':
@@ -12768,6 +13611,7 @@ async function _processAndSendMessage(userContent, userMessageText) {
                     assistantMessageToSave = await handleLargeTextAnalysis(userContent, userMessageText, assistantPlaceholderElement);
                     break;
                 }
+            }
             }
         } else if (historyLength > 60000 && !isImageModeActive) {
             let combinedStory = "";
@@ -12974,10 +13818,25 @@ async function sendMessage() {
         });
     }
     attachmentsToProcess.forEach(attachment => {
-        if (attachment.content) {
-            userContent.push(attachment.type === 'image' ?
-                { type: 'image_url', image_url: { url: attachment.content } } :
-                { type: 'file', filename: attachment.file.name, content: attachment.content });
+        if (attachment.type === 'image' && typeof attachment.content === 'string') {
+            userContent.push({ type: 'image_url', image_url: { url: attachment.content } });
+            return;
+        }
+
+        if (attachment.type === 'file') {
+            const imageParts = buildImagePartsFromAttachment(attachment);
+            const fileContent = typeof attachment.content === 'string' ? attachment.content : '';
+            const hasText = fileContent.trim().length > 0;
+            if (!hasText && imageParts.length === 0) {
+                return;
+            }
+            userContent.push({
+                type: 'file',
+                filename: attachment.file.name,
+                content: fileContent,
+                contentHash: attachment.contentHash || null
+            });
+            if (imageParts.length) userContent.push(...imageParts);
         }
     });
 
@@ -13046,14 +13905,15 @@ async function sendMessage() {
 function detectFileType(filename, content) {
     const extension = filename.split('.').pop().toLowerCase();
     const codeExtensions = ['js', 'ts', 'py', 'java', 'c', 'cpp', 'cs', 'go', 'rs', 'php', 'rb', 'html', 'css', 'json', 'xml', 'yaml', 'sql'];
+    const safeContent = typeof content === 'string' ? content : '';
 
-    if (codeExtensions.includes(extension) || content.includes('```')) {
+    if (codeExtensions.includes(extension) || safeContent.includes('```')) {
         return 'code';
     }
-    if (['csv', 'xls', 'xlsx'].includes(extension) || content.match(/\|.*\|.*\n.*\|.*\|/)) {
+    if (['csv', 'xls', 'xlsx'].includes(extension) || safeContent.match(/\|.*\|.*\n.*\|.*\|/)) {
         return 'table';
     }
-    if (extension === 'md' || content.match(/^#{1,6}\s/m)) {
+    if (extension === 'md' || safeContent.match(/^#{1,6}\s/m)) {
         return 'markdown';
     }
     return 'text';
@@ -13179,7 +14039,30 @@ function smartChunking(text, maxChunkSize = 8000, overlap = 200) {
     if (currentChunk) {
         chunks.push(currentChunk);
     }
-    return chunks;
+    return fixBrokenCidChunks(chunks);
+}
+
+function fixBrokenCidChunks(chunks) {
+    if (!Array.isArray(chunks) || chunks.length === 0) return chunks || [];
+    const fixed = [];
+    for (let i = 0; i < chunks.length; i++) {
+        let current = chunks[i] || '';
+        while (i + 1 < chunks.length && isCidChunkBroken(current)) {
+            current += chunks[i + 1] || '';
+            i += 1;
+        }
+        fixed.push(current);
+    }
+    return fixed;
+}
+
+function isCidChunkBroken(text) {
+    if (!text) return false;
+    const tail = text.slice(-300);
+    if (/!\[[^\]]*$/.test(tail)) return true;
+    if (/!\[[^\]]*\]\(cid:[^)]*$/.test(tail)) return true;
+    if (/\(cid:[a-f0-9]*$/i.test(tail)) return true;
+    return false;
 }
 
 function cloneMessageParts(parts) {
@@ -13225,12 +14108,238 @@ function getAiOptimizedContentForMessage(message) {
     return stored ? cloneMessageParts(stored) : null;
 }
 
+async function handleChunkedDetailQuery(userContent, originalQuery, existingAssistantElement = null) {
+    if (!currentChatId) await startNewChat(true);
+    const chatIdForRequest = currentChatId;
+
+    const assistantMessageElement = existingAssistantElement || appendMessage('assistant', '');
+    const contentDiv = assistantMessageElement.querySelector('.content');
+
+    if (contentDiv && !existingAssistantElement) {
+        contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.intelligentChunking')}</div>`;
+    }
+
+    try {
+        let allChunks = [];
+        let chunkCounter = 0;
+
+        userContent.forEach(part => {
+            let partChunks = [];
+            if (part.type === 'text' && part.text) {
+                partChunks = smartChunkingByParagraphs(part.text, CHUNK_CONFIG.analyze.size);
+                if (partChunks.length === 0) {
+                    partChunks = smartChunking(part.text, CHUNK_CONFIG.analyze.size, CHUNK_CONFIG.analyze.overlap);
+                }
+            } else if (part.type === 'file' && typeof part.content === 'string') {
+                const fileType = detectFileType(part.filename, part.content);
+                const fileContent = `--- ${getToastMessage('ui.file')}: ${part.filename} ---\n${part.content}\n--- ${getToastMessage('ui.fileEnd')} ---`;
+
+                switch (fileType) {
+                    case 'code':
+                        partChunks = chunkCode(fileContent, CHUNK_CONFIG.analyze.size);
+                        break;
+                    case 'markdown':
+                        partChunks = chunkMarkdown(fileContent, CHUNK_CONFIG.analyze.size);
+                        break;
+                    case 'table':
+                        partChunks = chunkTable(fileContent, CHUNK_CONFIG.analyze.size);
+                        break;
+                    default:
+                        partChunks = smartChunkingByParagraphs(fileContent, CHUNK_CONFIG.analyze.size);
+                        if (partChunks.length === 0) {
+                            partChunks = smartChunking(fileContent, CHUNK_CONFIG.analyze.size, CHUNK_CONFIG.analyze.overlap);
+                        }
+                        break;
+                }
+            }
+            allChunks.push(...partChunks.map(text => ({
+                id: chunkCounter++,
+                text,
+                sourceFile: part.filename || 'user_input'
+            })));
+        });
+
+        const chunks = allChunks;
+        if (chunks.length === 0) {
+            return await handleChatMessage(userContent, { existingAssistantElement: assistantMessageElement });
+        }
+
+        const WARNING_THRESHOLD = 15;
+        if (chunks.length > WARNING_THRESHOLD) {
+            showToast(
+                getToastMessage('toast.manyChunksWarning', { count: chunks.length, threshold: WARNING_THRESHOLD }) ||
+                `Processing ${chunks.length} chunks (recommended: ${WARNING_THRESHOLD}). This may take longer.`,
+                'info'
+            );
+        }
+
+        if (contentDiv) {
+            contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step2Indexing', { count: chunks.length })}</div>`;
+        }
+
+        const processChunkForIndex = async (chunk) => {
+            const MAX_CHUNK_LENGTH = 20000;
+            const chunkText = chunk.text.length > MAX_CHUNK_LENGTH
+                ? chunk.text.substring(0, MAX_CHUNK_LENGTH) + '\n\n[Content truncated due to length limit]'
+                : chunk.text;
+
+            const indexPrompt = `You are indexing a document chunk for retrieval. Extract precise keywords and a faithful summary from the text only.\n- Keep filenames if present.\n- Keep proper nouns, key terms, dates, and numbers.\n- Avoid invention.\n\nText Block Content:\n"""${chunkText}"""\n\nReturn ONLY JSON: {"keywords":["keyword1","keyword2"],"summary":"summary content"}`;
+            try {
+                await applyChunkProcessingCooldown(false);
+                const indexDataStr = await callAISynchronously(indexPrompt);
+                const indexData = safeJsonParse(indexDataStr);
+                if (indexData && Array.isArray(indexData.keywords) && typeof indexData.summary === 'string') {
+                    return { chunkId: chunk.id, content: chunk.text, keywords: indexData.keywords, summary: indexData.summary, sourceFile: chunk.sourceFile };
+                }
+                throw new Error(getToastMessage('errors.parsedDataIsNullOrInvalid'));
+            } catch (e) {
+                const basicSummary = chunk.text.substring(0, 80).replace(/\s+/g, ' ') + '...';
+                const basicKeywords = chunk.text.match(/\b\w{3,}\b/g)?.slice(0, 5) || [];
+                return { chunkId: chunk.id, content: chunk.text, keywords: basicKeywords, summary: `[${getToastMessage('ui.basicIndex')}] ${basicSummary}`, sourceFile: chunk.sourceFile };
+            }
+        };
+
+        const results = await processInBatches(chunks, processChunkForIndex, 1, 1500);
+        const documentIndex = results.filter(item => item !== null);
+
+        if (documentIndex.length < chunks.length) {
+            showToast(getToastMessage('toast.partialIndexFailed', { count: chunks.length - documentIndex.length }), 'warning');
+        }
+
+        if (contentDiv) {
+            contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step3Extracting')}</div>`;
+        }
+
+        const extractionPrompt = `Extract concise, high-recall search keywords from the user query below. Prefer nouns, names, key terms, and domain phrases. Do not invent.\n\nUser query:\n"${originalQuery}"\n\nReturn ONLY JSON: {"keywords":["keyword1","keyword2"]}`;
+        await applyChunkProcessingCooldown(false);
+        const keywordsResult = await callAISynchronously(extractionPrompt);
+        const searchKeywords = safeJsonParse(keywordsResult, { keywords: [originalQuery.substring(0, 20)] }).keywords;
+
+        if (contentDiv) {
+            contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step3Searching')}</div>`;
+        }
+
+        const retrievalPrompt = `Select the most relevant document chunks based on the search keywords. Use the index only. Return the chunk IDs as numbers.\n\nSearch Keywords: "${searchKeywords.join(', ')}"\n\nDocument Index:\n${JSON.stringify(documentIndex.map(d => ({ id: d.chunkId, keywords: d.keywords, summary: d.summary })), null, 2)}\n\nReturn ONLY JSON array of numeric IDs, like: [1, 2, 3]`;
+        await applyChunkProcessingCooldown(false);
+        const relevantIdsStr = await callAISynchronously(retrievalPrompt);
+
+        let relevantChunks = [];
+        const relevantIds = safeJsonParse(relevantIdsStr);
+
+        if (relevantIds && Array.isArray(relevantIds) && relevantIds.length > 0) {
+            const idSet = new Set(relevantIds);
+            relevantChunks = documentIndex.filter(d => idSet.has(d.chunkId));
+        }
+
+        if (relevantChunks.length === 0) {
+            showToast(getToastMessage('toast.aiRetrievalFailed'), "info");
+            const queryKeywords = originalQuery.toLowerCase().match(/\b\w{2,}\b/g) || [];
+            if (queryKeywords.length > 0) {
+                const scoredChunks = documentIndex.map(chunk => {
+                    let score = 0;
+                    const chunkText = (chunk.keywords.join(' ') + ' ' + chunk.summary).toLowerCase();
+                    queryKeywords.forEach(kw => {
+                        if (chunkText.includes(kw)) {
+                            score++;
+                        }
+                    });
+                    return { ...chunk, score };
+                });
+
+                scoredChunks.sort((a, b) => b.score - a.score);
+                relevantChunks = scoredChunks.slice(0, 3).filter(c => c.score > 0);
+            }
+        }
+
+        if (relevantChunks.length === 0 && documentIndex.length > 0) {
+            showToast(getToastMessage('toast.noRelevantContent'), "info");
+            relevantChunks = documentIndex.slice(0, 3);
+        }
+
+        relevantChunks = includeAdjacentChunks(relevantChunks, documentIndex, 1);
+
+        if (contentDiv) {
+            contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step4Generating')}</div>`;
+        }
+
+        const relevantText = relevantChunks.map(c => `[${c.chunkId} from ${c.sourceFile}]:\n${c.content}`).join('\n\n');
+        const MAX_TOOL_TEXT = 12000;
+        const truncatedSource = relevantText.length > MAX_TOOL_TEXT
+            ? `${relevantText.slice(0, MAX_TOOL_TEXT)}\n\n[Content truncated]`
+            : relevantText;
+        const toolPrompt = `You are selecting relevant document passages and image references for a user's detail question. Return JSON only.
+{"relevant_text":"...","cids":["cid:hash1","cid:hash2"]} 
+Rules:
+- relevant_text must be quotes from the provided content (no invention).
+- Do NOT include markdown image syntax or backticks in relevant_text.
+- Escape newlines as \\n and quotes as \\" inside relevant_text.
+- cids should include only those mentioned in relevant_text, prefer up to ${MAX_TOOL_IMAGE_FETCH}.
+- If no image is needed, return an empty cids array.
+
+User question: "${originalQuery}"
+
+Content:
+${truncatedSource}`;
+
+        let candidateText = '';
+        let hashes = new Set();
+
+        try {
+            const toolResult = await callAISynchronously(toolPrompt, 'gemini-2.5-flash-lite', false);
+            const { relevantText: parsedText, cidList: parsedCids } = parseDetailQueryToolResult(toolResult);
+            candidateText = parsedText || '';
+            const cidList = parsedCids.length > 0 ? parsedCids : extractToolCallHashes(toolResult);
+            cidList.forEach((cid) => {
+                if (typeof cid !== 'string') return;
+                const match = cid.match(/cid:([a-f0-9]{10,})/i);
+                if (match && match[1]) hashes.add(match[1].toLowerCase());
+                if (!match) {
+                    const raw = cid.trim();
+                    if (/^[a-f0-9]{40}$/i.test(raw)) hashes.add(raw.toLowerCase());
+                }
+            });
+        } catch (error) {
+            console.warn('DETAIL_QUERY chunk selection failed:', error);
+        }
+
+        const detailText = appendDocAttachmentMarker(
+            `User question: "${originalQuery}"\n\nRelevant content:\n${candidateText || relevantText}`,
+            userContent
+        );
+        const optimizedParts = cloneUserPartsWithNewText(userContent, detailText);
+        if (hashes.size > 0) {
+            const detailImages = await buildImagePartsFromCids(Array.from(hashes), chatIdForRequest);
+            if (detailImages.length > 0) {
+                optimizedParts.push(...detailImages);
+            }
+        }
+        setAiOptimizedContentForLastUserMessage(chatIdForRequest, optimizedParts);
+
+        await applyChunkProcessingCooldown(true);
+        return await handleChatMessage(optimizedParts, {
+            existingAssistantElement: assistantMessageElement,
+            suppressImageRecallHint: true
+        });
+    } catch (error) {
+        console.error(`${getToastMessage('console.deepAnalysisFailed')}:`, error);
+        if (isToolUseUnavailableError(error)) {
+            showToast(getToastMessage('toast.toolUseFallback'), 'warning');
+            if (contentDiv) {
+                contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('ui.thinking')}</div>`;
+            }
+            return await handleChatMessage(userContent, { existingAssistantElement: assistantMessageElement });
+        }
+        const finalAnswerText = `${getToastMessage('ui.sorryErrorInDeepAnalysis')}: ${error.message}`;
+        renderMessageContent(contentDiv, finalAnswerText);
+        const assistantMessage = { role: 'assistant', content: finalAnswerText };
+        chats[chatIdForRequest].messages.push(assistantMessage);
+        return assistantMessage;
+    }
+}
+
 async function handleLargeTextAnalysis(userContent, originalQuery, existingAssistantElement = null) {
     if (!currentChatId) await startNewChat(true);
     const chatIdForRequest = currentChatId;
-    const imageParts = Array.isArray(userContent)
-        ? userContent.filter(part => part?.type === 'image_url' && part.image_url?.url)
-        : [];
 
     const assistantMessageElement = existingAssistantElement || appendMessage('assistant', '');
     const contentDiv = assistantMessageElement.querySelector('.content');
@@ -13303,15 +14412,20 @@ async function handleLargeTextAnalysis(userContent, originalQuery, existingAssis
 
         contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.allPartsAnalyzed')}</div>`;
 
-        const finalPromptForUserChoiceModel = `Based on this summary, answer the user's core topic and expand in related angles while staying grounded in the summary.\n\nUser core topic: "${originalQuery}"\n\nSummary: ${cumulativeSummary}`;
+        const finalPromptForUserChoiceModel = appendDocAttachmentMarker(
+            `Based on this summary, answer the user's core topic and expand in related angles while staying grounded in the summary.\n\nUser core topic: "${originalQuery}"\n\nSummary: ${cumulativeSummary}`,
+            userContent
+        );
         const finalUserContent = [
-            { type: 'text', text: finalPromptForUserChoiceModel },
-            ...imageParts
+            { type: 'text', text: finalPromptForUserChoiceModel }
         ];
         setAiOptimizedContentForLastUserMessage(chatIdForRequest, finalUserContent);
 
         await applyChunkProcessingCooldown(true);
-        return await handleChatMessage(finalUserContent, { existingAssistantElement: assistantMessageElement });
+        return await handleChatMessage(finalUserContent, {
+            existingAssistantElement: assistantMessageElement,
+            suppressImageRecallHint: true
+        });
 
     } catch (error) {
         console.error(`${getToastMessage('console.longTextAnalysisFailed')}:`, error);
@@ -13330,12 +14444,10 @@ async function handleLargeTextAnalysis(userContent, originalQuery, existingAssis
     }
 }
 
-async function handleDeepAnalysis(userContent, originalQuery, existingAssistantElement = null) {
+async function handleDeepAnalysis(userContent, originalQuery, existingAssistantElement = null, options = {}) {
     if (!currentChatId) await startNewChat(true);
     const chatIdForRequest = currentChatId;
-    const imageParts = Array.isArray(userContent)
-        ? userContent.filter(part => part?.type === 'image_url' && part.image_url?.url)
-        : [];
+    const { suppressImageRecallHint = false } = options;
 
     const assistantMessageElement = existingAssistantElement || appendMessage('assistant', '');
     const contentDiv = assistantMessageElement.querySelector('.content');
@@ -13472,17 +14584,25 @@ async function handleDeepAnalysis(userContent, originalQuery, existingAssistantE
             relevantChunks = documentIndex.slice(0, 3);
         }
 
+        relevantChunks = includeAdjacentChunks(relevantChunks, documentIndex, 1);
+
         contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.step4Generating')}</div>`;
 
-        const finalPromptForUserChoiceModel = `Answer the user's core topic, then expand in related angles while staying grounded in the provided content. Do not invent facts.\n\nUser core topic: "${originalQuery}"\n\nRelevant content:\n${relevantChunks.map(c => `[${c.chunkId} from ${c.sourceFile}]:\n${c.content}`).join('\n\n')}`;
+        const relevantText = relevantChunks.map(c => `[${c.chunkId} from ${c.sourceFile}]:\n${c.content}`).join('\n\n');
+        const finalPromptForUserChoiceModel = appendDocAttachmentMarker(
+            `Answer the user's core topic, then expand in related angles while staying grounded in the provided content. Do not invent facts.\n\nUser core topic: "${originalQuery}"\n\nRelevant content:\n${relevantText}`,
+            userContent
+        );
         const finalUserContent = [
-            { type: 'text', text: finalPromptForUserChoiceModel },
-            ...imageParts
+            { type: 'text', text: finalPromptForUserChoiceModel }
         ];
         setAiOptimizedContentForLastUserMessage(chatIdForRequest, finalUserContent);
 
         await applyChunkProcessingCooldown(true);
-        return await handleChatMessage(finalUserContent, { existingAssistantElement: assistantMessageElement });
+        return await handleChatMessage(finalUserContent, {
+            existingAssistantElement: assistantMessageElement,
+            suppressImageRecallHint
+        });
 
     } catch (error) {
         console.error(`${getToastMessage('console.deepAnalysisFailed')}:`, error);
@@ -13502,28 +14622,154 @@ async function handleDeepAnalysis(userContent, originalQuery, existingAssistantE
 }
 
 function safeJsonParse(text, fallback = null) {
+    const stripCodeFences = (input) => {
+        if (!input) return input;
+        let output = input.trim();
+        if (output.startsWith('```')) {
+            output = output.replace(/^```[a-zA-Z]*\s*/m, '');
+            output = output.replace(/\s*```$/m, '');
+        }
+        return output.trim();
+    };
+
+    const sanitizeJsonString = (input) => {
+        let output = '';
+        let inString = false;
+        let escaped = false;
+        for (let i = 0; i < input.length; i += 1) {
+            const ch = input[i];
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                    output += ch;
+                    continue;
+                }
+                if (ch === '\\') {
+                    escaped = true;
+                    output += ch;
+                    continue;
+                }
+                if (ch === '"') {
+                    inString = false;
+                    output += ch;
+                    continue;
+                }
+                if (ch === '\n' || ch === '\r') {
+                    output += '\\n';
+                    continue;
+                }
+                if (ch === '\t') {
+                    output += '\\t';
+                    continue;
+                }
+                output += ch;
+                continue;
+            }
+            if (ch === '"') {
+                inString = true;
+            }
+            output += ch;
+        }
+        return output;
+    };
+
+    const extractJsonBlock = (input) => {
+        const start = input.search(/[\{\[]/);
+        if (start === -1) return null;
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        for (let i = start; i < input.length; i += 1) {
+            const ch = input[i];
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                    continue;
+                }
+                if (ch === '\\') {
+                    escaped = true;
+                    continue;
+                }
+                if (ch === '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (ch === '"') {
+                inString = true;
+                continue;
+            }
+            if (ch === '{' || ch === '[') {
+                depth += 1;
+            } else if (ch === '}' || ch === ']') {
+                depth -= 1;
+                if (depth === 0) {
+                    return input.slice(start, i + 1);
+                }
+            }
+        }
+        return null;
+    };
+
+    const parseLooseKeywordsJson = (input) => {
+        if (!input || typeof input !== 'string') return null;
+        const keywordStart = input.search(/"keywords"\s*:\s*\[/);
+        if (keywordStart === -1) return null;
+        const afterStart = input.slice(keywordStart);
+        const openBracketIndex = afterStart.indexOf('[');
+        if (openBracketIndex === -1) return null;
+        let keywordsChunk = afterStart.slice(openBracketIndex + 1);
+        const closeIndex = keywordsChunk.indexOf(']');
+        if (closeIndex !== -1) {
+            keywordsChunk = keywordsChunk.slice(0, closeIndex);
+        } else {
+            const summaryIndex = keywordsChunk.search(/"summary"\s*:/);
+            if (summaryIndex !== -1) {
+                keywordsChunk = keywordsChunk.slice(0, summaryIndex);
+            }
+        }
+        const keywordTokens = keywordsChunk
+            .split(',')
+            .map(item => item.replace(/[\r\n\t]/g, ' ').trim())
+            .map(item => item.replace(/^["']|["']$/g, '').trim())
+            .filter(Boolean);
+        if (keywordTokens.length === 0) return null;
+
+        let summary = '';
+        const summaryMatch = input.match(/"summary"\s*:\s*"([\s\S]*?)"/);
+        if (summaryMatch && summaryMatch[1]) {
+            summary = summaryMatch[1].replace(/\\n/g, '\n');
+        }
+        return { keywords: keywordTokens, summary };
+    };
+
     if (typeof text !== 'string' || !text || text.trim() === '') {
         return fallback;
     }
     const normalizedText = text
         .replace(/[“”]/g, '"')
         .replace(/[‘’]/g, "'");
+    const trimmedText = stripCodeFences(normalizedText.trim());
+    const looseParsed = parseLooseKeywordsJson(trimmedText);
+    if (looseParsed) {
+        return looseParsed;
+    }
 
     try {
-        return JSON.parse(normalizedText.trim());
+        return JSON.parse(sanitizeJsonString(trimmedText));
     } catch (e) {
         try {
             let match = normalizedText.match(/```json\s*([\s\S]*?)\s*```/);
             if (match && match[1]) {
-                return JSON.parse(match[1].trim());
+                return JSON.parse(sanitizeJsonString(match[1].trim()));
             }
 
-            match = normalizedText.match(/(\[[\s\S]*?\]|\{[\s\S]*?\})/);
-            if (match && match[0]) {
-                return JSON.parse(match[0].trim());
+            const block = extractJsonBlock(trimmedText) || extractJsonBlock(normalizedText);
+            if (block) {
+                return JSON.parse(sanitizeJsonString(block.trim()));
             }
 
-            const repairedText = normalizedText.trim()
+            const repairedText = sanitizeJsonString(trimmedText)
                 .replace(/,\s*([\}\]])/g, '$1')
                 .replace(/([^\\])\\([^"\\\/bfnrt])/g, '$1\\\\$2');
 
@@ -14076,16 +15322,27 @@ function showFileViewer(filename, content) {
             textContainer.style.textAlign = 'left';
             try {
                 let htmlToRender = content;
-                if (!filename.endsWith('.docx')) {
-                    htmlToRender = marked.parse(content);
+                const looksLikeHtml = /<\/?[a-z][\s\S]*>/i.test(content);
+                if (!looksLikeHtml) {
+                    htmlToRender = marked.parse(content, { breaks: true });
                 }
 
                 const sanitizedHtml = DOMPurify.sanitize(htmlToRender, {
                     ADD_TAGS: ['img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'div', 'p', 'h1', 'h2', 'h3', 'ul', 'ol', 'li', 'strong', 'em', 'br', 'pre', 'code'],
-                    ADD_ATTR: ['class', 'style', 'src', 'alt']
+                    ADD_ATTR: ['class', 'style', 'src', 'alt', 'data-cid']
                 });
 
-                textContainer.innerHTML = sanitizedHtml;
+                const tempContainer = document.createElement('div');
+                tempContainer.innerHTML = sanitizedHtml;
+                tempContainer.querySelectorAll('img').forEach(img => {
+                    const src = img.getAttribute('src') || '';
+                    if (src.startsWith('cid:')) {
+                        img.setAttribute('data-cid', src.slice(4));
+                        img.setAttribute('src', '');
+                        img.classList.add('cid-image-placeholder');
+                    }
+                });
+                textContainer.innerHTML = tempContainer.innerHTML;
 
                 // 使用数组避免在迭代时修改DOM导致的问题
                 const tables = Array.from(textContainer.querySelectorAll('table'));
@@ -14098,6 +15355,8 @@ function showFileViewer(filename, content) {
                     }
                 });
                 registerFileViewerLinkHandler(textContainer);
+                scheduleCidImageHydration(textContainer);
+                mathRenderer.renderElement(textContainer, true);
             } catch (error) {
                 console.error(`${getToastMessage('console.richTextRenderFailed')}:`, error);
                 textContainer.textContent = content;
@@ -14377,13 +15636,8 @@ async function forceClearCacheAndReload() {
             localStorage.setItem('forceReloadLanguage', 'true');
         }
 
-        // 登录用户：清空本地聊天缓存并强制下次从服务器拉取
+        // 登录用户：保留本地聊天与文档缓存
         if (currentUser?.id) {
-            try {
-                await deleteChatsFromDB(currentUser.id);
-            } catch (err) {
-                console.warn('Failed to delete cached chats during cache clear:', err);
-            }
             try {
                 localStorage.setItem('forceServerChatsReload', '1');
             } catch (_) { }
@@ -14394,7 +15648,7 @@ async function forceClearCacheAndReload() {
         } catch (_) { }
         await new Promise(r => setTimeout(r, 300));
         try {
-            const url = new URL(window.location.href);
+            const url = new URL(window.location.origin);
             url.searchParams.set('_', Date.now().toString());
             window.location.replace(url.toString());
         } catch (_) {
@@ -15093,6 +16347,7 @@ function setupEventListeners() {
                 return;
             }
 
+            await cleanupDocumentImagesForDeletedChats([...deletedChatsBackup.values()]);
             showToast(getToastMessage('toast.selectedRecordsDeleted'), 'success');
             exitMultiSelectMode();
             return;
@@ -15119,6 +16374,7 @@ function setupEventListeners() {
                     routeManager.navigateToHome({ replace: true });
                     try {
                         await deleteChatsFromDB('guest');
+                        await cleanupDocumentImagesForDeletedChats(Object.values(previousChats));
                         showToast(getToastMessage('toast.allRecordsDeleted'), 'success');
                         notifyBackendCacheInvalidation('guest_all_chats_deleted', { deletedCount: Object.keys(chats).length });
                     } catch (error) {
@@ -15190,6 +16446,7 @@ function setupEventListeners() {
                     return;
                 }
 
+                await cleanupDocumentImagesForDeletedChats(Object.values(previousChats));
                 showToast(getToastMessage('toast.allRecordsDeletedSuccess'), 'success');
                 notifyBackendCacheInvalidation('all_chats_deleted', { userId: currentUser.id, deletedCount: idsToDelete.length });
             }
@@ -17483,6 +18740,8 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
                     finalChatId = result.conversation.id;
 
                     const tempMessages = chats[chatId]?.messages || [];
+                    const tempDocAttachments = chats[chatId]?.docAttachments || [];
+                    const tempDocText = docAttachmentTextCache.get(chatId);
                     delete chats[chatId];
 
                     chats[finalChatId] = {
@@ -17492,8 +18751,24 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
                         created_at: result.conversation.created_at,
                         updated_at: result.conversation.updated_at,
                         messages: tempMessages,
+                        docAttachments: tempDocAttachments,
                         isNewlyCreated: true
                     };
+                    if (tempDocText) {
+                        docAttachmentTextCache.set(finalChatId, tempDocText);
+                    }
+                    docAttachmentTextCache.delete(chatId);
+                    transferDocDataCaches(chatId, finalChatId);
+                    moveDocDataRemote(chatId, finalChatId);
+                    if (currentUser) {
+                        const tempChatData = { messages: tempMessages, docAttachments: tempDocAttachments };
+                        const tempHashes = Array.from(collectCidHashesFromChat(tempChatData));
+                        deleteDocImagesFromRemote(chatId);
+                        if (tempHashes.length > 0) {
+                            docImageUploadCache.delete(finalChatId);
+                            scheduleDocImageUpload(finalChatId, tempHashes);
+                        }
+                    }
 
                     currentChatId = finalChatId;
                     updateSidebarChatId(chatId, finalChatId);
@@ -17503,8 +18778,14 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
                 }
             } else {
                 const newId = generateId();
+                const tempDocText = docAttachmentTextCache.get(chatId);
                 chats[newId] = { ...chats[chatId], id: newId };
                 delete chats[chatId];
+                if (tempDocText) {
+                    docAttachmentTextCache.set(newId, tempDocText);
+                }
+                docAttachmentTextCache.delete(chatId);
+                transferDocDataCaches(chatId, newId);
                 currentChatId = newId;
                 finalChatId = newId;
                 updateSidebarChatId(chatId, newId);
@@ -17551,6 +18832,11 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
                 await saveChatsToDB(currentUser.id, chats);
             } else {
                 await saveChatsToDB('guest', chats);
+            }
+
+            if (currentUser) {
+                scheduleDocDataSave(finalChatId);
+                scheduleDocImageUpload(finalChatId);
             }
 
             scheduleRenderSidebar();

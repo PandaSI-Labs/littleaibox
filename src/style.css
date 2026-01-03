@@ -1543,6 +1543,25 @@ body.is-native-app .message:first-child {
     display: block;
 }
 
+.content img.cid-image-placeholder,
+#file-viewer-text-container img.cid-image-placeholder {
+    display: inline-block;
+    max-height: 64px;
+    max-width: 100%;
+    width: auto;
+    height: auto;
+    margin: 0 4px;
+    vertical-align: middle;
+}
+
+.content img.cid-image-placeholder.cid-image-large,
+#file-viewer-text-container img.cid-image-placeholder.cid-image-large {
+    display: block;
+    max-height: 60vh;
+    max-width: 100%;
+    margin: 8px 0;
+}
+
 .content .katex-display {
     text-align: center;
     margin: 1.5em 0;
