@@ -14,6 +14,7 @@
 /locales/*
   Cache-Control: public, max-age=86400, immutable
 /favicon.ico
+  Content-Type: image/x-icon
   Cache-Control: public, max-age=86400
 
 # 3. 对主入口文件 index.html 不进行强缓存

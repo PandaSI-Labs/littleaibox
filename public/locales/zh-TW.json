@@ -1,4 +1,4 @@
-{
+﻿{
     "appSubtitle": "智能AI對話助理",
     "loading": "正在載入核心資源...",
     "login": "登入",
@@ -148,6 +148,8 @@
     "models": {
         "gemini3Pro": "Gemini 3 Pro",
         "gemini3ProDesc": "能力最強的模型",
+        "gemini3Flash": "Gemini 3 Flash",
+        "gemini3FlashDesc": "專業能力，更快回應",
         "thinkingLevelLow": "低 (快速回應)",
         "thinkingLevelHigh": "高 (深度思考)",
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -542,8 +544,8 @@
         "enterApiKey": "在此輸入您的 API 金鑰",
         "saveKeySettings": "儲存金鑰設定",
         "todayUsage": "今日已用：{count} / ∞（自訂金鑰）",
-        "todayUsageNoKeys": "今日已用：{count} / 12",
-        "todayUsageServerFallback": "今日已用：{count} / 12（金鑰一個或多個無效）",
+        "todayUsageNoKeys": "今日已用：{count} / 15",
+        "todayUsageServerFallback": "今日已用：{count} / 15（金鑰一個或多個無效）",
         "themePresets": "預設主題",
         "themePresetsDesc": "選擇一個整體介面風格。您仍然可以單獨覆寫下方的聊天背景。",
         "lightMode": "淺色模式",
@@ -628,7 +630,6 @@
         "creativeKeywordMatch": "創作關鍵字比對",
         "defaultTextResponse": "預設文字回覆",
         "beautifulImage": "一張美麗的圖片",
-        "enableImageGeneration": "看來您想產生圖片，請您開啟<span style=\"color: #007bff;\">【生圖】</span>功能後再重新傳送您的請求。",
         "listening": "正在聆聽...",
         "loadFailed": "載入失敗",
         "cannotLoadChatRecord": "無法載入此聊天記錄",
@@ -677,9 +678,6 @@
         "aiResponseMayBeIncomplete": "回覆可能未完整，請重試或繼續提問。",
         "integratingWebInfo": "正在整合網頁資訊...",
         "thinking": "思考中...",
-        "detailed": "詳細",
-        "analyze": "分析",
-        "explain": "解釋",
         "network": "網路",
         "restoredChat": "復原的聊天",
         "server": "伺服器",
@@ -720,15 +718,6 @@
     },
     "intent": {
         "keywords": {
-            "image": {
-                "generate": "產生圖片",
-                "generatePhoto": "產生照片",
-                "generateOne": "產生一張圖",
-                "drawOne": "畫一張",
-                "drawOnePicture": "畫一幅",
-                "helpDraw": "幫我畫",
-                "drawForMe": "給我畫"
-            },
             "creative": {
                 "writeOne": "寫一篇",
                 "writeOneStory": "寫一個",

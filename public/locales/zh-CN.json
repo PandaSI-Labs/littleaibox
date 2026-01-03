@@ -1,4 +1,4 @@
-{
+﻿{
     "appSubtitle": "智能AI对话助手",
     "loading": "正在加载核心资源...",
     "login": "登录",
@@ -148,6 +148,8 @@
     "models": {
         "gemini3Pro": "Gemini 3 Pro",
         "gemini3ProDesc": "能力最强的模型",
+        "gemini3Flash": "Gemini 3 Flash",
+        "gemini3FlashDesc": "专业能力，更快响应",
         "thinkingLevelLow": "低 (快速响应)",
         "thinkingLevelHigh": "高 (深度思考)",
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -542,8 +544,8 @@
         "enterApiKey": "在此输入您的 API Key",
         "saveKeySettings": "保存密钥设置",
         "todayUsage": "今日已用: {count} / ∞ (自定义Key)",
-        "todayUsageNoKeys": "今日已用: {count} / 12",
-        "todayUsageServerFallback": "今日已用: {count} / 12 (密钥一个或多个无效)",
+        "todayUsageNoKeys": "今日已用: {count} / 15",
+        "todayUsageServerFallback": "今日已用: {count} / 15 (密钥一个或多个无效)",
         "themePresets": "预设主题",
         "themePresetsDesc": "选择一个整体界面风格。您仍然可以单独覆盖下方的聊天背景。",
         "lightMode": "浅色模式",
@@ -630,7 +632,6 @@
         "classicalKeywordMatch": "古文关键词匹配",
         "defaultTextResponse": "默认文字回复",
         "beautifulImage": "一张美丽的图片",
-        "enableImageGeneration": "看起来你想生成图片，请您开启<span style=\"color: #007bff;\">【生图】</span>功能后再重新发送您的请求。",
         "listening": "正在听取...",
         "loadFailed": "加载失败",
         "cannotLoadChatRecord": "无法加载该聊天记录",
@@ -679,9 +680,6 @@
         "aiResponseMayBeIncomplete": "回复可能未完整，请重试或继续提问。",
         "integratingWebInfo": "正在整合网页信息...",
         "thinking": "思考中...",
-        "detailed": "详细",
-        "analyze": "分析",
-        "explain": "解释",
         "network": "网络",
         "restoredChat": "恢复的聊天",
         "server": "服务器",
@@ -720,15 +718,6 @@
     },
     "intent": {
         "keywords": {
-            "image": {
-                "generate": "生成图片",
-                "generatePhoto": "生成照片",
-                "generateOne": "生成一张图",
-                "drawOne": "画一张",
-                "drawOnePicture": "画一幅",
-                "helpDraw": "帮我画",
-                "drawForMe": "给我画"
-            },
             "creative": {
                 "writeOne": "写一篇",
                 "writeOneStory": "写一个",

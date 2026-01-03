@@ -1,4 +1,4 @@
-{
+﻿{
     "appSubtitle": "Intelligent AI Chat Assistant",
     "loading": "Loading core resources...",
     "login": "Login",
@@ -148,6 +148,8 @@
     "models": {
         "gemini3Pro": "Gemini 3 Pro",
         "gemini3ProDesc": "Most powerful model",
+        "gemini3Flash": "Gemini 3 Flash",
+        "gemini3FlashDesc": "Professional capabilities, faster response",
         "thinkingLevelLow": "Low (Fast response)",
         "thinkingLevelHigh": "High (Deep reasoning)",
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -542,8 +544,8 @@
         "enterApiKey": "Enter your API Key here",
         "saveKeySettings": "Save Key Settings",
         "todayUsage": "Today's Usage: {count} / ∞ (Custom Key)",
-        "todayUsageNoKeys": "Today's Usage: {count} / 12",
-        "todayUsageServerFallback": "Today's Usage: {count} / 12 (One or more keys invalid)",
+        "todayUsageNoKeys": "Today's Usage: {count} / 15",
+        "todayUsageServerFallback": "Today's Usage: {count} / 15 (One or more keys invalid)",
         "themePresets": "Theme Presets",
         "themePresetsDesc": "Choose an overall interface style. You can still override the chat background below.",
         "lightMode": "Light Mode",
@@ -630,7 +632,6 @@
         "creativeKeywordMatch": "Creative keyword match",
         "defaultTextResponse": "Default text response",
         "beautifulImage": "A beautiful image",
-        "enableImageGeneration": "It seems you want to generate an image. Please enable the <span style=\"color: #007bff;\">[Image Gen]</span> feature and send your request again.",
         "listening": "Listening...",
         "loadFailed": "Load Failed",
         "cannotLoadChatRecord": "Cannot load this chat record",
@@ -679,9 +680,6 @@
         "aiResponseMayBeIncomplete": "The reply may be incomplete, please retry or continue asking.",
         "integratingWebInfo": "Integrating web information...",
         "thinking": "Thinking...",
-        "detailed": "Detailed",
-        "analyze": "Analyze",
-        "explain": "Explain",
         "network": "Network",
         "restoredChat": "Restored Chat",
         "server": "Server",
@@ -720,15 +718,6 @@
     },
     "intent": {
         "keywords": {
-            "image": {
-                "generate": "generate image",
-                "generatePhoto": "generate photo",
-                "generateOne": "generate one image",
-                "drawOne": "draw one",
-                "drawOnePicture": "draw one picture",
-                "helpDraw": "help me draw",
-                "drawForMe": "draw for me"
-            },
             "creative": {
                 "writeOne": "write one",
                 "writeOneStory": "write one story",

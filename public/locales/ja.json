@@ -1,4 +1,4 @@
-{
+﻿{
     "appSubtitle": "インテリジェントAI会話アシスタント",
     "loading": "コアリソースを読み込んでいます...",
     "login": "ログイン",
@@ -148,6 +148,8 @@
     "models": {
         "gemini3Pro": "Gemini 3 Pro",
         "gemini3ProDesc": "最も強力なモデル",
+        "gemini3Flash": "Gemini 3 Flash",
+        "gemini3FlashDesc": "高性能、超高速",
         "thinkingLevelLow": "低（高速応答）",
         "thinkingLevelHigh": "高（深い推論）",
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -543,8 +545,8 @@
         "enterApiKey": "ここにAPIキーを入力",
         "saveKeySettings": "キー設定を保存",
         "todayUsage": "本日使用済み：{count} / ∞（カスタムキー）",
-        "todayUsageNoKeys": "本日使用済み：{count} / 12",
-        "todayUsageServerFallback": "本日使用済み：{count} / 12（キーが無効）",
+        "todayUsageNoKeys": "本日使用済み：{count} / 15",
+        "todayUsageServerFallback": "本日使用済み：{count} / 15（キーが無効）",
         "themePresets": "プリセットテーマ",
         "themePresetsDesc": "全体的なインターフェーススタイルを選択します。下のチャット背景は個別に上書きできます。",
         "lightMode": "ライトモード",
@@ -630,7 +632,6 @@
         "creativeKeywordMatch": "クリエイティブキーワードの一致",
         "defaultTextResponse": "デフォルトのテキスト応答",
         "beautifulImage": "美しい画像",
-        "enableImageGeneration": "画像を生成したいようですね。<span style=\"color: #007bff;\">【画像生成】</span>機能を有効にしてから、リクエストを再送信してください。",
         "listening": "聞き取り中...",
         "loadFailed": "読み込みに失敗しました",
         "cannotLoadChatRecord": "このチャットレコードを読み込めません",
@@ -679,9 +680,6 @@
         "aiResponseMayBeIncomplete": "返信が不完全な可能性があります。再試行するか、質問を続けてください。",
         "integratingWebInfo": "ウェブ情報を統合中...",
         "thinking": "考え中...",
-        "detailed": "詳細",
-        "analyze": "分析",
-        "explain": "説明",
         "network": "ネットワーク",
         "restoredChat": "復元されたチャット",
         "server": "サーバー",
@@ -720,15 +718,6 @@
     },
     "intent": {
         "keywords": {
-            "image": {
-                "generate": "画像を生成",
-                "generatePhoto": "写真を生成",
-                "generateOne": "画像を1枚生成",
-                "drawOne": "1枚描く",
-                "drawOnePicture": "1枚の絵を描く",
-                "helpDraw": "描くのを手伝って",
-                "drawForMe": "私のために描いて"
-            },
             "creative": {
                 "writeOne": "1つ書く",
                 "writeOneStory": "1つの物語を書く",

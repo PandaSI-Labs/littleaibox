@@ -1,4 +1,4 @@
-{
+﻿{
     "appSubtitle": "Asistente de Chat con IA Inteligente",
     "loading": "Cargando recursos principales...",
     "login": "Iniciar sesión",
@@ -148,6 +148,8 @@
     "models": {
         "gemini3Pro": "Gemini 3 Pro",
         "gemini3ProDesc": "El modelo más potente",
+        "gemini3Flash": "Gemini 3 Flash",
+        "gemini3FlashDesc": "Potente y rápido",
         "thinkingLevelLow": "Bajo (Respuesta rápida)",
         "thinkingLevelHigh": "Alto (Razonamiento profundo)",
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -543,8 +545,8 @@
         "enterApiKey": "Ingrese su clave API aquí",
         "saveKeySettings": "Guardar configuración de clave",
         "todayUsage": "Uso de hoy: {count} / ∞ (clave personalizada)",
-        "todayUsageNoKeys": "Uso de hoy: {count} / 12",
-        "todayUsageServerFallback": "Uso de hoy: {count} / 12 (una o más claves inválidas)",
+        "todayUsageNoKeys": "Uso de hoy: {count} / 15",
+        "todayUsageServerFallback": "Uso de hoy: {count} / 15 (una o más claves inválidas)",
         "themePresets": "Temas preestablecidos",
         "themePresetsDesc": "Elija un estilo de interfaz general. Aún puede sobrescribir el fondo del chat a continuación.",
         "lightMode": "Modo claro",
@@ -631,7 +633,6 @@
         "creativeKeywordMatch": "Coincidencia creativa de palabras clave",
         "defaultTextResponse": "Respuesta de texto predeterminada",
         "beautifulImage": "Una imagen hermosa",
-        "enableImageGeneration": "Parece que desea generar una imagen. Por favor habilite la función <span style=\"color: #007bff;\">[Generación de Imágenes]</span> y envíe su solicitud nuevamente.",
         "listening": "Escuchando...",
         "loadFailed": "Error al cargar",
         "cannotLoadChatRecord": "No se puede cargar este registro de chat",
@@ -680,9 +681,6 @@
         "aiResponseMayBeIncomplete": "La respuesta puede estar incompleta, por favor reintente o continúe preguntando.",
         "integratingWebInfo": "Integrando información web...",
         "thinking": "Pensando...",
-        "detailed": "Detallado",
-        "analyze": "Analizar",
-        "explain": "Explicar",
         "network": "Red",
         "restoredChat": "Chat restaurado",
         "server": "Servidor",
@@ -721,15 +719,6 @@
     },
     "intent": {
         "keywords": {
-            "image": {
-                "generate": "generar imagen",
-                "generatePhoto": "generar foto",
-                "generateOne": "generar una imagen",
-                "drawOne": "dibujar una",
-                "drawOnePicture": "dibujar una imagen",
-                "helpDraw": "ayúdame a dibujar",
-                "drawForMe": "dibuja para mí"
-            },
             "creative": {
                 "writeOne": "escribir uno",
                 "writeOneStory": "escribir una historia",

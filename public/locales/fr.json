@@ -1,4 +1,4 @@
-{
+﻿{
     "appSubtitle": "Assistant de chat IA intelligent",
     "loading": "Chargement des ressources principales...",
     "login": "Connexion",
@@ -148,6 +148,8 @@
     "models": {
         "gemini3Pro": "Gemini 3 Pro",
         "gemini3ProDesc": "Modèle le plus puissant",
+        "gemini3Flash": "Gemini 3 Flash",
+        "gemini3FlashDesc": "Puissant et rapide",
         "thinkingLevelLow": "Bas (Réponse rapide)",
         "thinkingLevelHigh": "Haut (Raisonnement approfondi)",
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -542,8 +544,8 @@
         "enterApiKey": "Saisissez votre clé API ici",
         "saveKeySettings": "Enregistrer les paramètres de clé",
         "todayUsage": "Utilisation d'aujourd'hui : {count} / ∞ (Clé personnalisée)",
-        "todayUsageNoKeys": "Utilisation d'aujourd'hui : {count} / 12",
-        "todayUsageServerFallback": "Utilisation d'aujourd'hui : {count} / 12 (Une ou plusieurs clés invalides)",
+        "todayUsageNoKeys": "Utilisation d'aujourd'hui : {count} / 15",
+        "todayUsageServerFallback": "Utilisation d'aujourd'hui : {count} / 15 (Une ou plusieurs clés invalides)",
         "themePresets": "Préréglages de thème",
         "themePresetsDesc": "Choisissez un style d'interface global. Vous pouvez toujours remplacer l'arrière-plan du chat ci-dessous.",
         "lightMode": "Mode clair",
@@ -630,7 +632,6 @@
         "creativeKeywordMatch": "Correspondance créative de mots-clés",
         "defaultTextResponse": "Réponse textuelle par défaut",
         "beautifulImage": "Une belle image",
-        "enableImageGeneration": "Il semble que vous vouliez générer une image. Veuillez activer la fonction <span style=\"color: #007bff;\">[Génération d'image]</span> et renvoyer votre demande.",
         "listening": "Écoute...",
         "loadFailed": "Échec du chargement",
         "cannotLoadChatRecord": "Impossible de charger cet enregistrement de chat",
@@ -679,9 +680,6 @@
         "aiResponseMayBeIncomplete": "La réponse peut être incomplète, veuillez réessayer ou continuer à poser des questions.",
         "integratingWebInfo": "Intégration des informations Web...",
         "thinking": "Réflexion...",
-        "detailed": "Détaillé",
-        "analyze": "Analyser",
-        "explain": "Expliquer",
         "network": "Réseau",
         "restoredChat": "Chat restauré",
         "server": "Serveur",
@@ -720,15 +718,6 @@
     },
     "intent": {
         "keywords": {
-            "image": {
-                "generate": "générer une image",
-                "generatePhoto": "générer une photo",
-                "generateOne": "générer une image",
-                "drawOne": "dessiner une",
-                "drawOnePicture": "dessiner une image",
-                "helpDraw": "aidez-moi à dessiner",
-                "drawForMe": "dessinez pour moi"
-            },
             "creative": {
                 "writeOne": "écrire un",
                 "writeOneStory": "écrire une histoire",

@@ -1,4 +1,4 @@
-{
+﻿{
     "appSubtitle": "지능형 AI 대화 어시스턴트",
     "loading": "핵심 리소스를 로드하는 중...",
     "login": "로그인",
@@ -148,6 +148,8 @@
     "models": {
         "gemini3Pro": "Gemini 3 Pro",
         "gemini3ProDesc": "가장 강력한 모델",
+        "gemini3Flash": "Gemini 3 Flash",
+        "gemini3FlashDesc": "전문적인 능력, 더 빠른 응답",
         "thinkingLevelLow": "낮음 (빠른 응답)",
         "thinkingLevelHigh": "높음 (심층 추론)",
         "gemini25Pro": "Gemini 2.5 Pro",
@@ -542,8 +544,8 @@
         "enterApiKey": "여기에 API 키를 입력하세요",
         "saveKeySettings": "키 설정 저장",
         "todayUsage": "오늘 사용량: {count} / ∞ (사용자 정의 키)",
-        "todayUsageNoKeys": "오늘 사용량: {count} / 12",
-        "todayUsageServerFallback": "오늘 사용량: {count} / 12 (키가 무효함)",
+        "todayUsageNoKeys": "오늘 사용량: {count} / 15",
+        "todayUsageServerFallback": "오늘 사용량: {count} / 15 (키가 무효함)",
         "themePresets": "프리셋 테마",
         "themePresetsDesc": "전체 인터페이스 스타일을 선택하세요. 아래의 채팅 배경은 개별적으로 덮어쓸 수 있습니다.",
         "lightMode": "라이트 모드",
@@ -676,9 +678,6 @@
         "aiResponseMayBeIncomplete": "응답이 불완전할 수 있습니다. 다시 시도하거나 질문을 계속하세요.",
         "integratingWebInfo": "웹 정보 통합 중...",
         "thinking": "생각 중...",
-        "detailed": "상세하게",
-        "analyze": "분석",
-        "explain": "설명",
         "network": "네트워크",
         "restoredChat": "복원된 채팅",
         "server": "서버",
@@ -719,15 +718,6 @@
     },
     "intent": {
         "keywords": {
-            "image": {
-                "generate": "이미지 생성",
-                "generatePhoto": "사진 생성",
-                "generateOne": "이미지 하나 생성",
-                "drawOne": "하나 그리기",
-                "drawOnePicture": "그림 하나 그리기",
-                "helpDraw": "그리는 것 도와줘",
-                "drawForMe": "나를 위해 그려줘"
-            },
             "creative": {
                 "writeOne": "하나 쓰기",
                 "writeOneStory": "이야기 하나 쓰기",
