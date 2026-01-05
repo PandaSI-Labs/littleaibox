@@ -1,5 +1,5 @@
 import { Capacitor } from '@capacitor/core';
-import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Directory, Filesystem } from '@capacitor/filesystem';
 
 export const VEGA_SCRIPT_SOURCES = ['/libs/vega.min.js'];
 export const VEGA_LITE_SCRIPT_SOURCES = ['/libs/vega-lite.min.js'];
@@ -8,6 +8,8 @@ export const VEGA_EMBED_SCRIPT_SOURCES = ['/libs/vega-embed.min.js'];
 let vegaInitPromise = null;
 const pendingRenders = new Set();
 let diagramIdCounter = 0;
+const VEGA_SCHEMA_URL = 'https://vega.github.io/schema/vega/v5.json';
+const VEGA_LITE_SCHEMA_URL = 'https://vega.github.io/schema/vega-lite/v5.json';
 
 function trackRenderPromise(promise) {
     pendingRenders.add(promise);
@@ -185,6 +187,48 @@ function normalizeAdjacentArrayBrackets(text) {
     return result;
 }
 
+function removeTrailingCommas(text) {
+    if (!text || typeof text !== 'string') return text;
+    let result = '';
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inString) {
+            result += ch;
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch === '\\') {
+                escaped = true;
+            } else if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        if (ch === '"') {
+            inString = true;
+            result += ch;
+            continue;
+        }
+
+        if (ch === ',') {
+            let j = i + 1;
+            while (j < text.length && /\s/.test(text[j])) j++;
+            if (j < text.length && (text[j] === ']' || text[j] === '}')) {
+                continue;
+            }
+        }
+
+        result += ch;
+    }
+
+    return result;
+}
+
 function normalizeVegaSpecString(raw) {
     if (typeof raw !== 'string') return raw;
     let text = raw;
@@ -193,9 +237,22 @@ function normalizeVegaSpecString(raw) {
     text = text.replace(/(^|[ \t])\/\/[^\n\r]*/gm, '$1');
     text = text.replace(/\/\*[\s\S]*?\*\//g, '');
     text = normalizeAdjacentArrayBrackets(text);
+    text = removeTrailingCommas(text);
     text = text.replace(/"domain"\s*:\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]/g, '"domain": [$1, $2]');
     text = text.replace(/\[\s*([-+]?\d+(?:\.\d+)?)\s*\]\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*\]/g, '[$1, $2]');
     return text;
+}
+
+function applyDefaultSchema(spec) {
+    if (!spec || typeof spec !== 'object') return;
+    if (typeof spec.$schema === 'string' && spec.$schema.trim()) return;
+    if (spec.marks || spec.signals || spec.scales) {
+        spec.$schema = VEGA_SCHEMA_URL;
+        return;
+    }
+    if (spec.mark || spec.encoding) {
+        spec.$schema = VEGA_LITE_SCHEMA_URL;
+    }
 }
 
 const DATA_URL_REWRITES = [
@@ -448,6 +505,7 @@ export function renderVegaLiteDiagrams(rootElement, { loadScript, isFinalRender 
                     ? structuredClone(spec)
                     : JSON.parse(JSON.stringify(spec));
                 rewriteDataUrls(specCopy);
+                applyDefaultSchema(specCopy);
                 const copyWrapper = parentPre.closest('.code-block-wrapper');
                 if (copyWrapper && copyWrapper.parentNode) {
                     copyWrapper.parentNode.replaceChild(container, copyWrapper);

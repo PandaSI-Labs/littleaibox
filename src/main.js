@@ -1542,6 +1542,15 @@ function setupVisibilityRerender() {
         flushPendingDocUploads();
     });
 
+    window.addEventListener('online', () => {
+        if (!currentUser) return;
+        const chatId = currentChatId;
+        if (!chatId || !chats?.[chatId]) return;
+        const chat = chats[chatId];
+        const messagesLoaded = Array.isArray(chat.messages) && chat.messages.length > 0;
+        deferDocAttachmentMount(chatId, chat, messagesLoaded);
+    });
+
     if (typeof App?.addListener === 'function') {
         App.addListener('appStateChange', ({ isActive }) => {
             if (!isActive) {
@@ -2350,18 +2359,17 @@ async function preloadChatContents(chatList, userId) {
                         console.warn(`Failed to preload messages for chat ${chatId}:`, error);
                     }
                 }
-                await ensureDocAttachmentContextForChat(chatId, chat, messagesLoaded);
+                deferDocAttachmentMount(chatId, chat, messagesLoaded);
             });
 
             await Promise.allSettled(promises);
 
             try {
                 try {
-                    const rebuildTasks = Object.entries(chatList).map(([chatId, chat]) => {
+                    Object.entries(chatList).forEach(([chatId, chat]) => {
                         const messagesLoaded = Array.isArray(chat?.messages) && chat.messages.length > 0;
-                        return ensureDocAttachmentContextForChat(chatId, chat, messagesLoaded);
+                        deferDocAttachmentMount(chatId, chat, messagesLoaded);
                     });
-                    await Promise.allSettled(rebuildTasks);
                 } catch (error) {
                     console.warn('Failed to rebuild doc attachment cache:', error);
                 }
@@ -7385,10 +7393,7 @@ async function loadChat(chatId) {
             }
         }
         const messagesLoaded = Array.isArray(chats[chatId].messages) && chats[chatId].messages.length > 0;
-        await ensureDocAttachmentContextForChat(chatId, chats[chatId], messagesLoaded);
-        if (currentUser && hasCidInChat(chats[chatId])) {
-            scheduleDocImageUpload(chatId);
-        }
+        deferDocAttachmentMount(chatId, chats[chatId], messagesLoaded);
 
         if (loadId !== currentLoadChatId) {
             return;
@@ -10955,6 +10960,9 @@ async function ensureDocAttachmentContextForChat(chatId, chat, allowCleanup = tr
             const remoteData = await fetchDocDataFromRemote(chatId);
             if (remoteData && Array.isArray(remoteData.docAttachments) && remoteData.docAttachments.length > 0) {
                 chat.docAttachments = remoteData.docAttachments;
+                if (Array.isArray(remoteData.cidHashes) && remoteData.cidHashes.length > 0) {
+                    scheduleDocImageUpload(chatId, remoteData.cidHashes);
+                }
             } else if (allowCleanup) {
                 chat.docAttachments = [];
                 docAttachmentTextCache.delete(chatId);
@@ -10986,6 +10994,43 @@ async function ensureDocAttachmentContextForChat(chatId, chat, allowCleanup = tr
             docAttachmentTextCache.delete(chatId);
         }
     }
+}
+
+function deferDocAttachmentMount(chatId, chat, messagesLoaded) {
+    if (!chatId || !chat) return;
+    const run = async () => {
+        try {
+            await ensureDocAttachmentContextForChat(chatId, chat, messagesLoaded);
+            if (currentUser && hasCidInChat(chat)) {
+                scheduleDocImageUpload(chatId);
+            }
+        } catch (error) {
+            console.warn('Deferred doc attachment mount failed:', error);
+        }
+    };
+
+    if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(() => {
+            run();
+        }, { timeout: 1200 });
+    } else {
+        setTimeout(() => {
+            run();
+        }, 0);
+    }
+}
+
+async function waitForDocAttachmentMount(chatId, chat, timeoutMs = 1200) {
+    if (!chatId || !chat) return false;
+    if (getDocAttachmentContextForChat(chatId)) return true;
+    const mountPromise = ensureDocAttachmentContextForChat(chatId, chat, false)
+        .then(() => true)
+        .catch(() => false);
+    const timeoutPromise = new Promise(resolve => {
+        setTimeout(() => resolve(false), timeoutMs);
+    });
+    await Promise.race([mountPromise, timeoutPromise]);
+    return !!getDocAttachmentContextForChat(chatId);
 }
 
 function collectCidHashesFromChat(chat) {
@@ -12812,11 +12857,15 @@ async function handleChatMessage(userContent, options = {}) {
     // 智能角色扮演意图分析
     const userMessageText = userContent.find(p => p.type === 'text')?.text || '';
     const conversationHistory = chats[chatIdForRequest]?.messages || [];
+    const activeChat = chats[chatIdForRequest];
+    const chatHasCid = hasCidInChat(activeChat);
+    if (currentUser && chatHasCid && !getDocAttachmentContextForChat(chatIdForRequest)) {
+        await waitForDocAttachmentMount(chatIdForRequest, activeChat, 1500);
+    }
 
     // 使用统一的意图分析函数
     const cachedDocContext = getDocAttachmentContextForChat(chatIdForRequest);
     const hasDocContext = !!cachedDocContext || hasPersistedDocContext(chatIdForRequest);
-    const chatHasCid = hasCidInChat(chats[chatIdForRequest]);
     const shouldRunGtAnalysis = chatHasCid && (
         hasCidInContent(userContent)
         || hasCidInContent(conversationHistory)

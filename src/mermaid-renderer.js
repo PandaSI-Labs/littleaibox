@@ -1,5 +1,5 @@
 import { Capacitor } from '@capacitor/core';
-import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Directory, Filesystem } from '@capacitor/filesystem';
 
 export const MERMAID_SCRIPT_SOURCES = [
     '/libs/mermaid.min.js'
@@ -65,9 +65,33 @@ function normalizeAndCorrectMermaid(definition) {
     };
 
     lines = lines.map(stripInlineComments);
+    lines = lines.filter(line => !/^\s*```/u.test(line));
+
+    const normalizeMermaidLine = (line) => {
+        let updated = line;
+        updated = updated.replace(/^\s*subgraph\s+([A-Za-z0-9_:-]+)\s*\[([^\]]+)\]\s*$/i, 'subgraph "$2"');
+        updated = updated.replace(/^(\s*[A-Za-z0-9_:-]+)\s+\[([^\]]+)\]\s*$/u, '$1["$2"]');
+        return updated;
+    };
+
+    lines = lines.map(normalizeMermaidLine);
 
     while (lines.length && !lines[0].trim()) lines.shift();
     while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+
+    const mindmapIndex = lines.findIndex(line => /^\s*mindmap\b/i.test(line));
+    const flowchartIndex = lines.findIndex(line => /^\s*(?:flowchart|graph)\b/i.test(line));
+    if (mindmapIndex > -1) {
+        if (mindmapIndex > 0) {
+            lines = lines.slice(mindmapIndex);
+        }
+    } else if (flowchartIndex > 0) {
+        lines = lines.slice(flowchartIndex);
+    }
+
+    if (lines.length > 0 && !/^\s*(?:flowchart|graph|mindmap)\b/i.test(lines[0])) {
+        lines.unshift('flowchart TD');
+    }
 
     const normalized = lines.join('\n').trim();
 
@@ -320,7 +344,7 @@ async function triggerDownloadFromBlob(blob, filename) {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
 
-    showToastSafe('toast.downloadSuccess', '图片下载成功', 'success');
+    showToastSafe('toast.downloadSuccess', 'Image downloaded successfully', 'success');
 }
 
 function downloadSvgFile(svgElement, filenameBase) {
@@ -385,54 +409,16 @@ function stripExternalImages(svgRoot) {
     });
 }
 
-function stripForeignObjects(svgRoot) {
-    if (!svgRoot || typeof svgRoot.querySelectorAll !== 'function') return;
-    const nodes = svgRoot.querySelectorAll('foreignObject');
-    nodes.forEach((node) => {
-        node.remove();
-    });
-}
-
-function replaceForeignObjectsForExport(svgRoot) {
-    if (!svgRoot || typeof svgRoot.querySelectorAll !== 'function') return;
-    const foreignObjects = Array.from(svgRoot.querySelectorAll('foreignObject'));
-    const ns = 'http://www.w3.org/2000/svg';
-
-    foreignObjects.forEach((node) => {
-        const parent = node.parentNode;
-        if (!parent) return;
-        const textContent = (node.textContent || '').trim();
-        const textEl = svgRoot.ownerDocument.createElementNS(ns, 'text');
-
-        const x = parseFloat(node.getAttribute('x')) || 0;
-        const y = parseFloat(node.getAttribute('y')) || 0;
-        const width = parseFloat(node.getAttribute('width')) || 0;
-        const height = parseFloat(node.getAttribute('height')) || 0;
-        const cx = Number.isFinite(width) ? x + width / 2 : x;
-        const cy = Number.isFinite(height) ? y + height / 2 : y;
-
-        textEl.setAttribute('x', Number.isFinite(cx) ? cx : 0);
-        textEl.setAttribute('y', Number.isFinite(cy) ? cy : 0);
-        textEl.setAttribute('dominant-baseline', 'middle');
-        textEl.setAttribute('text-anchor', 'middle');
-
-        const styleStr = (node.querySelector('[style]')?.getAttribute('style') || '') + (node.getAttribute('style') || '');
-        const fontSizeMatch = /font-size:\s*([^;]+)/i.exec(styleStr);
-        const colorMatch = /(?:color|fill):\s*([^;]+)/i.exec(styleStr);
-        if (fontSizeMatch && fontSizeMatch[1]) {
-            textEl.setAttribute('font-size', fontSizeMatch[1].trim());
-        } else {
-            textEl.setAttribute('font-size', '14px');
-        }
-        textEl.setAttribute('fill', colorMatch && colorMatch[1] ? colorMatch[1].trim() : '#111827');
-        textEl.textContent = textContent || '';
-        parent.replaceChild(textEl, node);
-    });
-}
-
 function getSvgSize(svgElement) {
     if (!svgElement) {
         return { width: 800, height: 600 };
+    }
+
+    const rect = typeof svgElement.getBoundingClientRect === 'function'
+        ? svgElement.getBoundingClientRect()
+        : null;
+    if (rect && rect.width && rect.height) {
+        return { width: rect.width, height: rect.height };
     }
 
     const viewBox = svgElement.viewBox && svgElement.viewBox.baseVal;
@@ -453,20 +439,93 @@ function getSvgSize(svgElement) {
         }
     } catch (_) { }
 
-    const rect = typeof svgElement.getBoundingClientRect === 'function'
-        ? svgElement.getBoundingClientRect()
-        : null;
-    if (rect && rect.width && rect.height) {
-        return { width: rect.width, height: rect.height };
+    return { width: 800, height: 600 };
+}
+
+function inlineComputedStyles(sourceSvg, targetSvg) {
+    if (!sourceSvg || !targetSvg) return;
+    if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return;
+
+    const RELEVANT_STYLES = [
+        'font-family', 'font-size', 'font-weight', 'font-style', 'line-height',
+        'color', 'text-align', 'text-decoration',
+        'fill', 'stroke', 'stroke-width',
+        'background-color', 'opacity',
+        'display', 'visibility',
+        'align-items', 'justify-content', 'flex-direction', 'flex-wrap',
+        'margin', 'padding', 'border-width', 'border-style', 'border-color',
+        'box-sizing'
+    ];
+
+    const sourceNodes = [sourceSvg, ...sourceSvg.querySelectorAll('*')];
+    const targetNodes = [targetSvg, ...targetSvg.querySelectorAll('*')];
+    const count = Math.min(sourceNodes.length, targetNodes.length);
+
+    for (let i = 0; i < count; i++) {
+        const sourceNode = sourceNodes[i];
+        const targetNode = targetNodes[i];
+        if (sourceNode.closest('defs')) continue;
+
+        let computed;
+        try {
+            computed = window.getComputedStyle(sourceNode);
+        } catch (_) {
+            continue;
+        }
+        if (!computed) continue;
+
+        let styleText = '';
+        RELEVANT_STYLES.forEach((prop) => {
+            const value = computed.getPropertyValue(prop);
+            if (value && value !== 'auto' && value !== 'normal' && value !== '0px' && value !== 'rgba(0, 0, 0, 0)') {
+                styleText += `${prop}:${value};`;
+            }
+        });
+
+        if (targetNode.tagName && targetNode.tagName.toLowerCase() === 'div' && !targetNode.getAttribute('xmlns')) {
+            targetNode.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+        }
+
+        if (styleText) {
+            const existing = targetNode.getAttribute('style') || '';
+            targetNode.setAttribute('style', `${existing};${styleText}`);
+        }
+    }
+}
+
+function serializeSvgForExport(svgElement, {
+    inlineStyles = true,
+    stripExternal = true,
+    stripUrls = true
+} = {}) {
+    const cloned = svgElement.cloneNode(true);
+    const rect = svgElement.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+        cloned.setAttribute('width', rect.width);
+        cloned.setAttribute('height', rect.height);
+        if (!cloned.hasAttribute('viewBox')) {
+            cloned.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
+        }
     }
 
-    return { width: 800, height: 600 };
+    cloned.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+
+    if (inlineStyles) {
+        inlineComputedStyles(svgElement, cloned);
+    }
+    if (stripUrls) stripUnsafeUrlsInStyles(cloned);
+    if (stripExternal) stripExternalImages(cloned);
+
+    const serializer = new XMLSerializer();
+    let source = serializer.serializeToString(cloned);
+    source = source.replace(/<foreignObject([^>]*)>/g, '<foreignObject$1 xmlns="http://www.w3.org/2000/svg">');
+    return source;
 }
 
 async function downloadRasterFromSvg(svgElement, filenameBase, {
     mimeType = 'image/png',
     extension = 'png',
-    scale = 2,
+    scale = 4,
     backgroundColor = '#ffffff'
 } = {}) {
     if (!svgElement) {
@@ -474,76 +533,55 @@ async function downloadRasterFromSvg(svgElement, filenameBase, {
     }
 
     const { width, height } = getSvgSize(svgElement);
-    const serializer = new XMLSerializer();
-    const cloned = svgElement.cloneNode(true);
-
-    stripUnsafeUrlsInStyles(cloned);
-    stripExternalImages(cloned);
-    replaceForeignObjectsForExport(cloned);
-    if (!cloned.getAttribute('xmlns')) {
-        cloned.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-    }
-    if (!cloned.getAttribute('xmlns:xlink')) {
-        cloned.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
-    }
-    const source = serializer.serializeToString(cloned);
-    const svgBlob = new Blob(
-        [`<?xml version="1.0" encoding="UTF-8"?>\n${source}`],
-        { type: 'image/svg+xml;charset=utf-8' }
-    );
-    const url = URL.createObjectURL(svgBlob);
-
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio)
+        ? Math.max(1, window.devicePixelRatio)
+        : 1;
+    const effectiveScale = Math.min(6, scale * dpr);
     try {
+        const source = serializeSvgForExport(svgElement, {
+            inlineStyles: true,
+            stripExternal: true,
+            stripUrls: true
+        });
+
+        const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+            '<?xml version="1.0" standalone="no"?>\r\n' + source
+        )}`;
+
         const img = new Image();
         img.crossOrigin = 'anonymous';
 
         await new Promise((resolve, reject) => {
             img.onload = () => resolve();
-            img.onerror = (error) => reject(error || new Error('Failed to load SVG into image'));
-            img.src = url;
+            img.onerror = () => reject(new Error('Image load failed'));
+            img.src = svgUrl;
         });
 
         const canvas = document.createElement('canvas');
-        canvas.width = Math.ceil(width * scale);
-        canvas.height = Math.ceil(height * scale);
+        const canvasWidth = Math.floor(width * effectiveScale);
+        const canvasHeight = Math.floor(height * effectiveScale);
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
         const ctx = canvas.getContext('2d');
-        if (!ctx) {
-            throw new Error('Canvas context is unavailable');
-        }
-        ctx.setTransform(scale, 0, 0, scale, 0, 0);
+        if (!ctx) throw new Error('Canvas context is unavailable');
         if (backgroundColor) {
             ctx.fillStyle = backgroundColor;
-            ctx.fillRect(0, 0, width, height);
+            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
         }
-        ctx.drawImage(img, 0, 0, width, height);
+        ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
 
         const blob = await new Promise((resolve, reject) => {
             canvas.toBlob((b) => {
                 if (b) resolve(b);
-                else reject(new Error('Canvas export failed'));
+                else reject(new Error('Blob creation failed'));
             }, mimeType);
         });
 
         triggerDownloadFromBlob(blob, `${filenameBase}.${extension}`);
     } catch (error) {
-        try {
-            const fallbackClone = svgElement.cloneNode(true);
-            stripUnsafeUrlsInStyles(fallbackClone);
-            replaceForeignObjectsForExport(fallbackClone);
-            stripExternalImages(fallbackClone);
-            const fallbackSerializer = new XMLSerializer();
-            const fallbackSource = fallbackSerializer.serializeToString(fallbackClone);
-            const fallbackBlob = new Blob(
-                [`<?xml version="1.0" encoding="UTF-8"?>\n${fallbackSource}`],
-                { type: 'image/svg+xml;charset=utf-8' }
-            );
-            triggerDownloadFromBlob(fallbackBlob, `${filenameBase}.svg`);
-        } catch (fallbackError) {
-            console.warn('Mermaid PNG fallback failed, downloading original SVG:', fallbackError);
-            downloadSvgFile(svgElement, filenameBase);
-        }
-    } finally {
-        URL.revokeObjectURL(url);
+        console.error('Mermaid Rasterization Failed:', error);
+        showToastSafe('toast.exportFailed', 'Image generation failed, SVG file downloaded instead', 'error');
+        downloadSvgFile(svgElement, filenameBase);
     }
 }
 
