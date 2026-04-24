@@ -97,8 +97,8 @@
 /* ==================== 无障碍优化 ==================== */
 .auth-link-button:focus,
 .auth-secondary-button:focus {
-    outline: 2px solid var(--accent-color);
-    outline-offset: 2px;
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-color);
 }
 
 /* ==================== 动画效果 ==================== */
@@ -153,45 +153,71 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
     font-size: 24px;
 }
 
 .social-icon-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+}
+
+.social-icon-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
 }
 
 [data-theme="dark"] .social-icon-btn:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="dark"] .social-icon-btn:active {
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
 }
 
 /* Google 图标按钮 */
-.google-icon i {
-    color: #4285f4;
+.google-icon {
+    background-color: #fff;
+    border-color: #dadce0;
 }
+
 
 .google-icon:hover {
-    background-color: #4285f4;
-    border-color: #4285f4;
+    background-color: #fff;
+    border-color: #c6c6c6;
 }
 
-.google-icon:hover i {
-    color: white;
+.google-icon svg {
+    width: 24px;
+    height: 24px;
+}
+
+[data-theme="dark"] .google-icon {
+    background-color: #111;
+    border-color: #2a2a2a;
+}
+
+[data-theme="dark"] .google-icon:hover {
+    background-color: #1f1f1f;
+    border-color: #3a3a3a;
 }
 
 /* GitHub 图标按钮 */
 .github-icon i {
-    color: #333;
+    color: #111;
+}
+
+.github-icon {
+    background-color: #fff;
+    border-color: #dadce0;
 }
 
 .github-icon:hover {
-    background-color: #333;
-    border-color: #333;
+    border-color: #c6c6c6;
 }
 
 .github-icon:hover i {
-    color: white;
+    color: #111;
 }
 
 [data-theme="dark"] .github-icon i {
@@ -199,12 +225,17 @@
 }
 
 [data-theme="dark"] .github-icon:hover {
-    background-color: #fff;
-    border-color: #fff;
+    background-color: #1f1f1f;
+    border-color: #1f1f1f;
 }
 
 [data-theme="dark"] .github-icon:hover i {
-    color: #333;
+    color: #fff;
+}
+
+[data-theme="dark"] .github-icon {
+    background-color: #111;
+    border-color: #111;
 }
 
 /* 响应式设计 */

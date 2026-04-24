@@ -20,7 +20,6 @@ const FormFieldConfig = {
         type: 'email',
         name: 'email',
         labelKey: 'emailLabel',
-        placeholderKey: 'emailPlaceholder',
         autocomplete: 'username',
         required: true
     },
@@ -28,7 +27,6 @@ const FormFieldConfig = {
         type: 'text',
         name: 'username',
         labelKey: 'usernameLabel',
-        placeholderKey: 'usernamePlaceholder',
         autocomplete: 'username',
         required: false
     },
@@ -36,7 +34,6 @@ const FormFieldConfig = {
         type: 'password',
         name: 'password',
         labelKey: 'passwordLabel',
-        placeholderKey: 'passwordPlaceholder',
         autocomplete: 'current-password',
         required: true
     },
@@ -44,7 +41,6 @@ const FormFieldConfig = {
         type: 'password',
         name: 'newPassword',
         labelKey: 'newPasswordLabel',
-        placeholderKey: 'newPasswordPlaceholder',
         autocomplete: 'new-password',
         required: true,
         minlength: 6
@@ -53,15 +49,13 @@ const FormFieldConfig = {
         type: 'password',
         name: 'confirmPassword',
         labelKey: 'confirmPasswordLabel',
-        placeholderKey: 'confirmPasswordPlaceholder',
         autocomplete: 'new-password',
         required: true
     },
     verificationCode: {
         type: 'text',
         name: 'verificationCode',
-        labelKey: 'verificationCodeSent',
-        placeholderKey: 'verificationCodePlaceholder',
+        labelKey: 'verificationCodeLabel',
         autocomplete: 'one-time-code',
         required: true,
         maxlength: 6
@@ -69,7 +63,7 @@ const FormFieldConfig = {
 };
 
 /**
- * 创建表单字段HTML
+ * 创建表单字段HTML（浮动标签样式）
  * @param {string} fieldId - 字段ID
  * @param {object} config - 字段配置
  * @returns {string} HTML字符串
@@ -79,7 +73,7 @@ function createFormField(fieldId, config) {
         `type="${config.type}"`,
         `id="${fieldId}"`,
         `name="${config.name}"`,
-        `data-i18n-placeholder-key="${config.placeholderKey}"`,
+        `placeholder=" "`,
         `autocomplete="${config.autocomplete}"`,
         config.required ? 'required' : '',
         config.minlength ? `minlength="${config.minlength}"` : '',
@@ -87,11 +81,11 @@ function createFormField(fieldId, config) {
     ].filter(Boolean).join(' ');
 
     return `
-        <div class="form-group">
+        <div class="form-group floating-label">
+            <input ${attributes}>
             <label for="${fieldId}" data-i18n-key="${config.labelKey}">
                 ${config.labelKey}
             </label>
-            <input ${attributes}>
         </div>
     `;
 }
@@ -122,15 +116,15 @@ function createButton(id, i18nKey, className = 'auth-submit', type = 'submit') {
 const loginFormTemplate = `
     <form id="login-form" class="auth-form active">
         ${createFormField('login-email', FormFieldConfig.email)}
-        <div class="form-group">
-            <label for="login-password" data-i18n-key="passwordLabel">密码</label>
+        <div class="form-group floating-label">
             <input 
                 type="password" 
                 id="login-password" 
                 name="password" 
-                data-i18n-placeholder-key="passwordPlaceholder" 
+                placeholder=" "
                 autocomplete="current-password" 
                 required>
+            <label for="login-password" data-i18n-key="passwordLabel">密码</label>
             <div class="auth-form-link-wrapper">
                 <button 
                     type="button" 
@@ -146,13 +140,18 @@ const loginFormTemplate = `
         
         <!-- 社交登录分隔符 -->
         <div class="social-login-divider">
-            <span data-i18n-key="ui.orSignInWith">或使用以下方式登录</span>
+            <span data-i18n-key="ui.orSignInWith">或使用以下方式直接注册/登录</span>
         </div>
         
         <!-- 社交登录按钮 -->
         <div class="social-login-icons">
             <button type="button" class="social-icon-btn google-icon" id="google-login-btn" aria-label="Sign in with Google">
-                <i class="fa-brands fa-google"></i>
+                <svg width="24" height="24" viewBox="0 0 48 48" aria-hidden="true">
+                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.64 0 6.48 5.38 2.56 13.22l7.98 6.19C12.43 12.15 17.74 9.5 24 9.5z"/>
+                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.14-3.09-.4-4.55H24v9.02h12.94c-.56 2.96-2.24 5.48-4.78 7.16l7.73 6.01c4.51-4.18 7.09-10.33 7.09-17.64z"/>
+                    <path fill="#FBBC05" d="M10.54 28.19c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19A23.98 23.98 0 0 0 0 23.6c0 3.87.92 7.53 2.56 10.78l7.98-6.19z"/>
+                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.9-5.81l-7.73-6.01c-2.15 1.45-4.92 2.3-8.17 2.3-6.26 0-11.57-4.65-13.46-10.88l-7.98 6.19C6.48 42.62 14.64 48 24 48z"/>
+                </svg>
             </button>
             <button type="button" class="social-icon-btn github-icon" id="github-login-btn" aria-label="Sign in with GitHub">
                 <i class="fa-brands fa-github"></i>
@@ -179,18 +178,21 @@ const registerFormTemplate = `
  */
 const verifyFormTemplate = `
     <form id="verify-form" class="auth-form">
-        <div class="form-group">
-            <label for="verify-code" data-i18n-key="verificationCodeSent">
-                验证码已发送至：<span id="verify-email-display"></span>
-            </label>
+        <div class="form-group floating-label">
             <input 
                 type="text" 
                 id="verify-code" 
                 name="verificationCode" 
-                data-i18n-placeholder-key="verificationCodePlaceholder" 
+                placeholder=" "
                 autocomplete="one-time-code" 
                 required 
                 maxlength="6">
+            <label for="verify-code" data-i18n-key="verificationCodeLabel">
+                验证码
+            </label>
+            <p class="verify-email-info" data-i18n-key="verificationCodeSent">
+                验证码已发送至：<span id="verify-email-display"></span>
+            </p>
             <p class="auth-form-hint" data-i18n-key="verificationCodeHint">
                 验证码有效期为10分钟
             </p>
@@ -205,7 +207,7 @@ const verifyFormTemplate = `
  */
 const forgotPasswordFormTemplate = `
     <form id="forgot-password-form" class="auth-form">
-        ${createFormField('forgot-email', { ...FormFieldConfig.email, placeholderKey: 'forgotEmailPlaceholder' })}
+        ${createFormField('forgot-email', FormFieldConfig.email)}
         ${createButton('forgot-submit', 'sendResetLinkButton')}
         ${createButton('back-to-login-btn', 'backToLoginButton', 'auth-secondary-button', 'button')}
     </form>
@@ -289,7 +291,7 @@ export const authOverlayTemplate = `
             <!-- Logo区域 -->
             <div class="auth-logo">
                 <h1 data-i18n-key="ui.appTitle">LittleAIBox</h1>
-                <p data-i18n-key="ui.appSubtitle">智能AI对话助手</p>
+                <p data-i18n-key="ui.appSubtitle">隐私优先的AI对话平台</p>
             </div>
 
             <!-- Tab切换区域 -->

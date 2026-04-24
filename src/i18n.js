@@ -2,18 +2,26 @@ const translations = {};
 const translationsLoaded = {};
 let __runtimeLanguage = null;
 const SUPPORTED_LANGUAGES = ['en', 'zh-CN', 'zh-TW', 'es', 'ja', 'ko', 'fr'];
-const APP_BUILD_ID = typeof __APP_BUILD_ID__ !== 'undefined' ? __APP_BUILD_ID__ : 'dev';
-const TRANSLATION_CACHE_PREFIX = `translations_${APP_BUILD_ID}_`;
+const TRANSLATION_CACHE_PREFIX = 'translations_';
+
+const PUBLIC_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.BASE_URL)
+    ? import.meta.env.BASE_URL
+    : '/';
+
+const normalizeBaseUrl = (base) => (base.endsWith('/') ? base : `${base}/`);
+const toPublicUrl = (path) => `${normalizeBaseUrl(PUBLIC_BASE_URL)}${String(path || '').replace(/^\/+/, '')}`;
 
 function getTranslationCacheKey(lang) {
     return `${TRANSLATION_CACHE_PREFIX}${lang}`;
 }
 
+
+
 /**
  * 尝试从网络或 SW 缓存中获取指定语言的 JSON。
  */
 async function fetchLocale(lang) {
-    const url = `/locales/${lang}.json`;
+    const url = toPublicUrl(`locales/${lang}.json`);
     const resp = await fetch(url, { cache: 'default' });
     if (resp.ok) {
         return resp.json();
@@ -132,16 +140,6 @@ async function clearTranslationCache() {
  */
 async function preloadAllTranslations() {
     try {
-        if (typeof caches !== 'undefined' && caches?.open) {
-            try {
-                const cache = await caches.open('locales-cache');
-                const urls = SUPPORTED_LANGUAGES.map(l => `/locales/${l}.json`);
-                await Promise.allSettled(urls.map(u => cache.add(u)));
-            } catch (e) {
-                console.warn('Pre-warm locales cache failed:', e);
-            }
-        }
-
         await Promise.allSettled(
             SUPPORTED_LANGUAGES.map(async (l) => {
                 if (translationsLoaded[l] && translations[l]) return;
@@ -200,6 +198,15 @@ function translatePage(lang) {
         const translatedText = t(lang, key);
         if (translatedText !== key) {
             element.innerText = translatedText;
+        }
+    });
+
+    // Support for HTML content translation (use with caution - only for trusted content)
+    document.querySelectorAll('[data-i18n-html]').forEach(element => {
+        const key = element.getAttribute('data-i18n-html');
+        const translatedText = t(lang, key);
+        if (translatedText !== key) {
+            element.innerHTML = translatedText;
         }
     });
 
@@ -265,14 +272,14 @@ function getCurrentLanguage() {
         return storedLang;
     }
 
-    const browserLang = navigator.language || navigator.languages[0] || 'zh-CN';
+    const browserLang = navigator.language || navigator.languages[0] || 'en';
     const defaultLang = browserLang.startsWith('zh-TW') || browserLang.startsWith('zh-HK') ? 'zh-TW' :
         browserLang.startsWith('zh') ? 'zh-CN' :
             browserLang.startsWith('ja') ? 'ja' :
                 browserLang.startsWith('ko') ? 'ko' :
                     browserLang.startsWith('es') ? 'es' :
                         browserLang.startsWith('fr') ? 'fr' :
-                            browserLang.startsWith('en') ? 'en' : 'zh-CN';
+                            browserLang.startsWith('en') ? 'en' : 'en';
     return defaultLang;
 }
 
@@ -332,3 +339,4 @@ async function applyLanguage(lang) {
 
 // Export the functions for use in other modules
 export { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLanguageApplied, preloadAllTranslations, t, translatePage };
+

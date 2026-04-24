@@ -11,8 +11,30 @@ export default defineConfig({
     // 基础构建配置
     build: {
         outDir: 'dist',
+        chunkSizeWarningLimit: 700,
+        minify: 'terser',
+        terserOptions: {
+            compress: {
+                drop_console: true,
+                drop_debugger: true,
+                passes: 2
+            },
+            format: {
+                comments: false
+            }
+        },
         rollupOptions: {
-            input: 'index.html'
+            input: {
+                main: 'index.html'
+            },
+            output: {
+                manualChunks: (id) => {
+                    if (id.includes('node_modules')) {
+                        return 'vendor';
+                    }
+                    return undefined;
+                }
+            }
         }
     },
     publicDir: 'public',
@@ -28,6 +50,8 @@ export default defineConfig({
             filename: 'sw-custom.js',
             injectManifest: {
                 maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+                globPatterns: ['**/*.{js,css,html,png,svg,webp,gif,woff,woff2,json}'],
+                globIgnores: ['**/favicon.ico', '**/apple-touch-icon.png'],
             },
 
             // --- Service Worker 配置 ---
@@ -36,7 +60,8 @@ export default defineConfig({
 
             // --- Workbox 缓存策略配置 ---
             workbox: {
-                globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,gif,woff,woff2}'],
+                globPatterns: ['**/*.{js,css,html,png,svg,webp,gif,woff,woff2,json}'],
+                globIgnores: ['**/favicon.ico', '**/apple-touch-icon.png'],
                 runtimeCaching: [
                     // 缓存图片
                     {
@@ -133,9 +158,9 @@ export default defineConfig({
                 // --- 基础信息 ---
                 name: 'LittleAIBox',
                 short_name: 'LittleAIBox',
-                description: '智能AI对话助手',
-                lang: 'zh-CN',
-                version: '2.8.7',
+                description: 'Privacy-First AI Chat Platform',
+                lang: 'en',
+                version: '3.0.7',
 
                 // --- 外观与显示 ---
                 theme_color: '#ffffff',
@@ -161,16 +186,16 @@ export default defineConfig({
                 // --- 快捷方式 ---
                 "shortcuts": [
                     {
-                        "name": "开始新对话",
-                        "short_name": "新对话",
-                        "description": "打开应用并开始一个新的对话",
+                        "name": "Start New Chat",
+                        "short_name": "New Chat",
+                        "description": "Open app and start a new conversation",
                         "url": "/",
                         "icons": [{ "src": "images/pwa-192x192.png", "sizes": "192x192" }]
                     },
                     {
-                        "name": "打开设置",
-                        "short_name": "设置",
-                        "description": "直接打开应用的设置页面",
+                        "name": "Open Settings",
+                        "short_name": "Settings",
+                        "description": "Open app settings directly",
                         "url": "/?action=open-settings",
                         "icons": [{ "src": "images/pwa-192x192.png", "sizes": "192x192" }]
                     }
@@ -205,12 +230,12 @@ export default defineConfig({
 
                 // --- 应用截图 ---
                 screenshots: [
-                    { "src": "images/412x915app(1).png", "sizes": "412x915", "type": "image/png", "form_factor": "narrow", "label": "手机端主视图" },
-                    { "src": "images/412x915app(2).png", "sizes": "412x915", "type": "image/png", "form_factor": "narrow", "label": "手机端登录页面" },
-                    { "src": "images/412x915app(3).png", "sizes": "412x915", "type": "image/png", "form_factor": "narrow", "label": "手机端设置页面" },
-                    { "src": "images/1340x1080win(1).png", "sizes": "1340x1080", "type": "image/png", "form_factor": "wide", "label": "桌面版主视图" },
-                    { "src": "images/1340x1080win(2).png", "sizes": "1340x1080", "type": "image/png", "form_factor": "wide", "label": "桌面版登录页面" },
-                    { "src": "images/1340x1080win(3).png", "sizes": "1340x1080", "type": "image/png", "form_factor": "wide", "label": "桌面版设置页面" }
+                    { "src": "images/412x915app(1).png", "sizes": "412x915", "type": "image/png", "form_factor": "narrow", "label": "Mobile Main View" },
+                    { "src": "images/412x915app(2).png", "sizes": "412x915", "type": "image/png", "form_factor": "narrow", "label": "Mobile Login Page" },
+                    { "src": "images/412x915app(3).png", "sizes": "412x915", "type": "image/png", "form_factor": "narrow", "label": "Mobile Settings Page" },
+                    { "src": "images/1340x1080win(1).png", "sizes": "1340x1080", "type": "image/png", "form_factor": "wide", "label": "Desktop Main View" },
+                    { "src": "images/1340x1080win(2).png", "sizes": "1340x1080", "type": "image/png", "form_factor": "wide", "label": "Desktop Login Page" },
+                    { "src": "images/1340x1080win(3).png", "sizes": "1340x1080", "type": "image/png", "form_factor": "wide", "label": "Desktop Settings Page" }
                 ]
             }
         })

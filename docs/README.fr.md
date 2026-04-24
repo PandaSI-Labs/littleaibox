@@ -87,11 +87,15 @@ LittleAIBox est parfait pour :
 
 #### Page Principale
 
-![Page Principale - Anglais](../appshow/main_en.png)
+![Page Principale - Français](../appshow/main_fr.png)
 
-#### Page des Paramètres
+#### Page d'Exemple
 
-![Page des Paramètres - Anglais](../appshow/settings_en.png)
+![Page d'Exemple - Français](../appshow/example_fr.png)
+
+#### Page de Confidentialité
+
+![Page de Confidentialité - Français](../appshow/privacy_fr.png)
 
 ---
 
@@ -124,6 +128,7 @@ LittleAIBox est parfait pour :
 - **Expressions Mathématiques** : Beau rendu mathématique avec KaTeX
 - **Diagrammes** : Support de diagrammes Mermaid interactifs avec export PNG/SVG
 - **Visualisation de Données** : Rendu de graphiques Vega-Lite avec graphiques interactifs et export PNG
+- **Rendu Mindmap** : Rendu et aperçu de cartes mentales basés sur Markmap
 - **Export de Graphiques** : Téléchargez les graphiques générés (diagrammes Mermaid et visualisations Vega-Lite) en fichiers PNG ou SVG
 - **GitHub Flavored Markdown** : Support complet GFM avec coloration syntaxique
 
@@ -138,6 +143,19 @@ LittleAIBox est parfait pour :
   - Contrôle de température (créativité vs. cohérence)
   - Paramètres avancés (topK, topP)
   - Préréglages de tâches (assistant de codage, assistant d'écriture, traduction, recherche en chinois classique, guide de voyage, jeu de rôle créatif)
+
+### 🧾 **Export Productivité**
+- **Export Multi-format** : Exportez chats/contenu en DOCX / PDF / PPTX / XLSX
+- **Préservation de Structure** : Conserve titres, listes, code, formules, tableaux, diagrammes et images
+
+### 🔗 **Collaboration Bridge**
+- **Continuité de Contexte** : Hérite du contexte des conversations sources pour poursuivre l'échange
+
+### 📲 **Expérience de Mise à Jour Native**
+- **Détection APK** : Détecte les nouvelles versions et bascule vers la page de téléchargement si nécessaire
+
+### 📌 **Portée Open-Source**
+- **Frontend Uniquement** : Ce dépôt publie uniquement le frontend ; backend abonnement/paiement omis
 
 ### 🌐 **Support Multilingue**
 - **6 Langues** : Chinois (Simplifié/Traditionnel), Anglais, Japonais, Coréen, Espagnol, Français

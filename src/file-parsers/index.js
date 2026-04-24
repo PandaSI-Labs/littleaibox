@@ -4,7 +4,7 @@ import { createExcelReader } from './excel.js';
 import { createPptxReader } from './pptx.js';
 
 export function createFileParsers({ loadScript, mathRenderer, getToastMessage }) {
-    const { readDocxFile } = createDocxReader({ loadScript, mathRenderer });
+    const { readDocxFile } = createDocxReader({ loadScript, mathRenderer, getToastMessage });
     const { readPdfFile } = createPdfReader({ loadScript, getToastMessage });
     const { readExcelFile } = createExcelReader({ loadScript, getToastMessage });
     const { readPptxFile } = createPptxReader({ loadScript, getToastMessage, mathRenderer });

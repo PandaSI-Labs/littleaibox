@@ -248,6 +248,52 @@ const silenceConsole = (fn) => {
 
 const base64ToBlob = (base64, mime) => new Blob([base64ToArrayBuffer(base64)], { type: mime });
 
+export const readFileHeader = async (file, length = 8) => {
+    if (!file || typeof file.slice !== 'function') return null;
+    const slice = file.slice(0, Math.max(0, length));
+    const buffer = await slice.arrayBuffer();
+    return new Uint8Array(buffer);
+};
+
+export const isZipHeader = (header) => {
+    if (!header || header.length < 4) return false;
+    return header[0] === 0x50
+        && header[1] === 0x4B
+        && (header[2] === 0x03 || header[2] === 0x05 || header[2] === 0x07)
+        && (header[3] === 0x04 || header[3] === 0x06 || header[3] === 0x08);
+};
+
+export const isPdfHeader = (header) => {
+    if (!header || header.length < 4) return false;
+    return header[0] === 0x25
+        && header[1] === 0x50
+        && header[2] === 0x44
+        && header[3] === 0x46;
+};
+
+export const getZipSafetyStats = (zip) => {
+    const stats = {
+        entries: 0,
+        uncompressedBytes: 0,
+        compressedBytes: 0
+    };
+    if (!zip || !zip.files) return stats;
+    Object.values(zip.files).forEach((file) => {
+        if (!file || file.dir) return;
+        stats.entries += 1;
+        const data = file._data || null;
+        if (data) {
+            if (Number.isFinite(data.uncompressedSize)) {
+                stats.uncompressedBytes += data.uncompressedSize;
+            }
+            if (Number.isFinite(data.compressedSize)) {
+                stats.compressedBytes += data.compressedSize;
+            }
+        }
+    });
+    return stats;
+};
+
 const computeHash = async (blob) => {
     const buffer = await blob.arrayBuffer();
     const digest = await crypto.subtle.digest('SHA-1', buffer);

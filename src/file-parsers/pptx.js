@@ -1,10 +1,74 @@
 import { renderOmml } from './mathUtils.js';
 import { TextCleaner } from './textUtils.js';
-import { createMediaContext, extractImageMarkdown } from './media-utils.js';
+import {
+    createMediaContext,
+    extractImageMarkdown,
+    readFileHeader,
+    isZipHeader,
+    getZipSafetyStats
+} from './media-utils.js';
+
+const DEFAULT_MAX_FILE_BYTES = 25 * 1024 * 1024;
+const DEFAULT_MAX_UNCOMPRESSED_BYTES = 80 * 1024 * 1024;
+const DEFAULT_MAX_ZIP_ENTRIES = 6000;
+const DEFAULT_MAX_SLIDES = 200;
+const DEFAULT_PARSE_TIMEOUT_MS = 8000;
+const DEFAULT_MAX_COMPRESSION_RATIO = 200;
 
 const ELEMENT_NODE = typeof Node === 'undefined' ? 1 : Node.ELEMENT_NODE;
 
 export function createPptxReader({ loadScript, getToastMessage }) {
+    const getMessage = (key, params) => {
+        if (typeof getToastMessage !== 'function') return '';
+        return getToastMessage(key, params);
+    };
+
+    const runWithTimeout = async (promise, timeoutMs, timeoutMessage) => {
+        if (!timeoutMs || timeoutMs <= 0) return promise;
+        let timeoutId;
+        const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+        });
+        try {
+            return await Promise.race([promise, timeoutPromise]);
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    };
+
+    const guardPptxFile = async (file, options) => {
+        const maxFileBytes = Number.isFinite(options.maxFileBytes) ? options.maxFileBytes : DEFAULT_MAX_FILE_BYTES;
+        if (file?.size && file.size > maxFileBytes) {
+            throw new Error(getMessage('fileManagement.fileTooLarge') || 'File too large.');
+        }
+        const header = await readFileHeader(file, 4);
+        if (!isZipHeader(header)) {
+            throw new Error(getMessage('fileManagement.invalidFileType') || 'Invalid file type.');
+        }
+    };
+
+    const guardZip = (zip, options) => {
+        const maxEntries = Number.isFinite(options.maxZipEntries) ? options.maxZipEntries : DEFAULT_MAX_ZIP_ENTRIES;
+        const maxUncompressedBytes = Number.isFinite(options.maxUncompressedBytes)
+            ? options.maxUncompressedBytes
+            : DEFAULT_MAX_UNCOMPRESSED_BYTES;
+        const maxCompressionRatio = Number.isFinite(options.maxCompressionRatio)
+            ? options.maxCompressionRatio
+            : DEFAULT_MAX_COMPRESSION_RATIO;
+        const stats = getZipSafetyStats(zip);
+        if (stats.entries > maxEntries) {
+            throw new Error(getMessage('fileManagement.tooManyEntries') || 'Too many entries in archive.');
+        }
+        if (stats.uncompressedBytes && stats.uncompressedBytes > maxUncompressedBytes) {
+            throw new Error(getMessage('fileManagement.fileCompressedTooLarge') || 'Compressed file too large.');
+        }
+        if (stats.compressedBytes > 0 && stats.uncompressedBytes > 0) {
+            const ratio = stats.uncompressedBytes / stats.compressedBytes;
+            if (ratio > maxCompressionRatio) {
+                throw new Error(getMessage('fileManagement.fileCompressedTooLarge') || 'Compressed file too large.');
+            }
+        }
+    };
     const getPptxNotesLabel = () => {
         if (typeof getToastMessage === 'function') {
             try {
@@ -24,7 +88,7 @@ export function createPptxReader({ loadScript, getToastMessage }) {
             .join('\n')
     );
 
-    const extractTextFromSlideXml = async (xmlContent, mediaCtx) => {
+    const extractTextFromSlideXml = async (xmlContent, mediaCtx, includeImages) => {
         try {
             const parser = new DOMParser();
             const xmlDoc = parser.parseFromString(xmlContent, 'application/xml');
@@ -63,7 +127,7 @@ export function createPptxReader({ loadScript, getToastMessage }) {
                                 }
                             }
                         } else if (child.tagName === 'p:pic') {
-                            if (mediaCtx) {
+                            if (includeImages && mediaCtx) {
                                 const imageMarkdown = await extractImageMarkdown(child, mediaCtx);
                                 if (imageMarkdown) {
                                     sections.push(imageMarkdown);
@@ -296,19 +360,25 @@ export function createPptxReader({ loadScript, getToastMessage }) {
             .trim()
     );
 
-    const convertPptxToPlainText = async (file) => {
+    const convertPptxToPlainText = async (file, options = {}) => {
+        const includeImages = options.includeImages !== false;
         const JSZipGlobal = window.JSZip;
         if (typeof JSZipGlobal === 'undefined' || JSZipGlobal === null) {
             throw new Error('JSZip is unavailable for PPTX fallback extraction');
         }
         const arrayBuffer = await file.arrayBuffer();
         const zip = await JSZipGlobal.loadAsync(arrayBuffer);
+        guardZip(zip, options);
         const slideNames = Object.keys(zip.files)
             .filter(name => name.startsWith('ppt/slides/slide') && name.endsWith('.xml'))
             .sort((a, b) => {
                 const getIndex = (name) => Number(name.match(/slide(\d+)\.xml$/)?.[1] || 0);
                 return getIndex(a) - getIndex(b);
             });
+        const maxSlides = Number.isFinite(options.maxSlides) ? options.maxSlides : DEFAULT_MAX_SLIDES;
+        if (slideNames.length > maxSlides) {
+            throw new Error(getMessage('fileManagement.fileCompressedTooLarge') || 'Compressed file too large.');
+        }
 
         const slidesMarkdown = await Promise.all(slideNames.map(async (slideName, index) => {
             const xmlContent = await zip.files[slideName].async('text');
@@ -317,7 +387,7 @@ export function createPptxReader({ loadScript, getToastMessage }) {
             const parser = new DOMParser();
             const relsDoc = relsXml ? parser.parseFromString(relsXml, 'application/xml') : null;
             const mediaCtx = relsDoc ? createMediaContext(zip, relsDoc, 'ppt/slides', loadScript) : null;
-            const textContent = await extractTextFromSlideXml(xmlContent, mediaCtx);
+            const textContent = await extractTextFromSlideXml(xmlContent, mediaCtx, includeImages);
             const sections = [];
             if (textContent) {
                 sections.push(textContent);
@@ -327,7 +397,7 @@ export function createPptxReader({ loadScript, getToastMessage }) {
             if (zip.files[notesName]) {
                 try {
                     const notesXml = await zip.files[notesName].async('text');
-                    const notesText = extractTextFromSlideXml(notesXml);
+                    const notesText = extractTextFromSlideXml(notesXml, mediaCtx, includeImages);
                     if (notesText) {
                         const notesLabel = getPptxNotesLabel();
                         sections.push(`**${notesLabel}**\n${formatAsBlockQuote(notesText)}`);
@@ -348,9 +418,15 @@ export function createPptxReader({ loadScript, getToastMessage }) {
         return { text: slidesMarkdown.join('\n\n').trim() };
     };
 
-    const readPptxFile = async (file) => {
+    const readPptxFile = async (file, options = {}) => {
+        const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_PARSE_TIMEOUT_MS;
+        await guardPptxFile(file, options);
         await loadScript('/libs/jszip.min.js', 'JSZip');
-        return convertPptxToPlainText(file);
+        return await runWithTimeout(
+            convertPptxToPlainText(file, options),
+            timeoutMs,
+            getMessage('fileManagement.parseTimeout') || 'File parse timeout.'
+        );
     };
 
     return { readPptxFile };

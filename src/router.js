@@ -1,4 +1,5 @@
 const DEFAULT_SETTINGS_SECTION = 'profile';
+const DEFAULT_SUBSCRIPTION_SECTION = 'manage';
 
 function normalizePathname(pathname = '') {
     if (!pathname || pathname === '/') return '';
@@ -13,12 +14,30 @@ function parseRouteFromLocation() {
     const segments = normalizePathname(pathname).split('/').filter(Boolean);
 
     if (segments.length >= 3 &&
+        segments[0] === 'chat' &&
+        segments[2] !== 'settings' &&
+        segments[2] !== 'subscription') {
+        const parentChatId = decodeURIComponent(segments[1]);
+        const chatId = decodeURIComponent(segments[2]);
+        return { name: 'chat', params: { chatId, parentChatId, isBridgeRoute: true } };
+    }
+
+    if (segments.length >= 3 &&
         (segments[0] === 'chat' || segments[0] === 'temp_chat') &&
         segments[2] === 'settings') {
         const chatRoute = segments[0] === 'temp_chat' ? 'tempChat' : 'chat';
         const chatId = decodeURIComponent(segments[1]);
         const section = segments[3] ? decodeURIComponent(segments[3]) : DEFAULT_SETTINGS_SECTION;
         return { name: 'settings', params: { section, chatId, chatRoute } };
+    }
+
+    if (segments.length >= 3 &&
+        (segments[0] === 'chat' || segments[0] === 'temp_chat') &&
+        segments[2] === 'subscription') {
+        const chatRoute = segments[0] === 'temp_chat' ? 'tempChat' : 'chat';
+        const chatId = decodeURIComponent(segments[1]);
+        const section = segments[3] ? decodeURIComponent(segments[3]) : DEFAULT_SUBSCRIPTION_SECTION;
+        return { name: 'subscription', params: { section, chatId, chatRoute } };
     }
 
     if (segments.length >= 2 && segments[0] === 'chat') {
@@ -30,6 +49,10 @@ function parseRouteFromLocation() {
     if (segments.length >= 1 && segments[0] === 'settings') {
         const section = segments[1] ? decodeURIComponent(segments[1]) : DEFAULT_SETTINGS_SECTION;
         return { name: 'settings', params: { section } };
+    }
+    if (segments.length >= 1 && segments[0] === 'subscription') {
+        const section = segments[1] ? decodeURIComponent(segments[1]) : DEFAULT_SUBSCRIPTION_SECTION;
+        return { name: 'subscription', params: { section } };
     }
     if (segments.length >= 3 && segments[0] === 'auth' && segments[2] === 'callback') {
         const provider = decodeURIComponent(segments[1] || '');
@@ -56,6 +79,9 @@ function buildPath(routeName, params = {}) {
     const safeId = (value) => encodeURIComponent(String(value || '').trim());
     switch (routeName) {
         case 'chat':
+            if (params.chatId && params.parentChatId) {
+                return `/chat/${safeId(params.parentChatId)}/${safeId(params.chatId)}`;
+            }
             return params.chatId ? `/chat/${safeId(params.chatId)}` : '/';
         case 'tempChat':
             return params.chatId ? `/temp_chat/${safeId(params.chatId)}` : '/';
@@ -66,6 +92,14 @@ function buildPath(routeName, params = {}) {
                 return `/${chatRoute}/${safeId(params.chatId)}/settings/${safeId(section)}`;
             }
             return `/settings/${safeId(section)}`;
+        }
+        case 'subscription': {
+            const section = params.section || DEFAULT_SUBSCRIPTION_SECTION;
+            if (params.chatId) {
+                const chatRoute = params.chatRoute === 'tempChat' ? 'temp_chat' : 'chat';
+                return `/${chatRoute}/${safeId(params.chatId)}/subscription/${safeId(section)}`;
+            }
+            return `/subscription/${safeId(section)}`;
         }
         case 'auth': {
             if (params.mode === 'reset') {
@@ -174,7 +208,13 @@ class AppRouter {
                 console.error('Router navigation failed:', error);
             }
         };
-        requestAnimationFrame(updateUrl);
+        const shouldDefer = options.defer === true &&
+            typeof requestAnimationFrame === 'function';
+        if (shouldDefer) {
+            requestAnimationFrame(updateUrl);
+        } else {
+            updateUrl();
+        }
     }
 
     pushPlaceholder() {
@@ -232,4 +272,4 @@ class AppRouter {
 const router = new AppRouter();
 
 export default router;
-export { AppRouter, DEFAULT_SETTINGS_SECTION };
+export { AppRouter, DEFAULT_SETTINGS_SECTION, DEFAULT_SUBSCRIPTION_SECTION };

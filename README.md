@@ -89,9 +89,13 @@ LittleAIBox is perfect for:
 
 ![Main Page - English](appshow/main_en.png)
 
-#### Settings Page
+#### Example Output Page
 
-![Settings Page - English](appshow/settings_en.png)
+![Example Page - English](appshow/example_en.png)
+
+#### Privacy Page
+
+![Privacy Page - English](appshow/privacy_en.png)
 
 ---
 
@@ -124,6 +128,7 @@ LittleAIBox is perfect for:
 - **Mathematical Expressions**: Beautiful math rendering with KaTeX
 - **Diagrams**: Interactive Mermaid diagram support with PNG/SVG export
 - **Data Visualization**: Vega-Lite chart rendering with interactive charts and PNG export
+- **Mindmap Rendering**: Markmap-based mindmap rendering and preview for structured markdown content
 - **Chart Export**: Download generated charts (Mermaid diagrams and Vega-Lite visualizations) as PNG or SVG files
 - **GitHub Flavored Markdown**: Full GFM support with syntax highlighting
 
@@ -138,6 +143,19 @@ LittleAIBox is perfect for:
   - Temperature control (creativity vs. consistency)
   - Advanced parameters (topK, topP)
   - Task presets (coding assistant, writing assistant, translation, classical Chinese research, travel guide, roleplay creative)
+
+### 🧾 **Productivity Export**
+- **Multi-format Export**: Export chat/content to DOCX, PDF, PPTX, and XLSX
+- **Content Preservation**: Keep headings, lists, code blocks, formulas, tables, diagrams, and images
+
+### 🔗 **Bridge Session Collaboration**
+- **Parent-Child Context Bridge**: Continue conversations with inherited context from source chats
+
+### 📲 **Native Update Experience**
+- **APK Update Check**: Detect newer APK versions and fallback to download page when needed
+
+### 📌 **Open-Source Scope**
+- **Frontend-Only Package**: This repository ships the open-source frontend; subscription/payment backends are omitted
 
 ### 🌐 **Multi-Language Support**
 - **6 Languages**: Chinese (Simplified/Traditional), English, Japanese, Korean, Spanish, French
@@ -391,34 +409,40 @@ The system automatically detects and bypasses regional restrictions, invalid key
 
 ```
 LittleAIBox/
-├── src/                    # Source code
-│   ├── main.js            # Main application logic
-│   ├── api-config.js      # API configuration
-│   ├── auth-oauth.js      # OAuth authentication (Google, GitHub)
-│   ├── auth-template.js  # Authentication UI templates
-│   ├── auth.css           # Authentication styles
-│   ├── db.js              # IndexedDB wrapper
-│   ├── i18n.js            # Internationalization
-│   ├── mermaid-renderer.js # Diagram rendering
-│   ├── vega-renderer.js    # Vega-Lite chart rendering
-│   ├── floating-timeline.js # Conversation timeline navigation
-│   ├── floating-timeline.css # Timeline styles
-│   ├── mfa-login.js       # Multi-factor authentication
-│   ├── oauth-flow.js      # OAuth flow handling
-│   ├── router.js           # Client-side routing
-│   ├── style.css          # Global styles
-│   └── sw-custom.js       # Service Worker
-├── public/                 # Static assets
-│   ├── locales/           # Translation files (6 languages)
-│   ├── libs/              # Third-party libraries
-│   ├── images/            # Images and icons
-│   └── manifest.webmanifest # PWA manifest
-├── appshow/                # Screenshots by language
-├── docs/                   # Documentation (multi-language)
-├── capacitor.config.json   # Mobile app configuration
-├── vite.config.js          # Build configuration
-├── tailwind.config.js      # Tailwind CSS configuration
-└── package.json            # Dependencies
+├── src/                         # Frontend source
+│   ├── main.js                  # Main app entry
+│   ├── api-config.js            # API/runtime config
+│   ├── apk-update-manager.js    # Native APK update flow
+│   ├── entitlements.js          # Plan/limit capability gating
+│   ├── mindmap-mode.js          # Mindmap mode runtime
+│   ├── stream-image-runtime.js  # Stream image handling
+│   ├── sync-queue.js            # Offline retry/sync queue
+│   ├── router.js                # Client-side routing
+│   ├── sw-custom.js             # Service worker logic
+│   ├── auth/                    # Auth modules (OAuth/MFA/UI)
+│   ├── bridge/                  # Bridge session modules
+│   ├── file-parsers/            # Upload/file parsing pipeline
+│   ├── file-export/             # DOCX/PDF/PPTX/XLSX export
+│   ├── rendering/               # Mermaid/Vega render adapters
+│   └── floating-timeline/       # Timeline feature modules
+├── public/                      # Static assets
+│   ├── locales/                 # i18n dictionaries
+│   ├── libs/                    # Browser-side third-party libs
+│   ├── images/                  # Icons/images/pwa assets
+│   ├── policy/                  # Policy/legal pages
+│   ├── subscribe/               # Subscription placeholder pages
+│   ├── promocode/               # Promo placeholder pages
+│   ├── shared/                  # Shared web modules
+│   ├── workers/                 # Web workers
+│   ├── download-app/            # APK download landing page
+│   └── downloads/               # APK file index
+├── scripts/                     # Build/dev helper scripts
+├── appshow/                     # Screenshot assets by language
+├── docs/                        # Multi-language documentation
+├── capacitor.config.json        # Mobile app config
+├── vite.config.js               # Vite build config
+├── tailwind.config.js           # Tailwind config
+└── package.json                 # Dependencies/scripts
 ```
 
 ---

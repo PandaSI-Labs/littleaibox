@@ -82,6 +82,22 @@ export async function deleteChatsFromDB(userId) {
     }
 }
 
+export async function clearChatsStore() {
+    try {
+        const db = await getDb();
+        const transaction = db.transaction([CHATS_STORE], 'readwrite');
+        const store = transaction.objectStore(CHATS_STORE);
+        const request = store.clear();
+
+        return new Promise((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    } catch (error) {
+        throw error;
+    }
+}
+
 // 设置备份功能
 export async function saveSettingsToDB(key, settingsData) {
     try {

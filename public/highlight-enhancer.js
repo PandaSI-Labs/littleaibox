@@ -36,6 +36,13 @@ window.addEventListener('DOMContentLoaded', () => {
         }
 
         const requested = new Map();
+        const availableLanguageModules = new Set([
+            'armasm', 'avrasm', 'bash', 'c', 'cpp', 'csharp', 'css', 'dart', 'diff', 'dockerfile',
+            'elixir', 'go', 'graphql', 'haskell', 'ini', 'java', 'javascript', 'json', 'kotlin',
+            'less', 'llvm', 'lua', 'markdown', 'matlab', 'objectivec', 'perl', 'php', 'powershell',
+            'protobuf', 'python', 'r', 'ruby', 'rust', 'scala', 'scss', 'sql', 'swift', 'typescript',
+            'verilog', 'vhdl', 'x86asm', 'xml', 'yaml'
+        ]);
         const resolveLang = (name) => {
             const normalized = (name || '').toString().trim().toLowerCase();
             if (!normalized) return '';
@@ -54,6 +61,7 @@ window.addEventListener('DOMContentLoaded', () => {
         function loadLanguageIfNeeded(lang) {
             const target = resolveLang(lang);
             if (!target || target === 'plaintext') return Promise.resolve(true);
+            if (!availableLanguageModules.has(target)) return Promise.resolve(false);
             try {
                 if (hljs.getLanguage(target)) return Promise.resolve(true);
             } catch (_) { }

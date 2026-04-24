@@ -1,5 +1,5 @@
 import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching';
-import { registerRoute } from 'workbox-routing';
+import { registerRoute, setCatchHandler } from 'workbox-routing';
 import { CacheFirst, NetworkFirst, NetworkOnly, StaleWhileRevalidate } from 'workbox-strategies';
 
 if ('storage' in navigator && 'persist' in navigator.storage) {
@@ -18,7 +18,19 @@ const ADDITIONAL_PRECACHE = [
     { url: '/data/cars.json', revision: null }
 ];
 
-const manifestEntries = self.__WB_MANIFEST || [];
+const rawManifestEntries = self.__WB_MANIFEST || [];
+
+// 过滤掉可能在 APK 环境下导致预缓存失败的文件
+const PRECACHE_IGNORE_PATTERNS = [
+    /favicon\.ico$/i,
+    /apple-touch-icon.*\.png$/i,
+];
+
+const manifestEntries = rawManifestEntries.filter((entry) => {
+    const url = typeof entry === 'string' ? entry : entry.url;
+    return !PRECACHE_IGNORE_PATTERNS.some((pattern) => pattern.test(url));
+});
+
 const normalizePath = (url) => {
     try {
         return new URL(url, self.location.origin).pathname;
@@ -39,7 +51,19 @@ const filteredAdditional = ADDITIONAL_PRECACHE.filter((entry) => {
 precacheAndRoute(manifestEntries.concat(filteredAdditional));
 
 self.addEventListener('install', (event) => {
-    event.waitUntil(self.skipWaiting());
+    event.waitUntil(
+        self.skipWaiting().catch((err) => {
+            console.warn('SW install warning:', err);
+        })
+    );
+});
+
+// 捕获未处理的预缓存错误，防止阻塞 SW 安装
+self.addEventListener('error', (event) => {
+    if (event.message && event.message.includes('bad-precaching-response')) {
+        console.warn('Precache error (ignored):', event.message);
+        event.preventDefault();
+    }
 });
 
 self.addEventListener('activate', (event) => {
@@ -91,23 +115,90 @@ const staleWhileRevalidateWithFallback = new StaleWhileRevalidate({
     }]
 });
 
-const navigationNetworkFirst = new NetworkFirst({ cacheName: 'html-cache', networkTimeoutSeconds: 3 });
 self.addEventListener('fetch', (event) => {
     if (event.request.mode === 'navigate') {
         event.respondWith((async () => {
-            return navigationNetworkFirst.handle({ event, request: event.request });
+            try {
+                const requestUrl = new URL(event.request.url);
+                if (requestUrl.origin === self.location.origin && requestUrl.pathname.startsWith('/temp_chat/')) {
+                    return Response.redirect('/', 302);
+                }
+                // 始终优先网络且不缓存导航 HTML，避免旧 index.html 引用失效哈希资源
+                const networkResponse = await fetch(event.request, { cache: 'no-store' });
+                if (networkResponse && networkResponse.ok) {
+                    return networkResponse;
+                }
+                const fallback = await caches.match('/index.html');
+                if (fallback) return fallback;
+                return networkResponse || new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
+            } catch (_) {
+                const fallback = await caches.match('/index.html');
+                if (fallback) return fallback;
+                return new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
+            }
         })());
     }
 });
 
+// Workbox 全局兜底：避免 no-response 未捕获异常污染控制台
+setCatchHandler(async ({ event, request }) => {
+    const url = new URL(request.url);
+    if (event?.request?.destination === 'document') {
+        const fallback = await caches.match('/index.html');
+        if (fallback) return fallback;
+    }
+
+    if (url.origin === self.location.origin && url.pathname.startsWith('/temp_chat/')) {
+        return Response.redirect('/', 302);
+    }
+
+    return new Response(JSON.stringify({
+        error: 'Network request failed',
+        offline: true
+    }), {
+        status: 503,
+        statusText: 'Service Unavailable',
+        headers: { 'Content-Type': 'application/json' }
+    });
+});
+
+const cacheFirstSafe = (cacheName) => async ({ request }) => {
+    const cache = await caches.open(cacheName);
+    const cachedResponse = await cache.match(request);
+    if (cachedResponse) {
+        return cachedResponse;
+    }
+    let response;
+    try {
+        response = await fetch(request);
+    } catch (error) {
+        throw error;
+    }
+    if (!response || !response.ok) {
+        return response;
+    }
+    const canStoreRequest = request.method === 'GET'
+        && !request.headers?.has('range')
+        && request.cache !== 'no-store';
+    const canStoreResponse = response.status === 200 && response.type === 'basic';
+    try {
+        if (canStoreRequest && canStoreResponse) {
+            await cache.put(request, response.clone());
+        }
+    } catch (error) {
+        console.warn('Cache put failed:', request.url, error);
+    }
+    return response;
+};
+
 registerRoute(
     ({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/libs/') && (request.destination === 'style' || url.pathname.endsWith('.css')),
-    new CacheFirst({ cacheName: 'libs-style-cache' })
+    cacheFirstSafe('libs-style-cache')
 );
 
 registerRoute(
     ({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/libs/') && (request.destination === 'script' || url.pathname.endsWith('.js')),
-    new CacheFirst({ cacheName: 'libs-script-cache' })
+    cacheFirstSafe('libs-script-cache')
 );
 
 registerRoute(
@@ -123,7 +214,9 @@ registerRoute(
 
 // 字体资源（KaTeX/Highlight 等）
 registerRoute(
-    ({ url, request }) => request.method === 'GET' && (url.pathname.startsWith('/libs/fonts/') || /\.(?:woff2?|ttf|otf|eot)$/.test(url.pathname)),
+    ({ url, request }) => request.method === 'GET'
+        && url.origin === self.location.origin
+        && (url.pathname.startsWith('/libs/fonts/') || /\.(?:woff2?|ttf|otf|eot)$/.test(url.pathname)),
     new CacheFirst({ cacheName: 'libs-fonts-cache' })
 );
 
@@ -164,6 +257,17 @@ registerRoute(
     new StaleWhileRevalidate({ cacheName: 'share-page-cache' })
 );
 
+// temp_chat: 不走缓存策略，避免网络失败时触发 Cache+Network 告警
+registerRoute(
+    ({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/temp_chat/'),
+    async ({ request }) => {
+        if (request.mode === 'navigate' || request.destination === 'document') {
+            return Response.redirect('/', 302);
+        }
+        return fetch(request);
+    }
+);
+
 // API
 registerRoute(
     ({ url }) => {
@@ -197,9 +301,12 @@ registerRoute(
 
 registerRoute(({ request, url }) => {
     if (request.mode === 'navigate') return false;
+    if (url.origin !== self.location.origin) return false;
+    if (url.pathname.startsWith('/temp_chat/')) return false;
     if (url.pathname.startsWith('/libs/')) return false;
     if (url.pathname.startsWith('/assets/')) return false;
     if (url.pathname.startsWith('/locales/')) return false;
     if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/')) return false;
+    if (url.hostname === 'fonts.littleaibox.com') return false;
     return request.method === 'GET';
 }, staleWhileRevalidateWithFallback);

@@ -8,9 +8,12 @@
         "/manifest.json",
         "/favicon.ico",
         "/apple-touch-icon.png",
+        "/src/*",
         "/images/*",
         "/libs/*",
         "/assets/*",
+        "/policies/*",
+        "/policy/*",
         "/downloads/*"
     ]
 }

@@ -9,35 +9,198 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { SplashScreen } from '@capacitor/splash-screen';
 import { StatusBar } from '@capacitor/status-bar';
 import { FilePicker } from '@capawesome/capacitor-file-picker';
-import qrcodeGenerator from 'qrcode-generator';
+import { createApkUpdateManager } from './apk-update-manager.js';
 import { API_BASE_URL, isNativeApp } from './api-config.js';
-import { injectAuthUI } from './auth-template.js';
-import './auth.css';
-import { deleteChatsFromDB, getChatsFromDB, getSettingsFromDB, saveChatsToDB, saveSettingsToDB } from './db.js';
-import { createFileParsers } from './file-parsers/index.js';
+import { injectAuthUI } from './auth/auth-template.js';
+import './auth/auth.css';
+import {
+    BRIDGE_DISPATCH,
+    BRIDGE_PARENT_CONTEXT_TURNS_DEFAULT,
+    appendBridgeMenuItems,
+    attachBridgeVisualElements,
+    createBridgeController,
+    createBridgeFeature,
+    createBridgeSettingsUiController,
+    resolveBridgeRenderState,
+    normalizeBridgeParentContextTurns
+} from './bridge/index.js';
+import { clearChatsStore, deleteChatsFromDB, getChatsFromDB, getSettingsFromDB, saveChatsToDB, saveSettingsToDB } from './db.js';
+import {
+    canUseSearchAttachments as canUseSearchAttachmentsFromEntitlements,
+    getCharacterLimitInfo as getCharacterLimitInfoFromEntitlements,
+    getChatLimitInfo as getChatLimitInfoFromEntitlements,
+    getCloudSyncLimitInfo as getCloudSyncLimitInfoFromEntitlements,
+    getImageLimitInfo as getImageLimitInfoFromEntitlements,
+    getRichDocLimitInfo as getRichDocLimitInfoFromEntitlements,
+    normalizePlanCode as normalizeEntitlementPlanCode
+} from './entitlements.js';
 import { LocalStore } from './file-parsers/local-store.js';
 import { applyLanguage, clearTranslationCache, getCurrentLanguage, onAfterLanguageApplied, preloadAllTranslations, t } from './i18n.js';
-import { MERMAID_SCRIPT_SOURCES, renderMermaidDiagrams } from './mermaid-renderer.js';
-import { cancelMfaVerificationFlow, clearMfaChallengeState, configureMfaLogin, extractMfaChallenge, handleMfaVerificationSubmit, setActiveMfaMethod, setPendingMfaChallenge, showMfaVerificationForm } from './mfa-login.js';
-import { clearPendingOAuthState, handleOAuthCallbackRoute as handleOAuthCallbackRouteImpl, setupNativeOAuthDeepLinkHandler as setupNativeOAuthDeepLinkHandlerImpl, setupOAuthButtons as setupOAuthButtonsImpl } from './oauth-flow.js';
-import router, { DEFAULT_SETTINGS_SECTION } from './router.js';
+import { cancelMfaVerificationFlow, clearMfaChallengeState, configureMfaLogin, extractMfaChallenge, handleMfaVerificationSubmit, setActiveMfaMethod, setPendingMfaChallenge, showMfaVerificationForm } from './auth/mfa-login.js';
+import { clearPendingOAuthState, handleOAuthCallbackRoute as handleOAuthCallbackRouteImpl, setupNativeOAuthDeepLinkHandler as setupNativeOAuthDeepLinkHandlerImpl, setupOAuthButtons as setupOAuthButtonsImpl } from './auth/oauth-flow.js';
+import { formatRelayModelLabel } from './relay-models.js';
+import router, { DEFAULT_SETTINGS_SECTION, DEFAULT_SUBSCRIPTION_SECTION } from './router.js';
+import { handleFinalRenderAutoFollow, ScrollManager } from './scroll-manager.js';
+import { createStreamImageRuntime } from './stream-image-runtime.js';
 import './style.css';
-import { VEGA_EMBED_SCRIPT_SOURCES, VEGA_LITE_SCRIPT_SOURCES, VEGA_SCRIPT_SOURCES, renderVegaLiteDiagrams } from './vega-renderer.js';
-
-const DIAGRAM_LIBS = [
-    ...MERMAID_SCRIPT_SOURCES.map(src => ({ src, global: 'mermaid' })),
-    ...VEGA_SCRIPT_SOURCES.map(src => ({ src, global: 'vega' })),
-    ...VEGA_LITE_SCRIPT_SOURCES.map(src => ({ src, global: 'vegaLite' })),
-    ...VEGA_EMBED_SCRIPT_SOURCES.map(src => ({ src, global: 'vegaEmbed' }))
-];
+import {
+    loadPersistentQueue,
+    markQueueItemFailure,
+    removeQueueItem,
+    resetQueueItemFailure,
+    runSyncQueueWorker,
+    savePersistentQueue,
+    shouldDeferQueueItem,
+    SYNC_QUEUE_BACKOFF_BASE_MS,
+    SYNC_QUEUE_BACKOFF_MAX_MS,
+    SYNC_QUEUE_BATCH_BYTES,
+    SYNC_QUEUE_BATCH_SIZE,
+    SYNC_QUEUE_MAX_RETRIES,
+    SYNC_QUEUE_RETRY_DELAY_MS,
+    upsertQueueItem
+} from './sync-queue.js';
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const RETRYABLE_STATUS_CODES = new Set([500, 502, 503, 504, 520, 522, 524]);
+const OPEN_SOURCE_FRONTEND_MODE = true;
+
+function buildOpenSourceMockApiResult(endpoint, options = {}) {
+    if (!OPEN_SOURCE_FRONTEND_MODE) return null;
+    const normalized = String(endpoint || '').replace(/^\/+/, '');
+    const method = String(options?.method || 'GET').toUpperCase();
+
+    // Open-source placeholder: subscription/redeem APIs are intentionally removed.
+
+    if (normalized === 'user/usage' && method === 'GET') {
+        return {
+            success: true,
+            count: 0,
+            limit: 15,
+            apiMode: 'mixed',
+            hasKeys: false,
+            requestCount: 0,
+            relayRequestCount: 0,
+            fallbackRequestCount: 0,
+            serverFallbackCount: 0,
+            fallbackCount: 0,
+            fallbackLimit: 15,
+            richDocAnalysisCount: 0,
+            richDocLimit: 5,
+            imagesCount: 0,
+            imageLimit: 5,
+            cloudSyncCount: 0,
+            cloudSyncLimit: 500,
+            cloudSyncWarnAt: 450,
+            totalCount: 0,
+            dailyCharCount: 0,
+            dailyExchangeCount: 0,
+            dailySessionCount: 0
+        };
+    }
+
+    if (normalized === 'slash-commands' && method === 'GET') {
+        return { success: true, commands: [] };
+    }
+
+    if ((normalized === 'slash-commands' || normalized === 'slash-commands/delete') && method === 'POST') {
+        return { success: true };
+    }
+
+    return null;
+}
+
+function safeRandomUUID() {
+    try {
+        if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+            return globalThis.crypto.randomUUID();
+        }
+    } catch (_) { }
+    try {
+        const cryptoObj = globalThis.crypto;
+        if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
+            const bytes = cryptoObj.getRandomValues(new Uint8Array(16));
+            bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+            bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10
+            const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+            return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+        }
+    } catch (_) { }
+    return `uuid_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+}
+
+async function fetchWithRetry(url, options = {}, retryOptions = {}) {
+    const {
+        retries = 1,
+        retryDelayMs = 600,
+        timeoutMs = 30000,
+        signal: externalSignal = null
+    } = retryOptions || {};
+
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        const controller = new AbortController();
+        let timeoutId = null;
+        let abortedByExternal = false;
+
+        const onAbort = () => {
+            abortedByExternal = true;
+            controller.abort();
+        };
+
+        if (externalSignal) {
+            if (externalSignal.aborted) {
+                throw new DOMException('Aborted', 'AbortError');
+            }
+            externalSignal.addEventListener('abort', onAbort, { once: true });
+        }
+
+        if (timeoutMs && timeoutMs > 0) {
+            timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        }
+
+        try {
+            const response = await fetch(url, { ...options, signal: controller.signal });
+
+            if (timeoutId) clearTimeout(timeoutId);
+            if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
+
+            if (RETRYABLE_STATUS_CODES.has(response.status) && attempt < retries) {
+                try { await response.body?.cancel(); } catch (_) { }
+                await sleep(retryDelayMs * Math.pow(2, attempt));
+                continue;
+            }
+
+            return response;
+        } catch (error) {
+            if (timeoutId) clearTimeout(timeoutId);
+            if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
+
+            if (error?.name === 'AbortError') {
+                if (abortedByExternal) {
+                    throw error;
+                }
+            }
+
+            lastError = error;
+            if (attempt < retries) {
+                await sleep(retryDelayMs * Math.pow(2, attempt));
+                continue;
+            }
+            throw error;
+        }
+    }
+
+    throw lastError || new Error('Request failed');
+}
+
 const CustomSplash = registerPlugin('CustomSplash');
 const IMAGE_ACCEL_BASES = [
     'https://littleaibox.oss-accelerate.aliyuncs.com'
 ];
 const ACCEL_FETCH_TIMEOUT_MS = 8000;
 const ANDROID_PICTURES_DIR = 'Pictures/LittleAIBox';
+const ANDROID_DOWNLOADS_DIR = 'Download/LittleAIBox';
 
 function toAbsoluteImageUrl(url) {
     if (!url) return url;
@@ -143,6 +306,29 @@ const ApkInstaller = Capacitor.isNativePlatform()
     })
     : null;
 
+function getApkUpdateManager() {
+    if (!apkUpdateManager) {
+        apkUpdateManager = createApkUpdateManager({
+            App,
+            Browser,
+            Capacitor,
+            Directory,
+            Filesystem,
+            LocalNotifications,
+            isNativeApp,
+            API_BASE_URL,
+            ApkInstaller,
+            getToastMessage,
+            showToast,
+            showCustomConfirm,
+            clearCachesAndSettings,
+            clearCacheAndReload,
+            backupImportantSettings
+        });
+    }
+    return apkUpdateManager;
+}
+
 async function applyNativeSafeAreaInsets() {
     // 只在原生Capacitor环境中运行
     if (!Capacitor.isNativePlatform()) {
@@ -189,6 +375,8 @@ if (Capacitor.isNativePlatform()) {
 const scriptPromises = new Map();
 const scriptBlobUrls = new Map();
 const SCRIPT_CACHE_NAME = 'littleaibox-file-parsers';
+const CHAT_HISTORY_SYNC_TIMEOUT_MS = 3000;
+const CHAT_FINGERPRINT_SYNC_TIMEOUT_MS = 3000;
 let welcomePageShown = false;
 const GUEST_LOCKED_SETTINGS = new Set(['security']);
 const uiStateStack = [];
@@ -196,18 +384,42 @@ let authOverlayReason = null;
 let touchActiveMessage = null;
 let touchActionHandlersInitialized = false;
 let touchActionModeEnabled = false;
+let suppressTouchActionTap = false;
 let suppressAuthRouteSync = false;
 let pendingAuthRouteOptions = null;
+const LOADING_SCREEN_MIN_VISIBLE_MS = isNativeApp ? 1800 : 1000;
 let loadingScreenDefaultText = null;
+let loadingScreenShownAt = 0;
+let loadingScreenMinVisibleMs = 0;
+let loadingScreenHideTimer = null;
+let loadingScreenVisibilityToken = 0;
+let fingerprintWarmupPromise = null;
+let chatHistoryLoading = false;
 let pendingLoginSuccessToastKey = null;
 let pendingLoginSuccessToastRoute = 'home';
 let securityPageInitialized = false;
 let refreshSecurityMfaToggleFromUser = null;
+let nativeSplashHidden = false;
 const AUTH_ROUTE_STORAGE_KEY = 'littleaibox_last_auth_route';
 const codeInputRegistry = new Map();
-let nativeVersionSyncInFlight = null;
-let autoVersionCheckPromise = null;
-let appStateVersionListenerAttached = false;
+let apkUpdateManager = null;
+const ASSISTANT_AVATAR_SRC = '/images/pwa-192x192.png';
+
+function shouldUseNativeSplashBridgeAtRuntime() {
+    if (typeof window === 'undefined' || window.__IS_APK_INITIAL_LOAD__ !== true) {
+        return false;
+    }
+    if (!isNativeApp) {
+        return false;
+    }
+    try {
+        if (typeof Capacitor?.getPlatform === 'function') {
+            const platform = Capacitor.getPlatform();
+            return platform === 'android' || platform === 'ios';
+        }
+    } catch (_) { }
+    return false;
+}
 
 function buildSettingsPathFromParams(params = {}) {
     const section = params.section ? encodeURIComponent(params.section) : DEFAULT_SETTINGS_SECTION;
@@ -362,7 +574,7 @@ async function backupImportantSettings() {
         await saveSettingsToDB('app_settings', importantSettings);
 
         if (isNativeApp && Capacitor.getPlatform() === 'android') {
-            await ensureStoragePersistence();
+            await ensureStorageAccess({ strict: false });
         }
     } catch (error) {
         console.error('Failed to backup settings:', error);
@@ -681,8 +893,20 @@ class NavigationEngine {
         this.skipNextHistoryBack = true;
     }
 
+    closePanelNavIfOpen() {
+        const openNavs = document.querySelectorAll('.panel-nav.open');
+        const openOverlays = document.querySelectorAll('.panel-nav-overlay.visible');
+        if (!openNavs.length && !openOverlays.length) return false;
+        openNavs.forEach((nav) => nav.classList.remove('open'));
+        openOverlays.forEach((overlay) => overlay.classList.remove('visible'));
+        return true;
+    }
+
     async handleBackAction() {
         try {
+            if (this.closePanelNavIfOpen()) {
+                return;
+            }
             if (this.hasModalOpen()) {
                 await this.closeModal();
                 return;
@@ -744,6 +968,11 @@ class NavigationEngine {
             return true;
         }
 
+        // 检查订阅管理模态框
+        if (elements.subscriptionModal?.classList.contains('visible')) {
+            return true;
+        }
+
         // 检查文件查看器
         if (elements.fileViewerOverlay?.classList.contains('visible')) {
             return true;
@@ -789,6 +1018,13 @@ class NavigationEngine {
             if (canClose) {
                 this.suppressNextPop = false;
             }
+            return;
+        }
+
+        // 关闭订阅管理模态框
+        if (elements.subscriptionModal?.classList.contains('visible')) {
+            hideSubscriptionModal(!this.isHistoryNavigation, { skipHandleBack: !this.isHistoryNavigation });
+            this.suppressNextPop = false;
             return;
         }
 
@@ -990,6 +1226,7 @@ window.isChatProcessing = () => isProcessing;
 class RouteManager {
     constructor() {
         this.suppressSettingsRouteSync = false;
+        this.suppressSubscriptionRouteSync = false;
         this.initialRouteHandled = false;
         this.chatsLoadPromise = Promise.resolve();
         this.currentAuthState = { mode: 'login', token: '' };
@@ -1012,13 +1249,20 @@ class RouteManager {
 
     navigateToChat(chatId, options = {}) {
         if (!chatId) return;
-        const routeName = String(chatId).startsWith('temp_') ? 'tempChat' : 'chat';
+        const chatData = chats?.[chatId];
+        const isBridgeSession = !!(chatData?.isBridge && chatData?.parent_chat_id);
+        const routeName = isBridgeSession
+            ? 'chat'
+            : (String(chatId).startsWith('temp_') ? 'tempChat' : 'chat');
+        const routeParams = isBridgeSession
+            ? { chatId, parentChatId: chatData.parent_chat_id }
+            : { chatId };
         const currentRoute = router.getCurrentRoute();
         const isCurrentChatContext = currentRoute?.name === 'chat' || currentRoute?.name === 'tempChat';
         const isTargetChatContext = routeName === 'chat' || routeName === 'tempChat';
         const shouldReplace = options.replace === true ||
             (isTargetChatContext && isCurrentChatContext);
-        router.navigate(routeName, { chatId }, {
+        router.navigate(routeName, routeParams, {
             replace: shouldReplace,
             silent: options.silent === true
         });
@@ -1049,6 +1293,11 @@ class RouteManager {
     getActiveSettingsSection() {
         const activeNav = document.querySelector('.settings-nav-item.active');
         return (activeNav?.dataset.page) || lastSettingsPage || DEFAULT_SETTINGS_SECTION;
+    }
+
+    getActiveSubscriptionSection() {
+        const activeNav = document.querySelector('.subscription-nav-item.active');
+        return (activeNav?.dataset.subpage) || lastSubscriptionPage || DEFAULT_SUBSCRIPTION_SECTION;
     }
 
     normalizeAuthMode(mode) {
@@ -1088,6 +1337,21 @@ class RouteManager {
         });
     }
 
+    syncSubscriptionRoute(section, options = {}) {
+        if (this.suppressSubscriptionRouteSync) return;
+        const finalSection = section || this.getActiveSubscriptionSection();
+        if (!finalSection) return;
+        const chatContext = currentChatId ? {
+            chatId: currentChatId,
+            chatRoute: String(currentChatId).startsWith('temp_') ? 'tempChat' : 'chat'
+        } : {};
+        const params = { section: finalSection, ...chatContext };
+        router.navigate('subscription', params, {
+            replace: options.replace === true,
+            silent: options.silent === true
+        });
+    }
+
     syncAuthRoute(modeOrState = 'login', options = {}) {
         const state = this.normalizeAuthState(modeOrState);
         const params = state.mode === 'reset'
@@ -1106,6 +1370,10 @@ class RouteManager {
 
     isSettingsSyncSuppressed() {
         return this.suppressSettingsRouteSync;
+    }
+
+    isSubscriptionSyncSuppressed() {
+        return this.suppressSubscriptionRouteSync;
     }
 
     async openSettingsFromRoute(section, options = {}) {
@@ -1145,6 +1413,21 @@ class RouteManager {
         }
     }
 
+    async openSubscriptionFromRoute(section, options = {}) {
+        const targetSection = section || DEFAULT_SUBSCRIPTION_SECTION;
+        this.suppressSubscriptionRouteSync = true;
+        try {
+            hideSettingsModal(false, { skipHandleBack: true });
+            openSubscriptionModal();
+            await new Promise(resolve => setTimeout(resolve, 150));
+            setSubscriptionSubpage(targetSection);
+            ensureSubscriptionPanelState(targetSection);
+            lastSubscriptionPage = targetSection;
+        } finally {
+            this.suppressSubscriptionRouteSync = false;
+        }
+    }
+
     redirectGuestToAuth(options = {}) {
         const {
             mode = 'login',
@@ -1165,6 +1448,7 @@ class RouteManager {
             openAuthOverlay(origin, state, { syncRoute: false });
         }
     }
+
 
     async openAuthFromRoute(modeState) {
         const state = this.normalizeAuthState(modeState);
@@ -1219,6 +1503,25 @@ class RouteManager {
                 }
             }
             await this.openSettingsFromRoute(section);
+        } else if (route.name === 'subscription') {
+            if (!sessionId) {
+                window.location.href = '/auth/login';
+                return;
+            }
+            const section = route.params?.section;
+            const routeChatId = route.params?.chatId;
+            if (routeChatId) {
+                await this.waitForChatsToLoad();
+                const chatExists = chats && chats[routeChatId];
+                if (!chatExists) {
+                    const fallbackSection = section || DEFAULT_SUBSCRIPTION_SECTION;
+                    const params = { section: fallbackSection };
+                    router.navigate('subscription', params, { replace: true, silent: true });
+                    await this.openSubscriptionFromRoute(fallbackSection);
+                    return;
+                }
+            }
+            await this.openSubscriptionFromRoute(section);
         } else if (route.name === 'auth') {
             await this.openAuthFromRoute(route.params?.mode);
         } else if (route.name === 'oauthCallback') {
@@ -1265,6 +1568,13 @@ class RouteManager {
         if (!route) {
             return;
         }
+        const activeChatIdBeforePop = currentChatId;
+        const activeChatBeforePop = activeChatIdBeforePop ? chats?.[activeChatIdBeforePop] : null;
+        const shouldBridgePopReturnHome = !!(
+            activeChatIdBeforePop &&
+            activeChatBeforePop?.isBridge &&
+            !String(activeChatIdBeforePop).startsWith('temp_')
+        );
         if (navigationEngine?.consumeSidebarHistoryPop?.()) {
             return;
         }
@@ -1276,17 +1586,34 @@ class RouteManager {
         }
         if (route.name === 'auth') {
             hideSettingsModal(false, { skipHandleBack: true });
+            hideSubscriptionModal(false, { skipHandleBack: true });
             await this.openAuthFromRoute(route.params?.mode);
             return;
         }
         if (route.name === 'settings') {
             hideAuthOverlay(false, { routeHandled: true });
+            hideSubscriptionModal(false, { skipHandleBack: true });
             await this.openSettingsFromRoute(route.params?.section, { fromHistory: true });
+            return;
+        }
+        if (route.name === 'subscription') {
+            hideSettingsModal(false, { skipHandleBack: true });
+            hideAuthOverlay(false, { routeHandled: true });
+            await this.openSubscriptionFromRoute(route.params?.section, { fromHistory: true });
             return;
         }
         if (route.name === 'chat' || route.name === 'tempChat') {
             hideSettingsModal(false, { skipHandleBack: true });
+            hideSubscriptionModal(false, { skipHandleBack: true });
             hideAuthOverlay(false, { routeHandled: true });
+
+            if (shouldBridgePopReturnHome) {
+                currentChatId = null;
+                showEmptyState();
+                scheduleRenderSidebar();
+                this.navigateToHome({ replace: true, force: true });
+                return;
+            }
 
             const chatId = route.params?.chatId;
 
@@ -1297,6 +1624,7 @@ class RouteManager {
         }
         if (route.name === 'home') {
             hideSettingsModal(false, { skipHandleBack: true });
+            hideSubscriptionModal(false, { skipHandleBack: true });
             hideAuthOverlay(false, { routeHandled: true });
             if (currentChatId && String(currentChatId).startsWith('temp_')) {
                 const tempId = currentChatId;
@@ -1403,6 +1731,130 @@ function loadScript(src, globalName) {
     return promise;
 }
 
+let mermaidModulePromise = null;
+let vegaModulePromise = null;
+let wordExportModulePromise = null;
+let pdfExportModulePromise = null;
+let pptExportModulePromise = null;
+let excelExportModulePromise = null;
+let qrcodeModulePromise = null;
+let fileParsersPromise = null;
+
+function loadMermaidModule() {
+    if (!mermaidModulePromise) {
+        mermaidModulePromise = import('./rendering/mermaid-renderer.js');
+    }
+    return mermaidModulePromise;
+}
+
+function loadVegaModule() {
+    if (!vegaModulePromise) {
+        vegaModulePromise = import('./rendering/vega-renderer.js');
+    }
+    return vegaModulePromise;
+}
+
+function loadWordExportModule() {
+    if (!wordExportModulePromise) {
+        wordExportModulePromise = import('./file-export/word.js');
+    }
+    return wordExportModulePromise;
+}
+
+function loadPdfExportModule() {
+    if (!pdfExportModulePromise) {
+        pdfExportModulePromise = import('./file-export/pdf.js');
+    }
+    return pdfExportModulePromise;
+}
+
+function loadPptExportModule() {
+    if (!pptExportModulePromise) {
+        pptExportModulePromise = import('./file-export/ppt.js');
+    }
+    return pptExportModulePromise;
+}
+
+function loadExcelExportModule() {
+    if (!excelExportModulePromise) {
+        excelExportModulePromise = import('./file-export/excel.js');
+    }
+    return excelExportModulePromise;
+}
+
+function loadQRCodeGenerator() {
+    if (!qrcodeModulePromise) {
+        qrcodeModulePromise = import('qrcode-generator').then(mod => mod.default || mod);
+    }
+    return qrcodeModulePromise;
+}
+
+async function getDiagramLibs() {
+    const [mermaid, vega] = await Promise.all([loadMermaidModule(), loadVegaModule()]);
+    return [
+        ...mermaid.MERMAID_SCRIPT_SOURCES.map(src => ({ src, global: 'mermaid' })),
+        ...vega.VEGA_SCRIPT_SOURCES.map(src => ({ src, global: 'vega' })),
+        ...vega.VEGA_LITE_SCRIPT_SOURCES.map(src => ({ src, global: 'vegaLite' })),
+        ...vega.VEGA_EMBED_SCRIPT_SOURCES.map(src => ({ src, global: 'vegaEmbed' }))
+    ];
+}
+
+async function renderMermaidDiagramsLazy(container, options) {
+    const mod = await loadMermaidModule();
+    return mod.renderMermaidDiagrams(container, options);
+}
+
+async function renderVegaLiteDiagramsLazy(container, options) {
+    const mod = await loadVegaModule();
+    return mod.renderVegaLiteDiagrams(container, options);
+}
+
+async function waitForAllMermaidRendersLazy() {
+    const mod = await loadMermaidModule();
+    return typeof mod.waitForAllMermaidRenders === 'function' ? mod.waitForAllMermaidRenders() : Promise.resolve();
+}
+
+async function waitForAllVegaLiteRendersLazy() {
+    const mod = await loadVegaModule();
+    return typeof mod.waitForAllVegaLiteRenders === 'function' ? mod.waitForAllVegaLiteRenders() : Promise.resolve();
+}
+
+async function renderMathForExport(container) {
+    if (!container) return;
+    if (typeof window !== 'undefined' && window.renderMathInElement && mathRenderer) {
+        mathRenderer.renderElement(container, true);
+    }
+    await new Promise(resolve => requestAnimationFrame(resolve));
+}
+
+async function exportTextAsDocxLazy(options) {
+    const mod = await loadWordExportModule();
+    return mod.exportTextAsDocx(options);
+}
+
+async function exportTextAsPdfLazy(options) {
+    const mod = await loadPdfExportModule();
+    return mod.exportTextAsPdf(options);
+}
+
+async function exportTextAsPptLazy(options) {
+    const mod = await loadPptExportModule();
+    return mod.exportTextAsPpt(options);
+}
+
+async function exportTextAsExcelLazy(options) {
+    const mod = await loadExcelExportModule();
+    return mod.exportTextAsExcel(options);
+}
+
+async function getFileParsers() {
+    if (!fileParsersPromise) {
+        fileParsersPromise = import('./file-parsers/index.js')
+            .then(mod => mod.createFileParsers({ loadScript, mathRenderer, getToastMessage }));
+    }
+    return fileParsersPromise;
+}
+
 let diagramPreloadStarted = false;
 
 function preloadDiagramLibraries() {
@@ -1410,11 +1862,15 @@ function preloadDiagramLibraries() {
     diagramPreloadStarted = true;
 
     const run = () => {
-        const chain = DIAGRAM_LIBS.reduce(
-            (promise, lib) => promise.then(() => loadScript(lib.src, lib.global)),
-            Promise.resolve()
-        );
-        Promise.allSettled([chain]);
+        getDiagramLibs()
+            .then((libs) => {
+                const chain = libs.reduce(
+                    (promise, lib) => promise.then(() => loadScript(lib.src, lib.global)),
+                    Promise.resolve()
+                );
+                return Promise.allSettled([chain]);
+            })
+            .catch(() => { });
     };
 
     if (typeof requestIdleCallback === 'function') {
@@ -1448,7 +1904,13 @@ async function prepareScriptSource(src) {
         if (!networkResponse.ok) {
             throw new Error(`Failed to fetch ${src}: ${networkResponse.status}`);
         }
-        await cache.put(request, networkResponse.clone());
+        if (networkResponse.status === 200 && networkResponse.type === 'basic') {
+            try {
+                await cache.put(request, networkResponse.clone());
+            } catch (cachePutError) {
+                console.debug('Script cache put skipped:', cachePutError);
+            }
+        }
         const blobUrl = await createBlobUrlFromResponse(src, networkResponse.clone());
         return {
             url: blobUrl,
@@ -1499,10 +1961,10 @@ function rerenderDynamicContent(root) {
         });
 
         try {
-            renderMermaidDiagrams(container, { loadScript, isFinalRender: true });
+            void renderMermaidDiagramsLazy(container, { loadScript, isFinalRender: true });
         } catch (_) { }
         try {
-            renderVegaLiteDiagrams(container, { loadScript, isFinalRender: true });
+            void renderVegaLiteDiagramsLazy(container, { loadScript, isFinalRender: true });
         } catch (_) { }
 
         if (window.hljs) {
@@ -1525,6 +1987,11 @@ function rerenderDynamicContent(root) {
 }
 
 function setupVisibilityRerender() {
+    const syncChatListOnForeground = (force = false) => {
+        if (!currentUser) return;
+        syncChatListFromServer({ force }).catch(() => { });
+    };
+
     const schedule = () => {
         if (rerenderScheduled) return;
         rerenderScheduled = true;
@@ -1536,10 +2003,16 @@ function setupVisibilityRerender() {
         }
     };
 
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(); });
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            schedule();
+            syncChatListOnForeground(true);
+        }
+    });
 
     window.addEventListener('pagehide', () => {
         flushPendingDocUploads();
+        flushPendingCloudSyncUploads();
     });
 
     window.addEventListener('online', () => {
@@ -1549,20 +2022,34 @@ function setupVisibilityRerender() {
         const chat = chats[chatId];
         const messagesLoaded = Array.isArray(chat.messages) && chat.messages.length > 0;
         deferDocAttachmentMount(chatId, chat, messagesLoaded);
+        syncCloudSyncQueueIfEligible('online');
     });
 
     if (typeof App?.addListener === 'function') {
         App.addListener('appStateChange', ({ isActive }) => {
+            if (isActive) {
+                schedule();
+                syncChatListOnForeground(true);
+                return;
+            }
             if (!isActive) {
                 flushPendingDocUploads();
+                flushPendingCloudSyncUploads();
             }
         });
         App.addListener('pause', () => {
             flushPendingDocUploads();
+            flushPendingCloudSyncUploads();
         });
     }
-    window.addEventListener('focus', schedule);
-    window.addEventListener('pageshow', () => schedule());
+    window.addEventListener('focus', () => {
+        schedule();
+        syncChatListOnForeground(false);
+    });
+    window.addEventListener('pageshow', () => {
+        schedule();
+        syncChatListOnForeground(false);
+    });
 }
 
 function canUseScriptCache() {
@@ -1604,7 +2091,14 @@ const LOGGED_IN_FILE_SIZE_LIMIT = 10 * 1024 * 1024;
 const MAX_TABLE_ROWS = 80;
 const LOCAL_STORAGE_KEY_PRIVACY = 'seenPrivacyPolicyVersion';
 const LARGE_TEXT_THRESHOLD = 40000;
-const CHARACTER_LIMIT = 300000;
+const OFFICIAL_SUBSCRIPTION_SOURCES = new Set([
+    'checkout',
+    'official',
+    'creem',
+    'stripe',
+    'auto',
+    'subscription'
+]);
 const ICONS = {
     DELETE: '<svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>',
     EDIT: '<svg viewBox="0 0 24 24"><path d="M14.06 9.06L15.94 10.94 8.06 18.81 6.19 16.94zM16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
@@ -1823,8 +2317,6 @@ function showImageModal(imageUrl, description, originalUrl = imageUrl) {
 
     const modal = document.createElement('div');
     modal.className = 'modal image-viewer-modal';
-    modal.style.maxWidth = '650px';
-    modal.style.maxHeight = '90vh';
 
     const modalHeader = document.createElement('div');
     modalHeader.className = 'modal-header';
@@ -1837,24 +2329,24 @@ function showImageModal(imageUrl, description, originalUrl = imageUrl) {
     modalHeader.appendChild(closeBtn);
 
     const modalContent = document.createElement('div');
-    modalContent.className = 'modal-content';
-    modalContent.style.textAlign = 'center';
-    modalContent.style.padding = '20px';
+    modalContent.className = 'modal-content image-viewer-content';
+
+    const imageFrame = document.createElement('div');
+    imageFrame.className = 'image-viewer-frame';
 
     const img = document.createElement('img');
     img.src = imageUrl;
     img.alt = description;
 
     const descPara = document.createElement('p');
-    descPara.style.cssText = "margin-top: 15px; color: var(--secondary-text-color);";
-    descPara.textContent = description;
+    descPara.className = 'image-viewer-description';
+    renderImageAttributionDescription(descPara, description, originalUrl || imageUrl);
 
     const actionsDiv = document.createElement('div');
-    actionsDiv.style.marginTop = '15px';
+    actionsDiv.className = 'image-viewer-actions';
 
     const downloadBtn = document.createElement('button');
     downloadBtn.className = 'btn-primary';
-    downloadBtn.style.marginRight = '10px';
     downloadBtn.textContent = getToastMessage('image.downloadImage');
 
     const copyBtn = document.createElement('button');
@@ -1864,7 +2356,8 @@ function showImageModal(imageUrl, description, originalUrl = imageUrl) {
     actionsDiv.appendChild(downloadBtn);
     actionsDiv.appendChild(copyBtn);
 
-    modalContent.appendChild(img);
+    imageFrame.appendChild(img);
+    modalContent.appendChild(imageFrame);
     modalContent.appendChild(descPara);
     modalContent.appendChild(actionsDiv);
 
@@ -1903,7 +2396,102 @@ function showImageModal(imageUrl, description, originalUrl = imageUrl) {
 
 window.viewImage = showImageModal;
 
-async function ensureStoragePermission() {
+function parsePexelsAttribution(description = '', fallbackUrl = '') {
+    const rawDesc = String(description || '').trim();
+    const rawFallback = String(fallbackUrl || '').trim();
+    const text = rawDesc || rawFallback;
+    if (!text) return null;
+
+    let sourceUrl = '';
+    let photographer = '';
+
+    const fromPexelsMatch = rawDesc.match(/from\s+pexels\s*\(\s*(https?:\/\/[^\s)]+)\s*\)/i);
+    if (fromPexelsMatch?.[1]) {
+        sourceUrl = fromPexelsMatch[1].trim();
+    }
+
+    if (!sourceUrl) {
+        const sourceFieldMatch = rawDesc.match(/\bsource\s*=\s*(https?:\/\/\S+)/i);
+        if (sourceFieldMatch?.[1]) {
+            sourceUrl = sourceFieldMatch[1].replace(/[;,\s]+$/, '').trim();
+        }
+    }
+
+    if (!sourceUrl) {
+        const anyUrlMatch = rawDesc.match(/https?:\/\/\S+/i) || rawFallback.match(/https?:\/\/\S+/i);
+        if (anyUrlMatch?.[0]) {
+            sourceUrl = anyUrlMatch[0].replace(/[),.;\s]+$/, '').trim();
+        }
+    }
+
+    const photographerMatch = rawDesc.match(/\bphotographer\s*=\s*([^;]+?)(?:;|$)/i);
+    if (photographerMatch?.[1]) {
+        photographer = photographerMatch[1].trim();
+    } else {
+        const photoByMatch = rawDesc.match(/photo\s+by\s+(.+?)\s+on\s+pexels/i);
+        if (photoByMatch?.[1]) {
+            photographer = photoByMatch[1].trim();
+        }
+    }
+
+    let host = '';
+    try {
+        if (sourceUrl) {
+            host = new URL(sourceUrl).hostname.toLowerCase();
+        }
+    } catch (_) { }
+
+    const appearsPexels = /from\s+pexels/i.test(rawDesc) || /on\s+pexels/i.test(rawDesc) || host.includes('pexels.com');
+    if (!appearsPexels) return null;
+
+    return {
+        sourceUrl: sourceUrl || '',
+        photographer: photographer || 'Pexels Contributor'
+    };
+}
+
+function renderImageAttributionDescription(container, description = '', fallbackUrl = '') {
+    if (!container) return;
+    container.textContent = '';
+
+    const pexelsInfo = parsePexelsAttribution(description, fallbackUrl);
+    if (!pexelsInfo) {
+        container.textContent = String(description || '').trim();
+        return;
+    }
+
+    const lead = document.createElement('span');
+    lead.textContent = `Photo by ${pexelsInfo.photographer} on `;
+    container.appendChild(lead);
+
+    const link = document.createElement('a');
+    link.textContent = 'Pexels';
+    link.href = pexelsInfo.sourceUrl || 'https://www.pexels.com/';
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer nofollow';
+    container.appendChild(link);
+}
+
+function rewritePexelsAttributionInMarkdown(rawText = '') {
+    let text = String(rawText || '');
+    if (!text) return text;
+
+    text = text.replace(
+        /from\s+pexels\s*\(\s*(https?:\/\/[^\s)]+)\s*\)/gi,
+        (_all, url) => `Photo by Pexels Contributor on [Pexels](${url})`
+    );
+
+    text = text.replace(
+        /Photo by\s+(.+?)\s+on\s+Pexels\s*\(\s*(https?:\/\/[^\s)]+)\s*\)/gi,
+        (_all, name, url) => `Photo by ${String(name || '').trim() || 'Pexels Contributor'} on [Pexels](${url})`
+    );
+
+    return text;
+}
+
+
+async function ensureStorageAccess(options = {}) {
+    const strict = options?.strict !== false;
     if (Capacitor.getPlatform() !== 'android') return;
 
     const match = navigator.userAgent.match(/Android\s([0-9]+)/);
@@ -1919,9 +2507,12 @@ async function ensureStoragePermission() {
                 }
             }
         } catch (error) {
-            showToast(getToastMessage('toast.storagePermissionRequired'), 'warning');
-            await App.openSettings();
-            throw new Error(getToastMessage('errors.permissionDenied'));
+            if (strict) {
+                showToast(getToastMessage('toast.storagePermissionRequired'), 'warning');
+                await App.openSettings();
+                throw new Error(getToastMessage('errors.permissionDenied'));
+            }
+            console.warn('ensureStorageAccess skipped:', error?.message || error);
         }
         return;
     }
@@ -1932,19 +2523,134 @@ async function ensureStoragePermission() {
     }
 
     if (perm.publicStorage !== 'granted') {
-        showToast(getToastMessage('toast.grantStoragePermission'), 'error');
-        throw new Error(getToastMessage('errors.permissionDenied'));
+        if (strict) {
+            showToast(getToastMessage('toast.grantStoragePermission'), 'error');
+            throw new Error(getToastMessage('errors.permissionDenied'));
+        }
+        console.warn('ensureStorageAccess skipped: publicStorage not granted');
+        return;
     }
 
     if (androidVersion && androidVersion >= 11) {
         const again = await Filesystem.requestPermissions();
         if (again.publicStorage !== 'granted') {
-            showToast(getToastMessage('toast.enableAllFilesAccess'), 'warning');
-            await App.openSettings();
-            throw new Error(getToastMessage('errors.noAllFilesAccess'));
+            if (strict) {
+                showToast(getToastMessage('toast.enableAllFilesAccess'), 'warning');
+                await App.openSettings();
+                throw new Error(getToastMessage('errors.noAllFilesAccess'));
+            }
+            console.warn('ensureStorageAccess skipped: all files access not granted');
         }
     }
 }
+
+function sanitizeNativeFilename(name) {
+    const cleaned = String(name || '').trim() || 'export';
+    return cleaned.replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
+}
+
+async function saveBlobToNativeFile(blob, filename) {
+    if (!blob) throw new Error('empty_blob');
+    const safeName = sanitizeNativeFilename(filename);
+    const base64Data = await blobToBase64(blob);
+
+    if (Capacitor.getPlatform() === 'android') {
+        await ensureStorageAccess({ strict: true });
+        try {
+            await Filesystem.mkdir({
+                path: ANDROID_DOWNLOADS_DIR,
+                directory: Directory.ExternalStorage,
+                recursive: true,
+            });
+        } catch (_) {
+            // ignore if folder already exists or cannot be created
+        }
+        try {
+            const savedFile = await Filesystem.writeFile({
+                path: `${ANDROID_DOWNLOADS_DIR}/${safeName}`,
+                data: base64Data,
+                directory: Directory.ExternalStorage,
+                recursive: true,
+            });
+            return {
+                location: 'downloads',
+                filename: safeName,
+                uri: savedFile?.uri || null,
+                directory: Directory.ExternalStorage,
+                path: `${ANDROID_DOWNLOADS_DIR}/${safeName}`
+            };
+        } catch (error) {
+            console.warn('External storage write failed, falling back to documents:', error?.message || error);
+        }
+    }
+
+    const savedFile = await Filesystem.writeFile({
+        path: safeName,
+        data: base64Data,
+        directory: Directory.Documents,
+        recursive: true,
+    });
+    return {
+        location: 'documents',
+        filename: safeName,
+        uri: savedFile?.uri || null,
+        directory: Directory.Documents,
+        path: safeName
+    };
+}
+
+async function resolveNativeFileUri(saved) {
+    if (!saved) return null;
+    if (saved.uri) return saved.uri;
+    if (saved.directory && saved.path && typeof Filesystem.getUri === 'function') {
+        try {
+            const res = await Filesystem.getUri({
+                directory: saved.directory,
+                path: saved.path
+            });
+            return res?.uri || null;
+        } catch (_) { }
+    }
+    return null;
+}
+
+async function presentNativeFileAction(saved) {
+    try {
+        const uri = await resolveNativeFileUri(saved);
+        if (!uri) return;
+        const share = Capacitor.Plugins?.Share;
+        if (share?.share) {
+            await share.share({
+                title: saved?.filename || 'export',
+                url: uri
+            });
+            return;
+        }
+        try {
+            await App.openUrl({ url: uri });
+            return;
+        } catch (_) { }
+        try {
+            const webUri = Capacitor.convertFileSrc(uri);
+            if (webUri) {
+                await App.openUrl({ url: webUri });
+            }
+        } catch (_) { }
+    } catch (_) { }
+}
+
+function registerNativeBlobSaver() {
+    try {
+        if (typeof window === 'undefined' || !isNativeApp) return;
+        window.__saveFileFromBlob = async (blob, filename) => {
+            const saved = await saveBlobToNativeFile(blob, filename);
+            await presentNativeFileAction(saved);
+            return true;
+        };
+    } catch (_) { }
+}
+
+registerNativeBlobSaver();
 
 async function saveImageToGallery(base64Data, filename) {
     const platform = Capacitor.getPlatform();
@@ -1999,7 +2705,7 @@ async function downloadImage(imageUrl, description) {
 
     if (isNativeApp) {
         try {
-            await ensureStoragePermission();
+            await ensureStorageAccess({ strict: true });
             const { response } = await fetchWithCdnFallback(targetUrl, { timeoutMs: ACCEL_FETCH_TIMEOUT_MS });
             const blob = await response.blob();
             const base64Data = await blobToBase64(blob);
@@ -2130,6 +2836,744 @@ function buildCopyTextFromContent(contentDiv) {
     return text;
 }
 
+function sanitizeExportFilename(name) {
+    const cleaned = String(name || '').trim() || 'chat';
+    return cleaned.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
+}
+
+function getAssistantIndexForMessage(messageElement) {
+    if (!messageElement || !elements?.chatContainer) return 1;
+    const assistantMessages = Array.from(elements.chatContainer.querySelectorAll('.message.assistant'));
+    const index = assistantMessages.indexOf(messageElement);
+    return index >= 0 ? index + 1 : 1;
+}
+
+function normalizeMessageContentForExport(message) {
+    if (!message) return '';
+    const content = message.content;
+    if (message.role === 'user') {
+        if (Array.isArray(content)) {
+            return buildResearchTextFromUserContent(content) || extractTextFromUserContent(content);
+        }
+        if (content && Array.isArray(content.content)) {
+            return buildResearchTextFromUserContent(content.content) || extractTextFromUserContent(content);
+        }
+        return extractTextFromUserContent(content);
+    }
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content) || (content && Array.isArray(content.content))) {
+        return extractTextFromUserContent(content);
+    }
+    return content == null ? '' : String(content);
+}
+
+function groupChatMessagesByTurn(messages) {
+    const blocks = [];
+    let current = { users: [], assistants: [] };
+
+    const pushCurrent = () => {
+        if (!current.users.length && !current.assistants.length) return;
+        blocks.push(current);
+        current = { users: [], assistants: [] };
+    };
+
+    messages.forEach((message) => {
+        if (!message) return;
+        const content = normalizeMessageContentForExport(message).trim();
+        if (!content) return;
+        if (message.role !== 'assistant') {
+            if (current.assistants.length) {
+                pushCurrent();
+            }
+            current.users.push(message);
+            return;
+        }
+        current.assistants.push(message);
+    });
+
+    pushCurrent();
+    return blocks;
+}
+
+function buildChatExportText(chat) {
+    const messages = Array.isArray(chat?.messages) ? chat.messages : [];
+    const blocks = groupChatMessagesByTurn(messages);
+    const lines = [];
+    blocks.forEach((block) => {
+        const userTexts = block.users
+            .map((message) => normalizeMessageContentForExport(message).trim())
+            .filter(Boolean);
+        const assistantTexts = block.assistants
+            .map((message) => normalizeMessageContentForExport(message).trim())
+            .filter(Boolean);
+        if (userTexts.length) {
+            lines.push(`User:\n${userTexts.join('\n')}`);
+        }
+        if (assistantTexts.length) {
+            lines.push(`Assistant:\n${assistantTexts.join('\n')}`);
+        }
+    });
+    return lines.join('\n\n');
+}
+
+function buildChatExportContainer(chat, labels) {
+    const container = document.createElement('div');
+    const messages = Array.isArray(chat?.messages) ? chat.messages : [];
+    const blocks = groupChatMessagesByTurn(messages);
+    const wrapLatexForExport = (content) => {
+        if (!mathRenderer || typeof content !== 'string') return content;
+        return mathRenderer.wrapBareInlineLatexCommands(content);
+    };
+    const buildUserExportContent = (message) => {
+        const wrap = document.createElement('div');
+        const rawText = extractTextFromUserContent(message?.content || message) || '';
+        const firstLine = rawText.split('\n')[0] || '';
+        if (firstLine.trim()) {
+            const line = document.createElement('p');
+            line.textContent = firstLine;
+            wrap.appendChild(line);
+        }
+
+        const parts = Array.isArray(message?.content)
+            ? message.content
+            : (message?.content && Array.isArray(message.content.content) ? message.content.content : []);
+        if (!Array.isArray(parts) || parts.length === 0) {
+            return wrap;
+        }
+
+        let appendedFile = false;
+        parts.forEach((part, index) => {
+            if (part?.type === 'file') {
+                const filename = part.filename || 'attachment';
+                const divider = document.createElement('p');
+                divider.textContent = `------${filename}------`;
+                divider.setAttribute('data-export-file-name', 'true');
+                wrap.appendChild(divider);
+
+                const contentLine = document.createElement('p');
+                contentLine.textContent = part.content || '';
+                contentLine.setAttribute('data-export-file-content', 'true');
+                wrap.appendChild(contentLine);
+
+                appendedFile = true;
+                const isLastFile = parts.slice(index + 1).every(next => next?.type !== 'file');
+                if (!isLastFile) {
+                    const spacer = document.createElement('p');
+                    spacer.textContent = '';
+                    spacer.setAttribute('data-export-spacer', 'true');
+                    wrap.appendChild(spacer);
+                }
+            } else if (part?.type === 'image_url' && part.image_url?.url) {
+                const img = document.createElement('img');
+                img.src = part.image_url.url;
+                img.alt = part.filename || 'image';
+                wrap.appendChild(img);
+            }
+        });
+
+        if (!appendedFile && !firstLine.trim() && rawText.trim()) {
+            const line = document.createElement('p');
+            line.textContent = rawText.trim();
+            wrap.appendChild(line);
+        }
+        return wrap;
+    };
+
+    if (!blocks.length && messages.length) {
+        messages.forEach((message) => {
+            const heading = document.createElement('h3');
+            heading.textContent = message.role === 'assistant' ? labels.assistant : labels.user;
+            heading.setAttribute('data-export-role', message.role === 'assistant' ? 'assistant' : 'user');
+            container.appendChild(heading);
+            if (message.role === 'assistant') {
+                const messageWrap = document.createElement('div');
+                renderMessageContent(messageWrap, wrapLatexForExport(message.content), message.citations || null, true);
+                container.appendChild(messageWrap);
+                return;
+            }
+            container.appendChild(buildUserExportContent(message));
+        });
+        return container;
+    }
+    blocks.forEach((block, blockIndex) => {
+        if (block.users.length) {
+            const heading = document.createElement('h3');
+            heading.textContent = labels.user;
+            heading.setAttribute('data-export-role', 'user');
+            container.appendChild(heading);
+            block.users.forEach((message) => {
+                container.appendChild(buildUserExportContent(message));
+            });
+        }
+        if (block.assistants.length) {
+            const heading = document.createElement('h3');
+            heading.textContent = labels.assistant;
+            heading.setAttribute('data-export-role', 'assistant');
+            container.appendChild(heading);
+            block.assistants.forEach((message) => {
+                const messageWrap = document.createElement('div');
+                renderMessageContent(messageWrap, wrapLatexForExport(message.content), message.citations || null, true);
+                container.appendChild(messageWrap);
+            });
+        }
+    });
+    return container;
+}
+
+async function ensureChatMessagesForExport(chatId, options = {}) {
+    const chat = chats[chatId];
+    if (!chat) return false;
+    const forceRefresh = !!options.forceRefresh;
+    const hasMessages = Array.isArray(chat.messages) && chat.messages.length > 0;
+    if (hasMessages && !forceRefresh) return true;
+    if (!currentUser) return hasMessages;
+    try {
+        const result = await makeApiRequest(`chats/messages?conversationId=${chatId}`, {
+            suppressAutoLogout: true,
+            timeoutMs: 30000
+        });
+        if (result && result.success && Array.isArray(result.messages)) {
+            if (!hasMessages || result.messages.length >= chat.messages.length) {
+                chat.messages = result.messages;
+            }
+            return chat.messages.length > 0;
+        }
+    } catch (error) {
+        console.warn(`Failed to fetch messages for export (${chatId}):`, error);
+    }
+    return hasMessages;
+}
+
+async function exportMessageAsDocx({ messageElement, contentDiv, messageObject }) {
+    const chat = chats[currentChatId] || {};
+    const title = sanitizeExportFilename(chat.title || getToastMessage('ui.untitled'));
+    const assistantIndex = getAssistantIndexForMessage(messageElement);
+    const filename = `${title}-${assistantIndex}.docx`;
+    const labels = {
+        assistant: getToastMessage('ui.exportRoleAssistant'),
+        user: getToastMessage('ui.exportRoleUser'),
+        imageUnavailable: getToastMessage('ui.exportImageUnavailable')
+    };
+    const locale = currentUser?.language || getCurrentLanguage();
+    const exportContentDiv = document.createElement('div');
+    let needsRender = true;
+    if (contentDiv) {
+        const clonedContent = contentDiv.cloneNode(true);
+        exportContentDiv.appendChild(clonedContent);
+        if ((clonedContent.textContent || '').trim()) {
+            needsRender = false;
+        }
+    }
+    if (needsRender) {
+        const exportContent = (mathRenderer && typeof messageObject?.content === 'string')
+            ? mathRenderer.wrapBareInlineLatexCommands(messageObject.content)
+            : messageObject?.content;
+        renderMessageContent(exportContentDiv, exportContent, messageObject?.citations || null, true);
+    }
+    const exportHost = document.createElement('div');
+    exportHost.style.position = 'fixed';
+    exportHost.style.left = '-9999px';
+    exportHost.style.top = '-9999px';
+    exportHost.style.width = '1200px';
+    exportHost.style.pointerEvents = 'none';
+    exportHost.appendChild(exportContentDiv);
+    document.body.appendChild(exportHost);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await renderMathForExport(exportContentDiv);
+    await Promise.allSettled([
+        waitForAllMermaidRendersLazy(),
+        waitForAllVegaLiteRendersLazy()
+    ]);
+    let text = buildCopyTextFromContent(exportContentDiv).trim();
+    if (!text) {
+        text = normalizeMessageContentForExport(messageObject);
+    }
+    try {
+        await exportTextAsDocxLazy({ text, filename, loadScript, contentElement: exportContentDiv, labels, headerTitle: title, locale });
+    } finally {
+        exportHost.remove();
+    }
+}
+
+async function exportMessageAsPdf({ messageElement, contentDiv, messageObject }) {
+    const chat = chats[currentChatId] || {};
+    const title = sanitizeExportFilename(chat.title || getToastMessage('ui.untitled'));
+    const assistantIndex = getAssistantIndexForMessage(messageElement);
+    const filename = `${title}-${assistantIndex}.pdf`;
+    const labels = {
+        assistant: getToastMessage('ui.exportRoleAssistant'),
+        user: getToastMessage('ui.exportRoleUser'),
+        imageUnavailable: getToastMessage('ui.exportImageUnavailable')
+    };
+    const locale = currentUser?.language || getCurrentLanguage();
+    const exportContentDiv = document.createElement('div');
+    let needsRender = true;
+    if (contentDiv) {
+        const clonedContent = contentDiv.cloneNode(true);
+        exportContentDiv.appendChild(clonedContent);
+        if ((clonedContent.textContent || '').trim()) {
+            needsRender = false;
+        }
+    }
+    if (needsRender) {
+        const exportContent = (mathRenderer && typeof messageObject?.content === 'string')
+            ? mathRenderer.wrapBareInlineLatexCommands(messageObject.content)
+            : messageObject?.content;
+        renderMessageContent(exportContentDiv, exportContent, messageObject?.citations || null, true);
+    }
+    const exportHost = document.createElement('div');
+    exportHost.style.position = 'fixed';
+    exportHost.style.left = '-9999px';
+    exportHost.style.top = '-9999px';
+    exportHost.style.width = '1200px';
+    exportHost.style.pointerEvents = 'none';
+    exportHost.appendChild(exportContentDiv);
+    document.body.appendChild(exportHost);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await renderMathForExport(exportContentDiv);
+    await Promise.allSettled([
+        waitForAllMermaidRendersLazy(),
+        waitForAllVegaLiteRendersLazy()
+    ]);
+    let text = buildCopyTextFromContent(exportContentDiv).trim();
+    if (!text) {
+        text = normalizeMessageContentForExport(messageObject);
+    }
+    try {
+        await exportTextAsPdfLazy({ text, filename, loadScript, contentElement: exportContentDiv, labels, headerTitle: title, locale });
+    } finally {
+        exportHost.remove();
+    }
+}
+
+async function exportMessageAsPpt({ messageElement, contentDiv, messageObject }) {
+    const chat = chats[currentChatId] || {};
+    const title = sanitizeExportFilename(chat.title || getToastMessage('ui.untitled'));
+    const assistantIndex = getAssistantIndexForMessage(messageElement);
+    const filename = `${title}-${assistantIndex}`;
+    const labels = {
+        assistant: getToastMessage('ui.exportRoleAssistant'),
+        user: getToastMessage('ui.exportRoleUser'),
+        imageUnavailable: getToastMessage('ui.exportImageUnavailable')
+    };
+    const locale = currentUser?.language || getCurrentLanguage();
+    const exportContentDiv = document.createElement('div');
+    let needsRender = true;
+    if (contentDiv) {
+        const clonedContent = contentDiv.cloneNode(true);
+        exportContentDiv.appendChild(clonedContent);
+        if ((clonedContent.textContent || '').trim()) {
+            needsRender = false;
+        }
+    }
+    if (needsRender) {
+        const exportContent = (mathRenderer && typeof messageObject?.content === 'string')
+            ? mathRenderer.wrapBareInlineLatexCommands(messageObject.content)
+            : messageObject?.content;
+        renderMessageContent(exportContentDiv, exportContent, messageObject?.citations || null, true);
+    }
+    const exportHost = document.createElement('div');
+    exportHost.style.position = 'fixed';
+    exportHost.style.left = '-9999px';
+    exportHost.style.top = '-9999px';
+    exportHost.style.width = '1200px';
+    exportHost.style.pointerEvents = 'none';
+    exportHost.appendChild(exportContentDiv);
+    document.body.appendChild(exportHost);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await renderMathForExport(exportContentDiv);
+    await Promise.allSettled([
+        waitForAllMermaidRendersLazy(),
+        waitForAllVegaLiteRendersLazy()
+    ]);
+    let text = buildCopyTextFromContent(exportContentDiv).trim();
+    if (!text) {
+        text = normalizeMessageContentForExport(messageObject);
+    }
+    try {
+        await exportTextAsPptLazy({ text, filename, loadScript, contentElement: exportContentDiv, labels, headerTitle: title, locale });
+    } finally {
+        exportHost.remove();
+    }
+}
+
+async function exportMessageAsExcel({ messageElement, contentDiv, messageObject }) {
+    const chat = chats[currentChatId] || {};
+    const title = sanitizeExportFilename(chat.title || getToastMessage('ui.untitled'));
+    const assistantIndex = getAssistantIndexForMessage(messageElement);
+    const filename = `${title}-${assistantIndex}.xlsx`;
+    const labels = {
+        assistant: getToastMessage('ui.exportRoleAssistant'),
+        user: getToastMessage('ui.exportRoleUser'),
+        imageUnavailable: getToastMessage('ui.exportImageUnavailable')
+    };
+    const locale = currentUser?.language || getCurrentLanguage();
+    const exportContentDiv = document.createElement('div');
+    let needsRender = true;
+    if (contentDiv) {
+        const clonedContent = contentDiv.cloneNode(true);
+        exportContentDiv.appendChild(clonedContent);
+        if ((clonedContent.textContent || '').trim()) {
+            needsRender = false;
+        }
+    }
+    if (needsRender) {
+        const exportContent = (mathRenderer && typeof messageObject?.content === 'string')
+            ? mathRenderer.wrapBareInlineLatexCommands(messageObject.content)
+            : messageObject?.content;
+        renderMessageContent(exportContentDiv, exportContent, messageObject?.citations || null, true);
+    }
+    const exportHost = document.createElement('div');
+    exportHost.style.position = 'fixed';
+    exportHost.style.left = '-9999px';
+    exportHost.style.top = '-9999px';
+    exportHost.style.width = '1200px';
+    exportHost.style.pointerEvents = 'none';
+    exportHost.appendChild(exportContentDiv);
+    document.body.appendChild(exportHost);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await renderMathForExport(exportContentDiv);
+    await Promise.allSettled([
+        waitForAllMermaidRendersLazy(),
+        waitForAllVegaLiteRendersLazy()
+    ]);
+    let text = buildCopyTextFromContent(exportContentDiv).trim();
+    if (!text) {
+        text = normalizeMessageContentForExport(messageObject);
+    }
+    try {
+        await exportTextAsExcelLazy({
+            text,
+            filename,
+            loadScript,
+            contentElement: exportContentDiv,
+            labels,
+            headerTitle: title,
+            locale,
+            messageObject,
+            exportType: 'message'
+        });
+    } finally {
+        exportHost.remove();
+    }
+}
+
+async function exportChatAsDocx(chatId) {
+    const chat = chats[chatId];
+    if (!chat) return;
+    await ensureChatMessagesForExport(chatId, { forceRefresh: true });
+    const title = sanitizeExportFilename(chat.title || getToastMessage('ui.untitled'));
+    const filename = `${title}-chat.docx`;
+    const text = buildChatExportText(chat);
+    const labels = {
+        assistant: getToastMessage('ui.exportRoleAssistant'),
+        user: getToastMessage('ui.exportRoleUser'),
+        imageUnavailable: getToastMessage('ui.exportImageUnavailable')
+    };
+    const locale = currentUser?.language || getCurrentLanguage();
+    const contentElement = document.createElement('div');
+    const heading = document.createElement('h1');
+    heading.textContent = title;
+    contentElement.appendChild(heading);
+    contentElement.appendChild(buildChatExportContainer(chat, labels));
+    const exportHost = document.createElement('div');
+    exportHost.style.position = 'fixed';
+    exportHost.style.left = '-9999px';
+    exportHost.style.top = '-9999px';
+    exportHost.style.width = '1200px';
+    exportHost.style.pointerEvents = 'none';
+    exportHost.appendChild(contentElement);
+    document.body.appendChild(exportHost);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await renderMathForExport(contentElement);
+    await Promise.allSettled([
+        waitForAllMermaidRendersLazy(),
+        waitForAllVegaLiteRendersLazy()
+    ]);
+    try {
+        await exportTextAsDocxLazy({ text, filename, loadScript, contentElement, labels, headerTitle: title, locale });
+    } finally {
+        exportHost.remove();
+    }
+}
+
+async function exportChatAsExcel(chatId) {
+    const chat = chats[chatId];
+    if (!chat) return;
+    await ensureChatMessagesForExport(chatId, { forceRefresh: true });
+    const title = sanitizeExportFilename(chat.title || getToastMessage('ui.untitled'));
+    const filename = `${title}-chat.xlsx`;
+    const text = buildChatExportText(chat);
+    const labels = {
+        assistant: getToastMessage('ui.exportRoleAssistant'),
+        user: getToastMessage('ui.exportRoleUser'),
+        imageUnavailable: getToastMessage('ui.exportImageUnavailable')
+    };
+    const locale = currentUser?.language || getCurrentLanguage();
+    const contentElement = document.createElement('div');
+    const heading = document.createElement('h1');
+    heading.textContent = title;
+    contentElement.appendChild(heading);
+    contentElement.appendChild(buildChatExportContainer(chat, labels));
+    const exportHost = document.createElement('div');
+    exportHost.style.position = 'fixed';
+    exportHost.style.left = '-9999px';
+    exportHost.style.top = '-9999px';
+    exportHost.style.width = '1200px';
+    exportHost.style.pointerEvents = 'none';
+    exportHost.appendChild(contentElement);
+    document.body.appendChild(exportHost);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await renderMathForExport(contentElement);
+    await Promise.allSettled([
+        waitForAllMermaidRendersLazy(),
+        waitForAllVegaLiteRendersLazy()
+    ]);
+    try {
+        await exportTextAsExcelLazy({
+            text,
+            filename,
+            loadScript,
+            contentElement,
+            labels,
+            headerTitle: title,
+            locale,
+            chatMessages: chat.messages || [],
+            exportType: 'chat'
+        });
+    } finally {
+        exportHost.remove();
+    }
+}
+
+async function exportChatAsPdf(chatId) {
+    const chat = chats[chatId];
+    if (!chat) return;
+    await ensureChatMessagesForExport(chatId, { forceRefresh: true });
+    const title = sanitizeExportFilename(chat.title || getToastMessage('ui.untitled'));
+    const filename = `${title}-chat.pdf`;
+    const labels = {
+        assistant: getToastMessage('ui.exportRoleAssistant'),
+        user: getToastMessage('ui.exportRoleUser'),
+        imageUnavailable: getToastMessage('ui.exportImageUnavailable')
+    };
+    const locale = currentUser?.language || getCurrentLanguage();
+    const contentElement = document.createElement('div');
+    const heading = document.createElement('h1');
+    heading.textContent = title;
+    contentElement.appendChild(heading);
+    contentElement.appendChild(buildChatExportContainer(chat, labels));
+    const exportHost = document.createElement('div');
+    exportHost.style.position = 'fixed';
+    exportHost.style.left = '-9999px';
+    exportHost.style.top = '-9999px';
+    exportHost.style.width = '1200px';
+    exportHost.style.pointerEvents = 'none';
+    exportHost.appendChild(contentElement);
+    document.body.appendChild(exportHost);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await renderMathForExport(contentElement);
+    await Promise.allSettled([
+        waitForAllMermaidRendersLazy(),
+        waitForAllVegaLiteRendersLazy()
+    ]);
+    try {
+        await exportTextAsPdfLazy({ filename, loadScript, contentElement, labels, headerTitle: title, locale });
+    } finally {
+        exportHost.remove();
+    }
+}
+
+async function exportChatAsPpt(chatId) {
+    const chat = chats[chatId];
+    if (!chat) return;
+    await ensureChatMessagesForExport(chatId, { forceRefresh: true });
+    const title = sanitizeExportFilename(chat.title || getToastMessage('ui.untitled'));
+    const filename = `${title}-chat`;
+    const text = buildChatExportText(chat);
+    const labels = {
+        assistant: getToastMessage('ui.exportRoleAssistant'),
+        user: getToastMessage('ui.exportRoleUser'),
+        imageUnavailable: getToastMessage('ui.exportImageUnavailable')
+    };
+    const locale = currentUser?.language || getCurrentLanguage();
+    const contentElement = document.createElement('div');
+    const heading = document.createElement('h1');
+    heading.textContent = title;
+    contentElement.appendChild(heading);
+    contentElement.appendChild(buildChatExportContainer(chat, labels));
+    const exportHost = document.createElement('div');
+    exportHost.style.position = 'fixed';
+    exportHost.style.left = '-9999px';
+    exportHost.style.top = '-9999px';
+    exportHost.style.width = '1200px';
+    exportHost.style.pointerEvents = 'none';
+    exportHost.appendChild(contentElement);
+    document.body.appendChild(exportHost);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await renderMathForExport(contentElement);
+    await Promise.allSettled([
+        waitForAllMermaidRendersLazy(),
+        waitForAllVegaLiteRendersLazy()
+    ]);
+    try {
+        await exportTextAsPptLazy({ text, filename, loadScript, contentElement, labels, headerTitle: title, locale });
+    } finally {
+        exportHost.remove();
+    }
+}
+
+let isExportToastPending = false;
+
+async function handleMessageExport(format, options) {
+    if (isExportToastPending) return;
+    isExportToastPending = true;
+    showToast(getToastMessage('toast.exportInProgress'), 'info');
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    isExportToastPending = false;
+    try {
+        if (format === 'word') {
+            await exportMessageAsDocx(options);
+            return;
+        }
+        if (format === 'pdf') {
+            await exportMessageAsPdf(options);
+            return;
+        }
+        if (format === 'excel') {
+            await exportMessageAsExcel(options);
+            return;
+        }
+        if (format === 'ppt') {
+            await exportMessageAsPpt(options);
+            return;
+        }
+    } catch (error) {
+        console.error('Message export failed:', error);
+        showToast(getToastMessage('toast.exportFileFailed'), 'error');
+    }
+}
+
+async function handleChatExport(format, chatIds) {
+    if (format !== 'word' && format !== 'pdf' && format !== 'ppt' && format !== 'excel') return;
+    if (isExportToastPending) return;
+    isExportToastPending = true;
+    showToast(getToastMessage('toast.exportInProgress'), 'info');
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    isExportToastPending = false;
+    const ids = Array.isArray(chatIds) ? chatIds : [];
+    for (const chatId of ids) {
+        try {
+            if (format === 'word') {
+                await exportChatAsDocx(chatId);
+            } else if (format === 'pdf') {
+                await exportChatAsPdf(chatId);
+            } else if (format === 'excel') {
+                await exportChatAsExcel(chatId);
+            } else if (format === 'ppt') {
+                await exportChatAsPpt(chatId);
+            }
+        } catch (error) {
+            console.error('Chat export failed:', error);
+            showToast(getToastMessage('toast.exportFileFailed'), 'error');
+        }
+    }
+}
+
+const exportFormatModalState = {
+    onSelect: null,
+    onCancel: null
+};
+
+function setExportFormatLoading(activeButton, isLoading) {
+    const overlay = document.getElementById('export-format-modal-overlay');
+    if (!overlay) return;
+    overlay.querySelectorAll('[data-export-format]').forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) return;
+        const isTarget = button === activeButton;
+        button.disabled = isLoading && !isTarget;
+        button.classList.toggle('is-loading', isLoading && isTarget);
+        button.setAttribute('aria-busy', isLoading && isTarget ? 'true' : 'false');
+    });
+}
+
+function closeExportFormatModal(options = {}) {
+    const overlay = document.getElementById('export-format-modal-overlay');
+    if (!overlay) return;
+    overlay.classList.remove('visible');
+    if (!options.skipCancel && typeof exportFormatModalState.onCancel === 'function') {
+        exportFormatModalState.onCancel();
+    }
+    exportFormatModalState.onSelect = null;
+    exportFormatModalState.onCancel = null;
+}
+
+function openExportFormatModal(onSelect, onCancel) {
+    const overlay = document.getElementById('export-format-modal-overlay');
+    if (!overlay) return;
+    exportFormatModalState.onSelect = typeof onSelect === 'function' ? onSelect : null;
+    exportFormatModalState.onCancel = typeof onCancel === 'function' ? onCancel : null;
+    overlay.classList.add('visible');
+}
+
+function setupExportFormatModal() {
+    const overlay = document.getElementById('export-format-modal-overlay');
+    if (!overlay || overlay.dataset.bound === 'true') return;
+    overlay.dataset.bound = 'true';
+
+    const closeBtn = document.getElementById('export-format-close-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => closeExportFormatModal());
+    }
+
+    overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) {
+            closeExportFormatModal();
+        }
+    });
+
+    overlay.querySelectorAll('[data-export-format]').forEach((button) => {
+        button.addEventListener('click', async () => {
+            const format = button.dataset.exportFormat;
+            const onSelect = exportFormatModalState.onSelect;
+            if (typeof onSelect === 'function' && format) {
+                setExportFormatLoading(button, true);
+                try {
+                    await onSelect(format);
+                    closeExportFormatModal({ skipCancel: true });
+                } finally {
+                    setExportFormatLoading(button, false);
+                }
+            }
+        });
+    });
+}
+
+function updateBatchExportActions() {
+    const actions = document.querySelector('.subscription-export-actions');
+    if (!actions) return;
+    const shouldShow = exportBatchActionMode === 'batch' &&
+        exportMultiSelectActive;
+    actions.classList.toggle('show-batch-actions', shouldShow);
+}
+
+function resetExportSelection() {
+    exportBatchActionMode = 'none';
+    setExportMultiSelectActive(false);
+}
+
+function closeMessageExportMenus(exceptMenu = null) {
+    document.querySelectorAll('.message-export-menu.visible').forEach(menu => {
+        if (menu !== exceptMenu) {
+            menu.classList.remove('visible');
+            const btn = menu.closest('.message-export')?.querySelector('.message-export-btn');
+            if (btn) {
+                btn.setAttribute('aria-expanded', 'false');
+            }
+        }
+    });
+}
+
 let currentLoadChatId = 0;
 let currentUser = null;
 let sessionId = localStorage.getItem('sessionId');
@@ -2149,12 +3593,16 @@ let isRestoring = false;
 let isImageModeActive = false;
 let isSearchModeActive = false;
 let isResearchModeActive = false;
+let isMindmapModeActive = false;
 let filesCurrentlyProcessing = 0;
 let attachmentIdCounter = 0;
 let activeResponses = new Map();
 let currentVerificationEmail = null;
 let isMultiSelectMode = false;
 const selectedChatIds = new Set();
+let exportMultiSelectActive = false;
+const selectedExportChatIds = new Set();
+let exportBatchActionMode = 'none';
 let backPressExitReady = false;
 let backPressExitTimer = null;
 let isHandlingBackNavigation = false;
@@ -2219,8 +3667,24 @@ const appReadyPromise = new Promise(resolve => {
 });
 let pendingMessage = null;
 let lastSettingsPage = null;
+let lastSubscriptionPage = DEFAULT_SUBSCRIPTION_SECTION;
+let lastSubscriptionManageTab = null;
+let lastSubscriptionOriginRoute = null;
+let subscriptionAutoRenewUpdating = false;
+let subscriptionUiInitialized = false;
+let relayConfigLoaded = false;
+let relayConfigLoading = false;
+let relayHasValidCheck = false;
+let relayIsEnabled = false;
+let relayConfigPromise = null;
+const RELAY_MODEL_STORAGE_PREFIX = 'relay_models_';
+const RELAY_MODEL_SELECTED_PREFIX = 'relay_models_selected_';
+const relayModelCache = new Map();
+const relaySelectedCache = new Map();
 let weeklyTimerInterval = null;
 let weeklyFeatureStatus = { can_use: true, expires_at: null, loaded: false };
+
+const PENDING_TURN_STORAGE_KEY = 'pending_turn_cleanup';
 
 let globalCleanupFunctions = [];
 let isInitializing = false;
@@ -2242,11 +3706,12 @@ function performGlobalCleanup() {
 
 let aiParameters = {
     systemPrompt: '',
-    temperature: 0.5,
+    temperature: 1,
     topK: 40,
     topP: 0.95,
     taskPreset: ''
 };
+
 
 class ResourceLoader {
     constructor() {
@@ -2320,7 +3785,6 @@ class SimpleCache {
 }
 
 const simpleCache = new SimpleCache();
-
 async function notifyBackendCacheInvalidation(operation, data = {}) {
     try {
         await fetch('/api/cache-invalidation', {
@@ -2337,23 +3801,30 @@ async function notifyBackendCacheInvalidation(operation, data = {}) {
     }
 }
 
-
-async function preloadChatContents(chatList, userId) {
+async function preloadChatContents(chatList, userId, options = {}) {
     try {
-        const chatIds = Object.keys(chatList);
+        const targetIds = Array.isArray(options?.targetIds) && options.targetIds.length
+            ? options.targetIds
+            : null;
+        const timeoutMs = Number(options?.timeoutMs) || 0;
+        const chatIds = targetIds || Object.keys(chatList);
         const batchSize = 5;
 
         for (let i = 0; i < chatIds.length; i += batchSize) {
             const batch = chatIds.slice(i, i + batchSize);
             const promises = batch.map(async (chatId) => {
                 const chat = chatList[chatId];
+                if (!chat) return;
                 let messagesLoaded = Array.isArray(chat.messages) && chat.messages.length > 0;
                 if (!chat.messages || chat.messages.length === 0) {
                     try {
-                        const result = await makeApiRequest(`chats/messages?conversationId=${chatId}`);
-                        if (result.success && result.messages) {
-                            chat.messages = result.messages;
-                            messagesLoaded = true;
+                        const result = await makeApiRequest(`chats/messages?conversationId=${chatId}`, timeoutMs
+                            ? { timeoutMs, retries: 0 }
+                            : undefined);
+                        if (result.success) {
+                            const resolved = pickSafeFetchedMessages(result, chat.messages, 'preload-chat');
+                            chat.messages = mergeFetchedMessagesWithLocalMetadata(resolved.messages, chat.messages);
+                            messagesLoaded = Array.isArray(chat.messages) && chat.messages.length > 0;
                         }
                     } catch (error) {
                         console.warn(`Failed to preload messages for chat ${chatId}:`, error);
@@ -2387,25 +3858,215 @@ async function preloadChatContents(chatList, userId) {
     }
 }
 
+async function syncChatFingerprintsOnStartup() {
+    if (!currentUser) return;
+    try {
+        const cachedChats = await getChatsFromDB(currentUser.id);
+        if (cachedChats) {
+            scheduleClientMessageIdBackfill(currentUser.id, cachedChats);
+        }
+
+        const result = await makeApiRequest('chats/conversations', {
+            suppressAutoLogout: true,
+            timeoutMs: CHAT_FINGERPRINT_SYNC_TIMEOUT_MS,
+            retries: 0
+        });
+
+        if (!result?.success) return;
+
+        const serverChats = {};
+        for (const conv of result.conversations || []) {
+            serverChats[conv.id] = {
+                id: conv.id,
+                title: conv.title,
+                model_name: conv.model_name,
+                created_at: conv.created_at,
+                updated_at: conv.updated_at,
+                last_device_fp: conv.last_device_fp || null,
+                isBridge: !!conv.is_bridge,
+                parent_chat_id: conv.parent_chat_id || null,
+                bridge_enabled: conv.bridge_enabled ? 1 : 0,
+                messages: []
+            };
+        }
+
+        if (Object.keys(serverChats).length === 0) return;
+
+        const deviceFingerprint = await getDeviceFingerprint();
+        if (!deviceFingerprint) return;
+
+        const mergedChats = cachedChats && typeof cachedChats === 'object' ? { ...cachedChats } : {};
+        const targets = [];
+
+        for (const [chatId, serverChat] of Object.entries(serverChats)) {
+            if (!serverChat || String(chatId).startsWith('temp_')) {
+                continue;
+            }
+            const localChat = mergedChats[chatId];
+            const merged = {
+                ...(localChat || {}),
+                ...serverChat,
+                messages: localChat?.messages || [],
+                docAttachments: Array.isArray(localChat?.docAttachments) ? localChat.docAttachments : []
+            };
+            mergedChats[chatId] = merged;
+
+            const lastDeviceFp = serverChat.last_device_fp;
+            if (!lastDeviceFp || lastDeviceFp === deviceFingerprint) {
+                continue;
+            }
+            const shouldSync = !localChat?.messages?.length
+                || isServerChatNewer(localChat?.updated_at, serverChat.updated_at);
+            if (shouldSync) {
+                targets.push(chatId);
+            }
+        }
+
+        if (targets.length > 0) {
+            preloadChatContents(mergedChats, currentUser.id, {
+                targetIds: targets,
+                timeoutMs: CHAT_FINGERPRINT_SYNC_TIMEOUT_MS
+            }).catch(() => { });
+            return;
+        }
+
+        syncChatsFromOtherDevice(serverChats, cachedChats, deviceFingerprint).catch(() => { });
+    } catch (error) {
+        // ignore fingerprint sync failures
+    }
+}
+
 // 使用限制配置
 const GUEST_LIMIT = 5;
 const LOGGED_IN_LIMIT = 15;
 const USAGE_FETCH_TIMEOUT_MS = 10000;
+const USAGE_OPTIMISTIC_TTL_MS = 5000;
+const IMAGE_USAGE_TOKEN_TTL_MS = 60000;
 
-let currentUserUsage = { count: 0, limit: LOGGED_IN_LIMIT, apiMode: 'mixed' };
+let currentUserUsage = {
+    count: 0,
+    limit: LOGGED_IN_LIMIT,
+    apiMode: 'mixed',
+    richDocAnalysisCount: 0,
+    richDocLimit: null,
+    imagesCount: 0,
+    imageLimit: null,
+    cloudSyncCount: 0,
+    cloudSyncLimit: null,
+    cloudSyncWarnAt: null,
+    dailyCharCount: 0,
+    dailyExchangeCount: 0
+};
 let guestUsageStats = { count: 0, limit: GUEST_LIMIT, loaded: false };
 let usageFetchController = null;
 let usageFetchTimeout = null;
 let usageFetchSeq = 0;
+let usageOptimisticFloor = null;
+let usageOptimisticExpiresAt = 0;
+const imageUsageTokens = new Set();
 
 function clampGeneratedTitleWords(title = '') {
     const clean = String(title || '').trim();
     return clean;
 }
 
+function getMessageTextLength(content) {
+    if (!content) return 0;
+    if (typeof content === 'string') return content.length;
+    const normalized = content && typeof content === 'object' && Array.isArray(content.content)
+        ? content.content
+        : content;
+    const text = extractTextFromUserContent(normalized);
+    return text ? text.length : 0;
+}
+
+function isPollinationsImageUrl(url) {
+    if (!url) return false;
+    try {
+        const absoluteUrl = toAbsoluteImageUrl(url) || url;
+        const parsed = new URL(absoluteUrl, window.location.origin);
+        if (parsed.hostname && parsed.hostname.includes('pollinations.ai')) return true;
+        if (parsed.pathname.includes('/api/image-get')) {
+            let key = parsed.searchParams.get('key') || '';
+            try { key = decodeURIComponent(key); } catch (_) { }
+            if (key.startsWith('pollinations/')) return true;
+        }
+    } catch (_) { }
+    return false;
+}
+
+function recordUsageAfterSuccessfulChat({ userMessage, assistantMessage, userContent, countChatUsage = true }) {
+    if (!currentUser || !currentUserUsage) return;
+    const userLen = getMessageTextLength(userMessage?.content ?? userMessage);
+    const assistantLen = getMessageTextLength(assistantMessage?.content ?? assistantMessage);
+    const totalLen = userLen + assistantLen;
+    const isServerFallback = currentUserUsage.apiMode === 'server_fallback';
+    const richDocDelta = (userContent && hasRichDocCidInParts(userContent)) ? 1 : 0;
+
+    if (countChatUsage) {
+        if (isServerFallback) {
+            currentUserUsage.fallbackCount = (Number(currentUserUsage.fallbackCount) || 0) + 1;
+            currentUserUsage.count = currentUserUsage.fallbackCount;
+        } else {
+            currentUserUsage.count = (Number(currentUserUsage.count) || 0) + 1;
+        }
+        currentUserUsage.totalCount = (Number(currentUserUsage.totalCount) || 0) + 1;
+    }
+
+    if (richDocDelta) {
+        currentUserUsage.richDocAnalysisCount = (Number(currentUserUsage.richDocAnalysisCount) || 0) + richDocDelta;
+    }
+    usageOptimisticFloor = {
+        count: Number(currentUserUsage.count) || 0,
+        fallbackCount: Number(currentUserUsage.fallbackCount) || 0,
+        richDocAnalysisCount: Number(currentUserUsage.richDocAnalysisCount) || 0,
+        imagesCount: Number(currentUserUsage.imagesCount) || 0,
+        cloudSyncCount: Number(currentUserUsage.cloudSyncCount) || 0,
+        dailyExchangeCount: Number(currentUserUsage.dailyExchangeCount) || 0
+    };
+    usageOptimisticExpiresAt = Date.now() + USAGE_OPTIMISTIC_TTL_MS;
+
+    updateUsageDisplay();
+    updateSubscriptionLimitsPanel();
+    updateSubscriptionActiveUsageCards();
+}
+
+function recordImageGenerationUsageSuccess(imageUrl, options = {}) {
+    if (!currentUser || !currentUserUsage) return;
+    if (isPollinationsImageUrl(imageUrl)) return;
+
+    const token = options?.token;
+    if (token) {
+        if (imageUsageTokens.has(token)) return;
+        imageUsageTokens.add(token);
+        setTimeout(() => imageUsageTokens.delete(token), IMAGE_USAGE_TOKEN_TTL_MS);
+    }
+
+    const expectedBase = Number.isFinite(options?.expectedBase) ? Number(options.expectedBase) : null;
+    if (expectedBase !== null && (Number(currentUserUsage.imagesCount) || 0) > expectedBase) {
+        return;
+    }
+
+    currentUserUsage.imagesCount = (Number(currentUserUsage.imagesCount) || 0) + 1;
+
+    usageOptimisticFloor = {
+        count: Number(currentUserUsage.count) || 0,
+        fallbackCount: Number(currentUserUsage.fallbackCount) || 0,
+        richDocAnalysisCount: Number(currentUserUsage.richDocAnalysisCount) || 0,
+        imagesCount: Number(currentUserUsage.imagesCount) || 0,
+        cloudSyncCount: Number(currentUserUsage.cloudSyncCount) || 0,
+        dailyExchangeCount: Number(currentUserUsage.dailyExchangeCount) || 0
+    };
+    usageOptimisticExpiresAt = Date.now() + USAGE_OPTIMISTIC_TTL_MS;
+
+    updateUsageDisplay();
+    updateSubscriptionLimitsPanel();
+    updateSubscriptionActiveUsageCards();
+}
+
 // 模型配置
 const models = [
-    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', descKey: 'models.gemini3ProDesc', context_window: 1000000, hasThinkingLevel: true },
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', descKey: 'models.gemini31ProDesc', context_window: 1000000, hasThinkingLevel: true },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', descKey: 'models.gemini25ProDesc', context_window: 1000000 },
     { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', descKey: 'models.gemini3FlashDesc', context_window: 1000000 },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', descKey: 'models.gemini25FlashDesc', context_window: 1000000 },
@@ -2431,37 +4092,188 @@ function getKeyTier() {
     return guestApiState.keyTier || 'free';
 }
 
+function hasActiveSubscription() {
+    if (!currentUser) return false;
+    const normalizedStatus = normalizeSubscriptionStatus(
+        currentUser.subscription_status ??
+        currentUser.subscriptionStatus ??
+        currentUser.subscription_state
+    );
+    return normalizedStatus === 'active';
+}
+
+function hasPaidAccessForUi() {
+    const keyTier = getKeyTier ? getKeyTier() : (currentUser?.keyTier || currentUser?.key_tier || 'free');
+    const hasPaidKey = hasConfiguredApiKeyForUi() && String(keyTier).toLowerCase() === 'paid';
+    return hasActiveSubscription() || hasPaidKey;
+}
+
+function normalizePlanCode(value) {
+    return normalizeEntitlementPlanCode(value);
+}
+
+function getOfficialPlanCodeForUi(state) {
+    if (!state || state.status !== 'active') return null;
+    if (!OFFICIAL_SUBSCRIPTION_SOURCES.has(state.subscriptionSource)) return null;
+    return normalizePlanCode(currentUser?.subscription_plan_code || currentUser?.subscriptionPlanCode || null);
+}
+
+function getRedeemPlanCodeForUi() {
+    return normalizePlanCode(currentUser?.redeem_plan_code || currentUser?.redeemPlanCode || null);
+}
+
+function getEffectivePlanCodeForLimit(state) {
+    if (!state || state.status !== 'active') return null;
+    if (OFFICIAL_SUBSCRIPTION_SOURCES.has(state.subscriptionSource)) {
+        return getOfficialPlanCodeForUi(state) || 'pro';
+    }
+    return getRedeemPlanCodeForUi() || 'pro';
+}
+
+function getCharacterLimitInfo() {
+    const state = resolveSubscriptionState();
+    const isEarlyBird = Number(currentUser?.early_bird) === 1;
+    const planCode = state.status === 'active' ? getEffectivePlanCodeForLimit(state) : null;
+    return getCharacterLimitInfoFromEntitlements({
+        hasPaidKey: state.hasPaidKey,
+        isSubscriptionActive: state.status === 'active',
+        planCode,
+        isEarlyBird
+    });
+}
+
+function getRichDocLimitInfo() {
+    const state = resolveSubscriptionState();
+    const planCode = state.status === 'active' ? getEffectivePlanCodeForLimit(state) : null;
+    return getRichDocLimitInfoFromEntitlements({
+        hasPaidKey: state.hasPaidKey,
+        isSubscriptionActive: state.status === 'active',
+        planCode
+    });
+}
+
+function getLimitFallbacksForUi() {
+    const state = resolveSubscriptionState();
+    const isEarlyBird = Number(currentUser?.early_bird) === 1;
+    const planCode = state.status === 'active' ? getEffectivePlanCodeForLimit(state) : null;
+    const hasKeys = hasConfiguredApiKeyForUi();
+    const keyTier = getKeyTier ? getKeyTier() : (currentUser?.keyTier || currentUser?.key_tier || 'free');
+
+    const chatLimitInfo = getChatLimitInfoFromEntitlements({
+        keyTier,
+        hasCustomKey: hasKeys,
+        isSubscriptionActive: state.status === 'active',
+        planCode,
+        isEarlyBird
+    });
+    const richDocLimitInfo = getRichDocLimitInfoFromEntitlements({
+        hasPaidKey: state.hasPaidKey,
+        isSubscriptionActive: state.status === 'active',
+        planCode
+    });
+    const imageLimitInfo = getImageLimitInfoFromEntitlements({
+        isSubscriptionActive: state.status === 'active'
+    });
+    const cloudSyncLimitInfo = getCloudSyncLimitInfoFromEntitlements({
+        keyTier,
+        hasCustomKey: hasKeys,
+        isSubscriptionActive: state.status === 'active',
+        planCode,
+        isEarlyBird
+    });
+
+    return {
+        chatLimit: chatLimitInfo.limit,
+        richDocLimit: richDocLimitInfo.limit,
+        imageLimit: imageLimitInfo.limit,
+        cloudSyncLimit: cloudSyncLimitInfo.limit,
+        cloudSyncWarnAt: cloudSyncLimitInfo.warnAt ?? null
+    };
+}
+
+function canUseSearchAttachments() {
+    const state = resolveSubscriptionState();
+    return canUseSearchAttachmentsFromEntitlements({
+        hasPaidKey: state.hasPaidKey,
+        isSubscriptionActive: state.status === 'active'
+    });
+}
+
+function shouldAllowRichDocParsing() {
+    if (!currentUser) return true;
+    const { limit } = getRichDocLimitInfo();
+    if (!Number.isFinite(limit)) return true;
+    const used = Number(currentUserUsage?.richDocAnalysisCount) || 0;
+    return used < limit;
+}
+
+function updateSubscriptionIcon() {
+    const subscriptionBtn = document.getElementById('subscription-btn');
+    if (!subscriptionBtn) return;
+    let tier = 'free';
+    const keyTier = getKeyTier ? getKeyTier() : (currentUser?.keyTier || currentUser?.key_tier || 'free');
+    if (hasConfiguredApiKeyForUi() && String(keyTier).toLowerCase() === 'paid') {
+        tier = 'byok';
+    } else if (hasActiveSubscription()) {
+        tier = 'pro';
+    }
+    subscriptionBtn.dataset.subscriptionTier = tier;
+}
+
 function getAvailableModels() {
+    if (relayIsEnabled) {
+        const relayModels = getRelaySelectedModelIds();
+        if (relayModels.length > 0) {
+            return relayModels.map(id => ({ id, name: formatRelayModelLabel(id) }));
+        }
+    }
     const hasConfiguredKey = hasConfiguredApiKeyForUi();
     const keyTier = getKeyTier();
 
     const freeTierModels = models.filter(m => FREE_TIER_MODEL_IDS.includes(m.id));
 
-    if (!currentUser) {
-        // === 访客逻辑 ===
-        if (!hasConfiguredKey || keyTier !== 'paid') {
-            return freeTierModels;
-        }
-        return models.filter(m => FREE_TIER_MODEL_IDS.includes(m.id) || GUEST_PAID_MODEL_IDS.includes(m.id));
-    }
-
-    // === 登录用户逻辑 ===
     if (!hasConfiguredKey || keyTier !== 'paid') {
         return freeTierModels;
     }
+
+    if (!currentUser) {
+        return models.filter(m => FREE_TIER_MODEL_IDS.includes(m.id) || GUEST_PAID_MODEL_IDS.includes(m.id));
+    }
+
     return models;
 }
 
-
 // 模型渲染速度配置
 const modelRenderSpeeds = {
-    'gemini-3-pro-preview': 1,
+    'gemini-3.1-pro-preview': 1,
     'gemini-3-flash-preview': 1.2,
     'gemini-2.5-pro': 1,
     'gemini-2.5-flash': 1.2,
     'gemini-2.5-flash-lite': 2
 };
-// Gemini 3 Pro thinking level 配置
+
+function normalizeModelIdForRender(modelId) {
+    if (!modelId || typeof modelId !== 'string') return '';
+    return modelId
+        .replace(/^[\[\(【{].*?[\]\)】}]\s*/u, '')
+        .replace(/^models\//i, '')
+        .trim();
+}
+
+function getRenderSpeedForModel(modelId) {
+    const normalized = normalizeModelIdForRender(modelId).toLowerCase();
+    if (modelRenderSpeeds[normalized]) {
+        return modelRenderSpeeds[normalized];
+    }
+
+    if (normalized.startsWith('gemini-')) return 1.2;
+    if (normalized.startsWith('claude-')) return 1.8;
+    if (normalized.startsWith('gpt-') || normalized.startsWith('o1') || normalized.startsWith('o3')) return 1.4;
+    if (normalized.startsWith('grok-')) return 1.2;
+    if (normalized.startsWith('deepseek-')) return 2.4;
+    return 1.4;
+}
+// Gemini 3.1 Pro thinking level 配置
 let currentThinkingLevel = 'high';
 
 function hasImageCidInMessages(messages) {
@@ -2506,12 +4318,38 @@ function populateElements() {
     elements.fileViewerCode = document.getElementById('file-viewer-code');
     elements.fileViewerFilename = document.getElementById('file-viewer-filename');
     elements.settingsModal = document.getElementById('settings-modal-overlay');
+    elements.subscriptionModal = document.getElementById('subscription-modal-overlay');
+    elements.subscriptionCloseBtn = document.getElementById('subscription-close-btn');
+    elements.bridgeSettingsModal = document.getElementById('bridge-settings-modal-overlay');
+    elements.bridgeSettingsSaveBtn = document.getElementById('bridge-settings-save-btn');
+    elements.bridgeSettingsCloseBtn = document.getElementById('bridge-settings-close-btn');
+    elements.bridgeSettingsCancelBtn = document.getElementById('bridge-settings-cancel-btn');
+    elements.bridgeSettingsObjectiveInput = document.getElementById('bridge-settings-objective');
+    elements.bridgeSettingsSystemPromptInput = document.getElementById('bridge-settings-system-prompt');
+    elements.bridgeSettingsPresetCards = document.querySelectorAll('.bridge-preset-card');
+    elements.bridgeSettingsAutoSummaryInput = document.getElementById('bridge-settings-auto-summary');
+    elements.bridgeSettingsGenerateOverlay = document.getElementById('bridge-settings-generate-overlay');
+    elements.bridgeSettingsGenerateBtn = document.getElementById('bridge-settings-generate-btn');
+    elements.bridgeSettingsGenerating = document.getElementById('bridge-settings-generating');
+    elements.bridgeSettingsGenerateHint = document.getElementById('bridge-settings-generate-hint');
+    elements.bridgeSettingsNotesInput = document.getElementById('bridge-settings-notes');
+    elements.bridgeSettingsTopicChips = document.querySelectorAll('.bridge-topic-chip');
+    elements.bridgeSettingsHistoryPresetChips = document.querySelectorAll('.bridge-history-preset-chip');
+    elements.bridgeSettingsParentTurnsInput = document.getElementById('bridge-settings-parent-turns');
+    elements.bridgeSettingsParentTurnsBadge = document.getElementById('bridge-settings-parent-turns-badge');
+    elements.bridgeSettingsContextLoading = document.getElementById('bridge-settings-context-loading');
+    elements.bridgeSettingsContextZeroWarning = document.getElementById('bridge-settings-context-zero-warning');
+    elements.bridgeSettingsAdvancedToggle = document.getElementById('bridge-settings-advanced-toggle');
+    elements.bridgeSettingsAdvancedIcon = document.getElementById('bridge-settings-advanced-icon');
+    elements.bridgeSettingsAdvancedContent = document.getElementById('bridge-settings-advanced-content');
     elements.sidebar = document.getElementById('sidebar');
     elements.newChatBtn = document.getElementById('new-chat-btn');
     elements.chatHistoryList = document.getElementById('chat-history');
     elements.chatContainer = document.getElementById('chat-container');
     elements.messageInput = document.getElementById('message-input');
+    elements.messageInputHighlight = document.getElementById('message-input-highlight');
     elements.sendButton = document.getElementById('send-button');
+    elements.slashCommandPanel = document.getElementById('slash-command-panel');
     elements.fileInput = document.getElementById('file-input');
     elements.attachmentsPreview = document.getElementById('attachments-preview');
     elements.quotePreviewContainer = document.getElementById('quote-preview-container');
@@ -2524,11 +4362,13 @@ function populateElements() {
     elements.modelSelectBtn = document.getElementById('model-select-btn');
     elements.selectedModelName = document.getElementById('selected-model-name');
     elements.modelSelectMenu = document.getElementById('model-select-menu');
+    elements.relayModelSelectMenu = document.getElementById('relay-model-select-menu');
     elements.userNameDisplay = document.getElementById('user-name-display-main');
     elements.userInfoPopover = document.getElementById('user-info-popover');
     elements.authContainer = document.getElementById('auth-container-inner');
     elements.customLoginBtn = document.getElementById('custom-login-btn');
     elements.settingsBtn = document.getElementById('settings-btn');
+    elements.subscriptionBtn = document.getElementById('subscription-btn');
     elements.apiKeyInput = document.getElementById('api-key-input');
     elements.apiKeyOneInput = document.getElementById('api-key-one');
     elements.apiKeyTwoInput = document.getElementById('api-key-two');
@@ -2758,6 +4598,27 @@ let backgroundNotificationShown = false;
 let backgroundTasks = new Set();
 let backgroundTaskQueue = [];
 let isProcessingBackgroundTasks = false;
+let streamImageRuntime = null;
+
+function initStreamImageRuntime() {
+    if (streamImageRuntime) return streamImageRuntime;
+    streamImageRuntime = createStreamImageRuntime({
+        toAbsoluteImageUrl,
+        getToastMessage: (...args) => getToastMessage(...args),
+        elements,
+        shouldAutoScroll: () => shouldAutoScroll(),
+        scheduleAutoScrollToBottom: () => scheduleAutoScrollToBottom(),
+        scheduleSmoothScrollToBottom: () => scrollManager.scheduleSmoothScrollToBottomStable(),
+        ensureMessageActionsVisible: (...args) => ensureMessageActionsVisible(...args),
+        renderMessageContent: (...args) => renderMessageContent(...args),
+        scrollManager,
+        getRenderSpeedForModel: (modelId) => getRenderSpeedForModel(modelId),
+        getCurrentModelId: () => currentModelId,
+        normalizeModelIdForRender: (modelId) => normalizeModelIdForRender(modelId),
+        getIsPageVisible: () => isPageVisible
+    });
+    return streamImageRuntime;
+}
 
 function addBackgroundTask(taskId, taskFunction, priority = 'normal') {
     const task = {
@@ -2826,28 +4687,15 @@ function setupBackgroundProcessing() {
 
         if (isPageVisible && !wasVisible) {
             if (isProcessing) {
-                if (globalContentDiv) {
-                    try {
-                        if (globalBackgroundBuffer) {
-                            globalDisplayBuffer += globalBackgroundBuffer;
-                            globalBackgroundBuffer = '';
-                        }
-
-                        if (globalCharQueue.length > 0) {
-                            const remainingChars = globalCharQueue.splice(0, globalCharQueue.length).join('');
-                            globalDisplayBuffer += remainingChars;
-                        }
-
-                        renderMessageContent(globalContentDiv, globalDisplayBuffer);
-
-                        if (shouldAutoScroll()) {
-                            setTimeout(() => {
-                                elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
-                            }, 10);
-                        }
-                    } catch (error) {
-                        console.error('Background buffer render error:', error);
+                try {
+                    streamImageRuntime.flushBufferedContent();
+                    if (shouldAutoScroll()) {
+                        setTimeout(() => {
+                            scrollManager.setAutoScrollTop(elements.chatContainer.scrollHeight);
+                        }, 10);
                     }
+                } catch (error) {
+                    console.error('Background buffer render error:', error);
                 }
             }
         }
@@ -2929,7 +4777,6 @@ function exitMultiSelectMode() {
     resetBackPressExitState();
 }
 
-
 function queueLoginSuccessToast(toastKey, options = {}) {
     pendingLoginSuccessToastKey = toastKey || null;
     const hasRouteOption = Object.prototype.hasOwnProperty.call(options, 'route');
@@ -2946,6 +4793,11 @@ function queueLoginSuccessToast(toastKey, options = {}) {
         pendingLoginSuccessToastKey = null;
         pendingLoginSuccessToastRoute = 'home';
         return;
+    }
+
+    const clearCacheBtn = document.getElementById('clear-cache-btn');
+    if (clearCacheBtn) {
+        clearCacheBtn.style.display = 'flex';
     }
 
     const currentRoute = router?.getCurrentRoute?.();
@@ -2965,10 +4817,22 @@ function maybeShowPendingLoginSuccessToast(routeName) {
     }
 }
 
-function showLoadingScreen(customText = null) {
+function showLoadingScreen(customText = null, options = {}) {
     const loadingScreen = document.getElementById('loading-screen');
     const appContainer = document.querySelector('.app-container');
     if (!loadingScreen) return;
+
+    loadingScreenVisibilityToken += 1;
+    if (loadingScreenHideTimer) {
+        clearTimeout(loadingScreenHideTimer);
+        loadingScreenHideTimer = null;
+    }
+
+    const minDurationMs = Number(options?.minDurationMs);
+    loadingScreenShownAt = Date.now();
+    loadingScreenMinVisibleMs = Number.isFinite(minDurationMs) && minDurationMs > 0
+        ? minDurationMs
+        : 0;
 
     if (Capacitor.isNativePlatform()) {
         loadingScreen.classList.remove('apk-initial-hide');
@@ -2998,29 +4862,67 @@ function showLoadingScreen(customText = null) {
     }
 }
 
+function hideNativeSplashOnce() {
+    if (!Capacitor.isNativePlatform() || nativeSplashHidden) {
+        return;
+    }
+    nativeSplashHidden = true;
+    SplashScreen.hide().catch(() => { });
+    if (CustomSplash && typeof CustomSplash.hide === 'function') {
+        CustomSplash.hide().catch(() => { });
+    }
+}
+
+async function waitForWebSplashVisible() {
+    await new Promise(resolve => requestAnimationFrame(() => {
+        requestAnimationFrame(resolve);
+    }));
+    await new Promise(resolve => setTimeout(resolve, 16));
+}
+
 function hideLoadingScreen() {
     const loadingScreen = document.getElementById('loading-screen');
     const appContainer = document.querySelector('.app-container');
+    const hideToken = loadingScreenVisibilityToken;
 
-    if (loadingScreen) {
-        requestAnimationFrame(() => {
-            loadingScreen.classList.add('hidden');
-            loadingScreen.setAttribute('aria-hidden', 'true');
-        });
-    }
-
-    if (appContainer) {
-        requestAnimationFrame(() => {
-            appContainer.classList.add('loaded');
-        });
-    }
-
-    if (Capacitor.isNativePlatform()) {
-        SplashScreen.hide().catch(() => { });
-        if (CustomSplash && typeof CustomSplash.hide === 'function') {
-            CustomSplash.hide().catch(() => { });
+    const applyHide = () => {
+        if (hideToken !== loadingScreenVisibilityToken) {
+            return;
         }
+
+        if (loadingScreen) {
+            requestAnimationFrame(() => {
+                loadingScreen.classList.add('hidden');
+                loadingScreen.setAttribute('aria-hidden', 'true');
+            });
+        }
+
+        if (appContainer) {
+            requestAnimationFrame(() => {
+                appContainer.classList.add('loaded');
+            });
+        }
+
+        hideNativeSplashOnce();
+    };
+
+    const elapsed = loadingScreenShownAt > 0 ? (Date.now() - loadingScreenShownAt) : 0;
+    const waitMs = Math.max(0, loadingScreenMinVisibleMs - elapsed);
+
+    if (loadingScreenHideTimer) {
+        clearTimeout(loadingScreenHideTimer);
+        loadingScreenHideTimer = null;
     }
+
+    if (waitMs > 0) {
+        loadingScreenHideTimer = setTimeout(() => {
+            loadingScreenHideTimer = null;
+            applyHide();
+        }, waitMs);
+        return;
+    }
+
+    applyHide();
 }
 
 async function getGuestVisitorId() {
@@ -3040,336 +4942,59 @@ async function getGuestVisitorId() {
     return 'fingerprint_unavailable';
 }
 
-async function syncNativeAppVersionDisplay(targetElement = null) {
-    if (!isNativeApp || typeof App?.getInfo !== 'function') {
+function warmupFingerprintNonBlocking() {
+    if (fingerprintWarmupPromise) {
+        return fingerprintWarmupPromise;
+    }
+
+    fingerprintWarmupPromise = (async () => {
+        const maxAttempts = 4;
+        const retryDelayMs = 300;
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+            const visitorId = await getGuestVisitorId();
+            if (visitorId && visitorId !== 'fingerprint_unavailable') {
+                return visitorId;
+            }
+            if (attempt < maxAttempts - 1) {
+                await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+            }
+        }
         return null;
-    }
-
-    if (!nativeVersionSyncInFlight) {
-        nativeVersionSyncInFlight = (async () => {
-            try {
-                const info = await App.getInfo();
-                const version = info?.version || info?.build || null;
-                if (version) {
-                    localStorage.setItem('apk_version', version);
-                }
-                return version;
-            } catch (error) {
-                console.warn('Failed to sync native app version info:', error);
-                return null;
-            }
-        })();
-    }
-
-    const pendingSync = nativeVersionSyncInFlight;
-    const resolvedVersion = await pendingSync;
-
-    if (resolvedVersion) {
-        const target = targetElement || document.getElementById('current-version');
-        if (target) {
-            target.textContent = `v${resolvedVersion}`;
-        }
-    }
-
-    if (nativeVersionSyncInFlight === pendingSync) {
-        nativeVersionSyncInFlight = null;
-    }
-
-    return resolvedVersion;
-}
-
-function requestAutoVersionCheck() {
-    if (!autoVersionCheckPromise) {
-        autoVersionCheckPromise = autoCheckVersionUpdate()
-            .finally(() => {
-                autoVersionCheckPromise = null;
-            });
-    }
-    return autoVersionCheckPromise;
-}
-
-function setupAppStateVersionCheck() {
-    if (!isNativeApp || appStateVersionListenerAttached || typeof App?.addListener !== 'function') {
-        return;
-    }
-    appStateVersionListenerAttached = true;
-    App.addListener('appStateChange', (state) => {
-        if (state?.isActive) {
-            syncNativeAppVersionDisplay();
-            requestAutoVersionCheck();
-        }
+    })().finally(() => {
+        fingerprintWarmupPromise = null;
     });
+
+    return fingerprintWarmupPromise;
 }
 
-async function updateAboutPageUI() {
-    const currentVersionEl = document.getElementById('current-version');
-    if (currentVersionEl) {
-        if (isNativeApp) {
-            const syncedVersion = await syncNativeAppVersionDisplay(currentVersionEl);
-            if (syncedVersion) {
-                return;
-            }
-            const apkVersion = localStorage.getItem('apk_version');
-            if (apkVersion) {
-                currentVersionEl.textContent = `v${apkVersion}`;
-            } else {
-                try {
-                    const response = await fetch('/downloads/');
-                    if (response.ok) {
-                        const html = await response.text();
-                        const match = html.match(/LittleAIBox_v([\d.]+)\.apk/);
-                        if (match) {
-                            const version = match[1];
-                            localStorage.setItem('apk_version', version);
-                            currentVersionEl.textContent = `v${version}`;
-                        } else {
-                            currentVersionEl.textContent = 'v?.?.?';
-                        }
-                    } else {
-                        currentVersionEl.textContent = 'v?.?.?';
-                    }
-                } catch (error) {
-                    currentVersionEl.textContent = 'v?.?.?';
-                }
-            }
-        } else {
-            const savedVersion = localStorage.getItem('app_version');
-            if (savedVersion) {
-                currentVersionEl.textContent = `v${savedVersion}`;
-            } else {
-                try {
-                    const response = await fetch('/manifest.json');
-                    if (response.ok) {
-                        const manifest = await response.json();
-                        if (manifest.version) {
-                            localStorage.setItem('app_version', manifest.version);
-                            currentVersionEl.textContent = `v${manifest.version}`;
-                        } else {
-                            currentVersionEl.textContent = 'v?.?.?';
-                        }
-                    } else {
-                        currentVersionEl.textContent = 'v?.?.?';
-                    }
-                } catch (error) {
-                    currentVersionEl.textContent = 'v?.?.?';
-                }
-            }
-        }
-    }
-}
+const DEVICE_FP_STORAGE_KEY = 'device_fingerprint';
+let cachedDeviceFingerprint = null;
 
-async function autoCheckVersionUpdate() {
-    try {
-        if (isNativeApp) {
-            await checkApkUpdate();
-        } else {
-            await checkVersionUpdate(false);
-        }
-    } catch (error) {
-        console.warn('Auto version check failed:', error);
-    }
-}
-
-async function checkVersionUpdate(showToastIfLatest = false) {
-    try {
-        let serverVersion, currentVersion;
-
-        if (isNativeApp) {
-            const response = await fetch('/downloads/');
-            if (response.ok) {
-                const html = await response.text();
-                const match = html.match(/LittleAIBox_v([\d.]+)\.apk/);
-                if (match) {
-                    serverVersion = match[1];
-                    const localApkVersion = localStorage.getItem('apk_version');
-                    if (!localApkVersion) {
-                        localStorage.setItem('apk_version', serverVersion);
-                        currentVersion = serverVersion;
-                    } else {
-                        currentVersion = localApkVersion;
-                    }
-                }
-            }
-        } else {
-            currentVersion = localStorage.getItem('app_version');
-
-            const manifestResponse = await fetch('/manifest.json?t=' + Date.now(), { cache: 'no-cache' });
-            if (manifestResponse.ok) {
-                const manifest = await manifestResponse.json();
-                if (manifest.version) {
-                    serverVersion = manifest.version;
-
-                    if (!currentVersion) {
-                        localStorage.setItem('app_version', serverVersion);
-                        currentVersion = serverVersion;
-                    }
-                }
-            }
-        }
-
-        if (serverVersion && currentVersion && serverVersion !== currentVersion) {
-            showVersionUpdateNotification();
-            showUpdateNowButton(serverVersion);
-            return true;
-        } else {
-            hideVersionUpdateNotification();
-            hideUpdateNowButton();
-            if (showToastIfLatest) {
-                showToast(getToastMessage('version.alreadyLatest'), 'success');
-            }
-            return false;
-        }
-    } catch (error) {
-        hideVersionUpdateNotification();
-        hideUpdateNowButton();
-        return false;
-    }
-}
-
-function showVersionUpdateNotification() {
-    const aboutBadge = document.getElementById('about-update-badge');
-    const settingsText = document.getElementById('settings-text');
-
-    if (aboutBadge) {
-        aboutBadge.style.display = 'inline-block';
-    }
-
-    if (settingsText) {
-        settingsText.style.color = '#ef4444';
-    }
-}
-
-function hideVersionUpdateNotification() {
-    const aboutBadge = document.getElementById('about-update-badge');
-    const settingsText = document.getElementById('settings-text');
-
-
-    if (settingsText) {
-        settingsText.style.color = '';
-    }
-}
-
-function markVersionUpdateAsSeen() {
-    const settingsText = document.getElementById('settings-text');
-
-    if (settingsText) {
-        settingsText.style.color = '';
-    }
-}
-
-async function checkApkUpdate() {
-    if (!isNativeApp) return;
+async function getDeviceFingerprint() {
+    if (cachedDeviceFingerprint) return cachedDeviceFingerprint;
 
     try {
-        const response = await fetch('/downloads/');
-        if (!response.ok) return;
-
-        const html = await response.text();
-        const match = html.match(/LittleAIBox_v([\d.]+)\.apk/);
-
-        if (match) {
-            const serverApkVersion = match[1];
-            const localApkVersion = localStorage.getItem('apk_version');
-
-            if (localApkVersion && serverApkVersion !== localApkVersion) {
-                showVersionUpdateNotification();
-                showUpdateNowButton(serverApkVersion);
-
-                const hasPermission = await LocalNotifications.checkPermissions();
-                if (hasPermission.display === 'granted') {
-                    await LocalNotifications.schedule({
-                        notifications: [{
-                            title: getToastMessage('apk.updateTitle'),
-                            body: getToastMessage('apk.updateMessage', { version: serverApkVersion }),
-                            id: 1,
-                            schedule: { at: new Date(Date.now() + 1000) },
-                            sound: null,
-                            attachments: null,
-                            actionTypeId: '',
-                            extra: { apkVersion: serverApkVersion }
-                        }]
-                    });
-                }
-            } else if (localApkVersion === serverApkVersion) {
-                hideVersionUpdateNotification();
-                hideUpdateNowButton();
-            }
-
-            if (!localApkVersion) {
-                localStorage.setItem('apk_version', serverApkVersion);
-            }
+        const stored = localStorage.getItem(DEVICE_FP_STORAGE_KEY);
+        if (stored && stored !== 'fingerprint_unavailable') {
+            cachedDeviceFingerprint = stored;
+            return cachedDeviceFingerprint;
         }
-    } catch (error) {
-        console.error('Check APK update failed:', error);
+    } catch (_) { }
+
+    const fingerprint = await getGuestVisitorId();
+    if (fingerprint && fingerprint !== 'fingerprint_unavailable') {
+        cachedDeviceFingerprint = fingerprint;
+        try {
+            localStorage.setItem(DEVICE_FP_STORAGE_KEY, fingerprint);
+        } catch (_) { }
+    } else {
+        cachedDeviceFingerprint = null;
     }
+    return cachedDeviceFingerprint;
 }
 
-async function checkForUpdates() {
-    const checkBtn = document.getElementById('check-update-btn');
-    if (!checkBtn) return;
-
-    const originalText = checkBtn.innerHTML;
-    checkBtn.disabled = true;
-    checkBtn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="margin-right: 8px; animation: spin 1s linear infinite;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg><span>${getToastMessage('version.checking')}</span>`;
-
-    try {
-        let serverVersion, localVersion;
-
-        if (isNativeApp) {
-            const response = await fetch('/downloads/');
-            if (response.ok) {
-                const html = await response.text();
-                const match = html.match(/LittleAIBox_v([\d.]+)\.apk/);
-                if (match) {
-                    serverVersion = match[1];
-                    localVersion = localStorage.getItem('apk_version');
-
-                    if (!localVersion) {
-                        localStorage.setItem('apk_version', serverVersion);
-                        localVersion = serverVersion;
-                    }
-                }
-            }
-        } else {
-            localVersion = localStorage.getItem('app_version');
-
-            const manifestResponse = await fetch('/manifest.json?t=' + Date.now(), { cache: 'no-cache' });
-            if (manifestResponse.ok) {
-                const manifest = await manifestResponse.json();
-                if (manifest.version) {
-                    serverVersion = manifest.version;
-
-                    if (!localVersion) {
-                        localStorage.setItem('app_version', serverVersion);
-                        localVersion = serverVersion;
-                    }
-                }
-            }
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        if (serverVersion && serverVersion !== localVersion) {
-            checkBtn.innerHTML = originalText;
-            checkBtn.disabled = false;
-
-            showVersionUpdateNotification();
-            showUpdateNowButton(serverVersion);
-            showToast(getToastMessage('version.newVersionDetected', { version: serverVersion }), 'info');
-        } else {
-            checkBtn.disabled = false;
-            checkBtn.innerHTML = originalText;
-            hideUpdateNowButton();
-            hideVersionUpdateNotification();
-            showToast(getToastMessage('version.alreadyLatest'), 'success');
-        }
-    } catch (error) {
-        checkBtn.disabled = false;
-        checkBtn.innerHTML = originalText;
-        hideUpdateNowButton();
-        hideVersionUpdateNotification();
-        showToast(getToastMessage('version.updateFailed'), 'error');
-    }
+async function syncNativeAppVersionDisplay(targetElement = null) {
+    return getApkUpdateManager().syncNativeAppVersionDisplay(targetElement);
 }
 
 function getUpdateElements() {
@@ -3377,26 +5002,37 @@ function getUpdateElements() {
     const checkBtn = document.getElementById('check-update-btn');
     const updateNotice = document.getElementById('version-update-notice');
     const updateNoticeText = document.getElementById('version-update-notice-text');
-
     return { updateNowBtn, checkBtn, updateNotice, updateNoticeText };
 }
 
-function showUpdateNowButton(version) {
-    const { updateNowBtn, checkBtn, updateNotice, updateNoticeText } = getUpdateElements();
+function showVersionUpdateNotification() {
+    const aboutBadge = document.getElementById('about-update-badge');
+    const settingsText = document.getElementById('settings-text');
+    if (aboutBadge) aboutBadge.style.display = 'inline-block';
+    if (settingsText) settingsText.style.color = '#ef4444';
+}
 
+function hideVersionUpdateNotification() {
+    const settingsText = document.getElementById('settings-text');
+    if (settingsText) settingsText.style.color = '';
+}
+
+function markVersionUpdateAsSeen() {
+    const settingsText = document.getElementById('settings-text');
+    if (settingsText) settingsText.style.color = '';
+}
+
+function showUpdateNowButton(version, apkFileName = '') {
+    const { updateNowBtn, checkBtn, updateNotice, updateNoticeText } = getUpdateElements();
     if (updateNowBtn) {
         updateNowBtn.style.display = 'inline-flex';
         updateNowBtn.dataset.version = version;
+        if (apkFileName) updateNowBtn.dataset.apkFile = apkFileName;
+        else delete updateNowBtn.dataset.apkFile;
         const span = updateNowBtn.querySelector('span[data-i18n-key="version.updateNow"]');
-        if (span) {
-            span.textContent = getToastMessage('version.updateNow');
-        }
+        if (span) span.textContent = getToastMessage('version.updateNow');
     }
-
-    if (checkBtn) {
-        checkBtn.style.display = 'none';
-    }
-
+    if (checkBtn) checkBtn.style.display = 'none';
     if (updateNotice && updateNoticeText) {
         updateNoticeText.textContent = getToastMessage('version.newVersionAvailable', { version });
         updateNotice.style.display = 'flex';
@@ -3405,43 +5041,162 @@ function showUpdateNowButton(version) {
 
 function hideUpdateNowButton() {
     const { updateNowBtn, checkBtn, updateNotice } = getUpdateElements();
-
     if (updateNowBtn) {
         updateNowBtn.style.display = 'none';
         delete updateNowBtn.dataset.version;
+        delete updateNowBtn.dataset.apkFile;
     }
+    if (checkBtn) checkBtn.style.display = 'inline-flex';
+    if (updateNotice) updateNotice.style.display = 'none';
+}
 
-    if (checkBtn) {
-        checkBtn.style.display = 'inline-flex';
+async function updateAboutPageUI() {
+    const currentVersionEl = document.getElementById('current-version');
+    if (!currentVersionEl) return;
+    if (isNativeApp) {
+        await syncNativeAppVersionDisplay(currentVersionEl);
+        return;
     }
+    const savedVersion = localStorage.getItem('app_version');
+    if (savedVersion) {
+        currentVersionEl.textContent = `v${savedVersion}`;
+        return;
+    }
+    try {
+        const response = await fetch('/manifest.json');
+        if (!response.ok) {
+            currentVersionEl.textContent = 'v?.?.?';
+            return;
+        }
+        const manifest = await response.json();
+        if (manifest.version) {
+            localStorage.setItem('app_version', manifest.version);
+            currentVersionEl.textContent = `v${manifest.version}`;
+        } else {
+            currentVersionEl.textContent = 'v?.?.?';
+        }
+    } catch (_) {
+        currentVersionEl.textContent = 'v?.?.?';
+    }
+}
 
-    if (updateNotice) {
-        updateNotice.style.display = 'none';
+async function checkVersionUpdate(showToastIfLatest = false) {
+    if (isNativeApp) {
+        return getApkUpdateManager().checkVersionUpdate(showToastIfLatest);
+    }
+    try {
+        let currentVersion = localStorage.getItem('app_version');
+        let serverVersion = '';
+        const manifestResponse = await fetch(`/manifest.json?t=${Date.now()}`, { cache: 'no-cache' });
+        if (manifestResponse.ok) {
+            const manifest = await manifestResponse.json();
+            if (manifest.version) {
+                serverVersion = manifest.version;
+                if (!currentVersion) {
+                    localStorage.setItem('app_version', serverVersion);
+                    currentVersion = serverVersion;
+                }
+            }
+        }
+        if (serverVersion && currentVersion && serverVersion !== currentVersion) {
+            showVersionUpdateNotification();
+            showUpdateNowButton(serverVersion);
+            return true;
+        }
+        hideVersionUpdateNotification();
+        hideUpdateNowButton();
+        if (showToastIfLatest) showToast(getToastMessage('version.alreadyLatest'), 'success');
+        return false;
+    } catch (_) {
+        hideVersionUpdateNotification();
+        hideUpdateNowButton();
+        return false;
+    }
+}
+
+function requestAutoVersionCheck() {
+    return getApkUpdateManager().requestAutoVersionCheck();
+}
+
+function startAutoVersionCheckInterval() {
+    return getApkUpdateManager().startAutoVersionCheckInterval?.();
+}
+
+function stopAutoVersionCheckInterval() {
+    return getApkUpdateManager().stopAutoVersionCheckInterval?.();
+}
+
+function setupAppStateVersionCheck() {
+    return getApkUpdateManager().setupAppStateVersionCheck();
+}
+
+async function checkForUpdates() {
+    if (isNativeApp) {
+        return getApkUpdateManager().checkForUpdates();
+    }
+    const checkBtn = document.getElementById('check-update-btn');
+    if (!checkBtn) return;
+    const originalText = checkBtn.innerHTML;
+    checkBtn.disabled = true;
+    checkBtn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="margin-right: 8px; animation: spin 1s linear infinite;"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg><span>${getToastMessage('version.checking')}</span>`;
+    try {
+        let localVersion = localStorage.getItem('app_version');
+        let serverVersion = '';
+        const manifestResponse = await fetch(`/manifest.json?t=${Date.now()}`, { cache: 'no-cache' });
+        if (manifestResponse.ok) {
+            const manifest = await manifestResponse.json();
+            if (manifest.version) {
+                serverVersion = manifest.version;
+                if (!localVersion) {
+                    localStorage.setItem('app_version', serverVersion);
+                    localVersion = serverVersion;
+                }
+            }
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+        if (serverVersion && serverVersion !== localVersion) {
+            showVersionUpdateNotification();
+            showUpdateNowButton(serverVersion);
+            showToast(getToastMessage('version.newVersionDetected', { version: serverVersion }), 'info');
+        } else {
+            hideUpdateNowButton();
+            hideVersionUpdateNotification();
+            showToast(getToastMessage('version.alreadyLatest'), 'success');
+        }
+    } catch (_) {
+        hideUpdateNowButton();
+        hideVersionUpdateNotification();
+        showToast(getToastMessage('version.updateFailed'), 'error');
+    } finally {
+        checkBtn.disabled = false;
+        checkBtn.innerHTML = originalText;
     }
 }
 
 async function performUpdate() {
     const { updateNowBtn } = getUpdateElements();
     const version = updateNowBtn?.dataset.version || 'latest';
-
+    const apkFileName = updateNowBtn?.dataset.apkFile || '';
     if (isNativeApp) {
-        await downloadAndInstallApk(version);
-    } else {
-        const confirmed = await showCustomConfirm(
-            getToastMessage('version.updateAvailable'),
-            getToastMessage('version.updateConfirmMessage', { version }),
-            `<svg viewBox="0 0 24 24" style="width: 48px; height: 48px; fill: var(--primary-color);"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>`,
-            {
-                manageHistory: false,
-                confirmText: getToastMessage('version.updateNow'),
-                cancelText: getToastMessage('version.later')
-            }
-        );
-
-        if (confirmed) {
-            await clearCacheAndReload();
-        }
+        return getApkUpdateManager().performUpdate();
     }
+    const confirmed = await showCustomConfirm(
+        getToastMessage('version.updateAvailable'),
+        getToastMessage('version.updateConfirmMessage', { version }),
+        `<svg viewBox="0 0 24 24" style="width: 48px; height: 48px; fill: var(--primary-color);"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>`,
+        {
+            manageHistory: false,
+            confirmText: getToastMessage('version.updateNow'),
+            cancelText: getToastMessage('version.later')
+        }
+    );
+    if (confirmed) {
+        await clearCacheAndReload();
+    }
+}
+
+async function ensureNotificationPermission() {
+    return getApkUpdateManager().ensureNotificationPermission();
 }
 
 async function unregisterServiceWorkers() {
@@ -3476,62 +5231,6 @@ async function clearCachesAndSettings(excludeCacheKeys = []) {
     ]);
 }
 
-async function ensureStoragePersistence() {
-    try {
-        if (!('storage' in navigator)) {
-            return;
-        }
-
-        const storage = navigator.storage;
-
-        if (typeof storage.persist === 'function') {
-            const persisted = await storage.persist();
-            if (persisted) {
-                return;
-            }
-        }
-
-        if (typeof storage.persisted === 'function') {
-            const alreadyPersisted = await storage.persisted();
-            if (alreadyPersisted) {
-                return;
-            }
-        }
-
-        if (typeof storage.estimate === 'function') {
-            try {
-                const estimate = await storage.estimate();
-                if (estimate?.quota && estimate.quota > 0) {
-                    return;
-                }
-            } catch (_) {
-                // 忽略配额估算错误
-            }
-        }
-
-        if (Filesystem && typeof Filesystem.requestPermissions === 'function') {
-            await Filesystem.requestPermissions();
-        }
-    } catch (error) {
-        // 静默失败，不影响主要功能
-    }
-}
-
-async function ensureNotificationPermission() {
-    if (!isNativeApp || !LocalNotifications) {
-        return;
-    }
-    try {
-        const status = await LocalNotifications.checkPermissions();
-        if (status?.display === 'granted') {
-            return;
-        }
-        await LocalNotifications.requestPermissions();
-    } catch (error) {
-        console.warn('Failed to ensure notification permission:', error);
-    }
-}
-
 async function clearCacheAndReload() {
     const { updateNowBtn } = getUpdateElements();
     const version = updateNowBtn?.dataset.version || 'latest';
@@ -3545,6 +5244,7 @@ async function clearCacheAndReload() {
 
     await Promise.all([
         clearCachesAndSettings(),
+        (sessionId ? clearChatsStore().catch(() => { }) : Promise.resolve()),
         (async () => {
             try {
                 await clearTranslationCache();
@@ -3568,7 +5268,8 @@ async function clearCacheAndReload() {
         'selectedLanguage',
         'userThemeSettings',
         'userThemePreset',
-        'userThemeSettingsUpdatedAt'
+        'userThemeSettingsUpdatedAt',
+        DEVICE_FP_STORAGE_KEY
     ];
 
     if (sessionId) {
@@ -3582,13 +5283,12 @@ async function clearCacheAndReload() {
     });
 
     localStorage.setItem('app_version', version);
-    if (currentUser) {
-        localStorage.setItem('forceServerChatsReload', '1');
-    } else {
-        localStorage.removeItem('forceServerChatsReload');
-    }
     chats = {};
     currentChatId = null;
+    sidebarElementsCache.clear();
+    if (elements?.chatHistoryList) {
+        elements.chatHistoryList.innerHTML = '';
+    }
 
     const currentLang = localStorage.getItem('selectedLanguage');
     if (currentLang) {
@@ -3606,180 +5306,6 @@ async function clearCacheAndReload() {
         window.location.replace(url.toString());
     } catch (_) {
         try { location.reload(true); } catch (_) { location.reload(); }
-    }
-}
-
-function resolveApkDownloadUrl(relativePath) {
-    if (!relativePath) return '';
-    if (/^https?:/i.test(relativePath)) {
-        return relativePath;
-    }
-    const base = API_BASE_URL || window.location.origin;
-    try {
-        return new URL(relativePath, base || window.location.origin).href;
-    } catch (_) {
-        return `${base}${relativePath}`;
-    }
-}
-
-async function openApkInBrowser(relativePath) {
-    const absoluteUrl = resolveApkDownloadUrl(relativePath);
-    if (!absoluteUrl) return false;
-
-    const openViaBrowserPlugin = async () => {
-        if (Capacitor.isPluginAvailable('Browser')) {
-            await Browser.open({
-                url: absoluteUrl,
-                presentationStyle: 'popover'
-            });
-            return true;
-        }
-        return false;
-    };
-
-    try {
-        const opened = await openViaBrowserPlugin();
-        if (opened) return true;
-    } catch (browserError) {
-        console.warn('Browser plugin open failed:', browserError);
-    }
-
-    try {
-        const link = document.createElement('a');
-        link.href = absoluteUrl;
-        link.target = '_blank';
-        link.rel = 'noopener';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        return true;
-    } catch (linkError) {
-        console.warn('Anchor fallback failed:', linkError);
-    }
-
-    try {
-        window.open(absoluteUrl, '_blank', 'noopener');
-        return true;
-    } catch (openError) {
-        console.warn('window.open fallback failed:', openError);
-    }
-
-    try {
-        window.location.href = absoluteUrl;
-        return true;
-    } catch (_) {
-        return false;
-    }
-}
-
-async function downloadAndInstallApk(version) {
-    const apkUrl = `/downloads/LittleAIBox_v${version}.apk`;
-    let browserFallbackShown = false;
-    const triggerBrowserFallback = async () => {
-        if (!browserFallbackShown) {
-            browserFallbackShown = true;
-            showToast(getToastMessage('apk.openInBrowser'), 'info');
-        }
-        const opened = await openApkInBrowser(apkUrl);
-        if (!opened) {
-            showToast(getToastMessage('apk.updateFailed'), 'error');
-        }
-        return opened;
-    };
-
-    try {
-        showToast(getToastMessage('apk.downloadingUpdate', { version }), 'info');
-
-        const canUseNativeInstaller = (
-            isNativeApp &&
-            Capacitor.getPlatform() === 'android' &&
-            ApkInstaller &&
-            typeof ApkInstaller.installApk === 'function'
-        );
-
-        if (!canUseNativeInstaller) {
-            await triggerBrowserFallback();
-            return;
-        }
-
-        const response = await fetch(apkUrl);
-
-        if (!response.ok) {
-            throw new Error('Download failed');
-        }
-
-        const blob = await response.blob();
-        const base64Data = await blobToBase64(blob);
-
-        const fileName = `LittleAIBox_v${version}.apk`;
-        const savedFile = await Filesystem.writeFile({
-            path: fileName,
-            data: base64Data,
-            directory: Directory.Cache
-        });
-
-        const fileUri = savedFile.uri;
-        const contentUrl = Capacitor.convertFileSrc(fileUri);
-        let installUrl = contentUrl;
-
-        if (Capacitor.getPlatform() === 'android' && typeof Filesystem.getUri === 'function') {
-            try {
-                const { uri } = await Filesystem.getUri({
-                    path: fileName,
-                    directory: Directory.Cache
-                });
-                if (uri) {
-                    installUrl = uri;
-                }
-            } catch (resolveUriError) {
-                console.warn('Failed to resolve native APK URI, falling back to web URI:', resolveUriError);
-            }
-        }
-
-        hideUpdateNowButton();
-        hideVersionUpdateNotification();
-
-        await clearCachesAndSettings();
-
-        let installerOpened = false;
-
-        if (Capacitor.getPlatform() === 'android' && ApkInstaller) {
-            try {
-                await ApkInstaller.installApk({
-                    fileUri,
-                    contentUri: installUrl
-                });
-                installerOpened = true;
-            } catch (nativeInstallError) {
-                console.warn('ApkInstaller plugin failed, falling back to App.openUrl:', nativeInstallError);
-            }
-        }
-
-        if (!installerOpened) {
-            try {
-                const result = await App.openUrl({ url: installUrl });
-                installerOpened = typeof (result?.completed) === 'boolean' ? result.completed : true;
-            } catch (openIntentError) {
-                console.warn('Opening APK installer via App.openUrl failed:', openIntentError);
-            }
-        }
-
-        if (!installerOpened) {
-            await triggerBrowserFallback();
-            return;
-        }
-
-        localStorage.setItem('apk_version', version);
-
-        // 更新设置备份中的版本信息
-        backupImportantSettings().catch(error => {
-            console.error('Failed to backup settings after APK update:', error);
-        });
-
-        showToast(getToastMessage('apk.installPrompt'), 'success');
-    } catch (error) {
-        console.warn('APK update failed, falling back to browser download:', error);
-        await triggerBrowserFallback();
     }
 }
 
@@ -3818,17 +5344,30 @@ function dismissKeyboard() {
     }
 }
 
+function normalizeToastLang(lang) {
+    const value = String(lang || '').trim();
+    if (!value) return 'en';
+    if (value === 'en' || value === 'zh-CN' || value === 'zh-TW' || value === 'es' || value === 'ja' || value === 'ko' || value === 'fr') {
+        return value;
+    }
+    const lower = value.toLowerCase();
+    if (lower.startsWith('zh-tw') || lower.startsWith('zh-hk') || lower.startsWith('zh-mo')) return 'zh-TW';
+    if (lower.startsWith('zh')) return 'zh-CN';
+    if (lower.startsWith('ja')) return 'ja';
+    if (lower.startsWith('ko')) return 'ko';
+    if (lower.startsWith('es')) return 'es';
+    if (lower.startsWith('fr')) return 'fr';
+    if (lower.startsWith('en')) return 'en';
+    return 'en';
+}
+
 function getToastMessage(key, params = {}) {
-    const currentLang = getCurrentLanguage();
+    const currentLang = normalizeToastLang(getCurrentLanguage());
     const translated = t(currentLang, key, params);
 
     if (translated === key) {
-        const browserLang = navigator.language || navigator.languages[0] || 'zh-CN';
-        const defaultLang = browserLang.startsWith('zh') ? 'zh-CN' :
-            browserLang.startsWith('ja') ? 'ja' :
-                browserLang.startsWith('ko') ? 'ko' :
-                    browserLang.startsWith('es') ? 'es' :
-                        browserLang.startsWith('en') ? 'en' : 'zh-CN';
+        const browserLang = navigator.language || navigator.languages[0] || 'en';
+        const defaultLang = normalizeToastLang(browserLang);
 
         if (currentLang !== defaultLang) {
             const fallbackTranslated = t(defaultLang, key, params);
@@ -3838,6 +5377,11 @@ function getToastMessage(key, params = {}) {
         }
     }
     return translated;
+}
+
+function getI18nOrDefault(key, fallback, params = {}) {
+    const translated = getToastMessage(key, params);
+    return translated === key ? fallback : translated;
 }
 
 function updateCurrentPasswordPlaceholderInput() {
@@ -3986,204 +5530,8 @@ function renderQuotePreview() {
     }
 }
 
-class ScrollManager {
-    constructor(containerSelector = '#chat-container') {
-        this.containerSelector = containerSelector;
-        this._container = null;
-
-        // 滚动状态
-        this.userHasScrolledUp = false;
-        this.isUserScrolling = false;
-        this.isAutoScrolling = false;
-        this.lastScrollTime = 0;
-
-        // 配置
-        this.scrollDebounceMs = 150;
-        this.bottomThreshold = 20;
-        this.smoothScrollDuration = 200;
-
-        // 内部状态
-        this._scrollTimeout = null;
-        this._autoScrollResetTimer = null;
-        this.lastAutoScrollTop = 0;
-        this.userScrollIntentUntil = 0;
-        this._pendingAutoScrollRaf = 0;
-        this._pendingStableAutoScrollRaf = 0;
-        this.pendingSmoothScroll = false;
-    }
-
-    get container() {
-        if (!this._container || !document.body.contains(this._container)) {
-            this._container = document.querySelector(this.containerSelector);
-        }
-        return this._container;
-    }
-
-    shouldAutoScroll() {
-        return !this.userHasScrolledUp;
-    }
-
-    shouldPreserveScrollPosition() {
-        return this.userHasScrolledUp;
-    }
-
-    isAtBottom() {
-        const container = this.container;
-        if (!container) return true;
-        return container.scrollHeight - container.clientHeight <= container.scrollTop + this.bottomThreshold;
-    }
-
-    getMaxScrollTop() {
-        const container = this.container;
-        if (!container) return 0;
-        return Math.max(0, container.scrollHeight - container.clientHeight);
-    }
-
-    resetUserScrollState() {
-        this.userHasScrolledUp = false;
-    }
-
-    scrollToBottom() {
-        const container = this.container;
-        if (!container) return;
-        const targetScrollTop = this.getMaxScrollTop();
-        if (Math.abs(container.scrollTop - targetScrollTop) <= 1) {
-            return;
-        }
-        this.isAutoScrolling = true;
-        this.lastScrollTime = Date.now();
-        this.lastAutoScrollTop = targetScrollTop;
-        container.scrollTop = targetScrollTop;
-        if (this._autoScrollResetTimer) clearTimeout(this._autoScrollResetTimer);
-        this._autoScrollResetTimer = setTimeout(() => {
-            this.isAutoScrolling = false;
-        }, 80);
-    }
-
-    smoothScrollToBottom(callback) {
-        const container = this.container;
-        if (!container) {
-            if (callback) callback();
-            return;
-        }
-
-        const targetScrollTop = this.getMaxScrollTop();
-        const startScrollTop = container.scrollTop;
-        const distance = targetScrollTop - startScrollTop;
-
-        if (distance <= 1) {
-            if (callback) callback();
-            return;
-        }
-
-        // 动态调整滚动时长
-        const duration = Math.min(1100, Math.max(360, Math.abs(distance) * 0.6));
-        const startTime = performance.now();
-
-        this.isAutoScrolling = true;
-        this.lastScrollTime = Date.now();
-
-        const animateScroll = (currentTime) => {
-            const elapsed = currentTime - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const easeOut = 1 - Math.pow(1 - progress, 3);
-
-            const nextTop = startScrollTop + (distance * easeOut);
-            this.lastAutoScrollTop = nextTop;
-            container.scrollTop = nextTop;
-
-            if (progress < 1) {
-                requestAnimationFrame(animateScroll);
-            } else {
-                setTimeout(() => {
-                    this.isAutoScrolling = false;
-                    if (callback) callback();
-                }, 50);
-            }
-        };
-
-        requestAnimationFrame(animateScroll);
-    }
-
-    autoScrollToBottomIfNeeded(smooth = false) {
-        if (!this.shouldAutoScroll()) return;
-        if (smooth) {
-            this.smoothScrollToBottom();
-        } else {
-            this.scrollToBottom();
-        }
-    }
-
-    scheduleAutoScrollToBottom() {
-        if (!this.shouldAutoScroll()) return;
-        if (this._pendingAutoScrollRaf) return;
-        this._pendingAutoScrollRaf = requestAnimationFrame(() => {
-            this._pendingAutoScrollRaf = 0;
-            this.scrollToBottom();
-        });
-    }
-
-    scheduleAutoScrollToBottomStable() {
-        if (!this.shouldAutoScroll()) return;
-        if (this._pendingStableAutoScrollRaf) return;
-        this._pendingStableAutoScrollRaf = requestAnimationFrame(() => {
-            this._pendingStableAutoScrollRaf = requestAnimationFrame(() => {
-                this._pendingStableAutoScrollRaf = 0;
-                if (!this.shouldAutoScroll()) return;
-                this.scrollToBottom();
-            });
-        });
-    }
-
-    markUserScrollIntent() {
-        this.userScrollIntentUntil = Date.now() + 300;
-    }
-
-    handleScrollEvent(event) {
-        const container = this.container;
-        if (!container) return;
-        const now = Date.now();
-        const userIntentActive = now <= this.userScrollIntentUntil;
-        if (!userIntentActive) {
-            return;
-        }
-        if (!userIntentActive && this.isAutoScrolling) {
-            const currentTop = container.scrollTop;
-            if (Math.abs(currentTop - this.lastAutoScrollTop) <= 2 || currentTop >= this.lastAutoScrollTop) {
-                return;
-            }
-            this.isAutoScrolling = false;
-        }
-        this.isUserScrolling = true;
-        this.lastScrollTime = Date.now();
-
-        if (this._scrollTimeout) clearTimeout(this._scrollTimeout);
-        this._scrollTimeout = setTimeout(() => {
-            this.isUserScrolling = false;
-        }, this.scrollDebounceMs);
-
-        this.userHasScrolledUp = !this.isAtBottom();
-    }
-
-    init() {
-        const container = this.container;
-        if (!container) return;
-
-        container.addEventListener('scroll', (event) => this.handleScrollEvent(event));
-        container.addEventListener('wheel', () => this.markUserScrollIntent(), { passive: true });
-        container.addEventListener('touchstart', () => this.markUserScrollIntent(), { passive: true });
-        container.addEventListener('touchmove', () => this.markUserScrollIntent(), { passive: true });
-        container.addEventListener('pointerdown', () => this.markUserScrollIntent(), { passive: true });
-        container.addEventListener('mousedown', () => this.markUserScrollIntent(), { passive: true });
-        window.addEventListener('keydown', (event) => {
-            if (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'End', 'Home', ' '].includes(event.key)) {
-                this.markUserScrollIntent();
-            }
-        }, { passive: true });
-    }
-}
-
 const scrollManager = new ScrollManager();
+initStreamImageRuntime();
 function smoothScrollToBottom() {
     scrollManager.smoothScrollToBottom();
 }
@@ -4269,6 +5617,14 @@ function setupTouchMessageActions() {
         return;
     }
 
+    const clearActiveMessage = () => {
+        if (!touchActiveMessage) {
+            return;
+        }
+        touchActiveMessage.classList.remove('touch-active');
+        touchActiveMessage = null;
+    };
+
     const activateMessage = (message, fromActionButton) => {
         if (!message) return;
         if (!touchActionModeEnabled) return;
@@ -4291,6 +5647,10 @@ function setupTouchMessageActions() {
         if (!touchActionModeEnabled) {
             return;
         }
+        if (suppressTouchActionTap) {
+            suppressTouchActionTap = false;
+            return;
+        }
         const target = event.target;
         if (!target || typeof target.closest !== 'function') {
             return;
@@ -4303,25 +5663,53 @@ function setupTouchMessageActions() {
         activateMessage(message, tappedAction);
     };
 
+    const handleDocumentPointerDown = (event) => {
+        if (!touchActionModeEnabled || !touchActiveMessage) {
+            return;
+        }
+        const target = event.target;
+        if (!target || typeof target.closest !== 'function') {
+            clearActiveMessage();
+            return;
+        }
+        if (target.closest('.message-actions')) {
+            return;
+        }
+        const message = target.closest('.message');
+        if (message && container.contains(message)) {
+            if (message === touchActiveMessage) {
+                clearActiveMessage();
+                suppressTouchActionTap = true;
+                return;
+            }
+            clearActiveMessage();
+            return;
+        }
+        clearActiveMessage();
+    };
+
     const handleDocumentTap = (event) => {
         if (!touchActionModeEnabled || !touchActiveMessage) {
             return;
         }
         const target = event.target;
         if (!target || typeof target.closest !== 'function') {
-            touchActiveMessage.classList.remove('touch-active');
-            touchActiveMessage = null;
+            clearActiveMessage();
             return;
         }
         const message = target.closest('.message');
         if (message && container.contains(message)) {
             return;
         }
-        touchActiveMessage.classList.remove('touch-active');
-        touchActiveMessage = null;
+        clearActiveMessage();
     };
 
     container.addEventListener('click', handleMessageTap);
+    if (window.PointerEvent) {
+        document.addEventListener('pointerdown', handleDocumentPointerDown, { capture: true, passive: true });
+    } else if ('ontouchstart' in window) {
+        document.addEventListener('touchstart', handleDocumentPointerDown, { capture: true, passive: true });
+    }
     document.addEventListener('click', handleDocumentTap);
 
     if (window.matchMedia) {
@@ -4350,8 +5738,34 @@ function cancelQuote() {
     renderQuotePreview();
 }
 
+const willChangeTimers = new WeakMap();
+
+function applyTemporaryWillChange(entries, durationMs = 300) {
+    const items = Array.isArray(entries) ? entries : [entries];
+    items.forEach((item) => {
+        const element = item.element;
+        if (!element) return;
+        element.style.willChange = item.value;
+        const existingTimer = willChangeTimers.get(element);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+        }
+        const timer = setTimeout(() => {
+            element.style.willChange = '';
+            willChangeTimers.delete(element);
+        }, durationMs);
+        willChangeTimers.set(element, timer);
+    });
+}
+
 function openSidebar() {
     const isMobile = window.matchMedia('(max-width: 640px)').matches;
+    applyTemporaryWillChange([
+        { element: elements.sidebar, value: 'transform' },
+        { element: document.body, value: 'padding-left' },
+        { element: document.querySelector('.chat-area'), value: 'margin-left, margin-right' },
+        { element: document.getElementById('sidebar-toggle-btn')?.querySelector('svg'), value: 'transform' }
+    ]);
     if (isMobile) {
         document.body.classList.add('sidebar-open');
     } else {
@@ -4369,6 +5783,13 @@ function closeSidebar(isFromBackButton = false, options = {}) {
     if (!shouldCloseMobile && !shouldCloseDesktop) {
         return;
     }
+
+    applyTemporaryWillChange([
+        { element: elements.sidebar, value: 'transform' },
+        { element: document.body, value: 'padding-left' },
+        { element: document.querySelector('.chat-area'), value: 'margin-left, margin-right' },
+        { element: document.getElementById('sidebar-toggle-btn')?.querySelector('svg'), value: 'transform' }
+    ]);
 
     queueMicrotask(() => {
         if (isMobile) {
@@ -4396,7 +5817,7 @@ function closeSidebarOnInteraction() {
 }
 
 function generateId() {
-    return `chat_${crypto.randomUUID()}`;
+    return `chat_${safeRandomUUID()}`;
 }
 
 function getToday() {
@@ -4494,6 +5915,40 @@ function sanitizeUserForCache(user) {
     } catch (_) {
         return user;
     }
+}
+
+function mergeSubscriptionFields(baseUser, incomingUser) {
+    if (!incomingUser || typeof incomingUser !== 'object') return incomingUser;
+    if (!baseUser || typeof baseUser !== 'object') return { ...incomingUser };
+    const merged = { ...incomingUser };
+    const fields = [
+        'subscription_status',
+        'subscription_source',
+        'subscription_start_at',
+        'subscription_expires_at',
+        'subscription_cancel_at_period_end',
+        'subscription_plan_code',
+        'redeem_plan_code',
+        'redeem_status',
+        'redeem_start_at',
+        'redeem_expires_at',
+        'redeem_pending_days',
+        'redeem_pending_apply_after',
+        'redeem_pending_confirmed',
+        'subscriptionStatus',
+        'subscriptionSource',
+        'subscriptionStartAt',
+        'subscriptionExpiresAt',
+        'subscriptionCancelAtPeriodEnd',
+        'subscriptionPlanCode',
+        'redeemPlanCode'
+    ];
+    fields.forEach((field) => {
+        if (merged[field] == null && baseUser[field] != null) {
+            merged[field] = baseUser[field];
+        }
+    });
+    return merged;
 }
 
 function persistCurrentUserCache() {
@@ -4682,7 +6137,47 @@ async function checkKeyValidationStatus() {
         const response = await makeAuthRequest('check-key-validation-status', {}, {
             headers: { 'X-Validation-Only': 'true' }
         });
-        if (response.success && response.validationStatus !== 'valid') {
+        if (!response.success) return;
+
+        const lastValidationMs = response.lastValidation ? Date.parse(response.lastValidation) : NaN;
+        const isWithinGrace = Number.isFinite(lastValidationMs)
+            ? (Date.now() - lastValidationMs) < (3 * 24 * 60 * 60 * 1000)
+            : false;
+        const shouldClearKeys = (response.hasKeys === false || response.validationStatus === 'all_failed') &&
+            !(isWithinGrace && response.validationStatus === 'all_failed' && response.hasKeys === true);
+        if (shouldClearKeys) {
+            if (currentUser) {
+                currentUser.custom_api_key = null;
+                currentUser.custom_api_key_t = null;
+                currentUser.api_mode = 'mixed';
+                currentUser.keyTier = 'free';
+            }
+            rememberCustomKeyPresence(false);
+            setOriginalApiKeys();
+
+            const keyOneInput = document.getElementById('api-key-one');
+            const keyTwoInput = document.getElementById('api-key-two');
+            if (keyOneInput) keyOneInput.value = '';
+            if (keyTwoInput) keyTwoInput.value = '';
+
+            try {
+                resetToDefaultModel();
+                renderModelMenu();
+                updateActiveModel();
+            } catch (_) { }
+            try {
+                refreshSubscriptionSettingsUi();
+                refreshUsageStats(true);
+                updateUsageDisplay();
+            } catch (_) { }
+            try {
+                if (sessionId) {
+                    localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser)));
+                }
+            } catch (_) { }
+        }
+
+        if (response.validationStatus && response.validationStatus !== 'valid') {
             showKeyValidationNotification(response.validationStatus);
         }
     } catch (error) {
@@ -4788,7 +6283,68 @@ function openSettingsForKeys() {
     }
 }
 
+function openSubscriptionModal() {
+    if (isMultiSelectMode) {
+        exitMultiSelectMode();
+    }
+
+    if (!subscriptionUiInitialized) {
+        subscriptionUiInitialized = true;
+        initSubscriptionSettingsUi();
+        setupRelayConfigUi();
+    }
+
+    try {
+        const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+        if (window.innerWidth <= 640) {
+            closeSidebar();
+        } else {
+            document.body.classList.add('sidebar-collapsed');
+            if (sidebarToggleBtn) sidebarToggleBtn.setAttribute('aria-expanded', 'false');
+        }
+    } catch (_) { }
+
+    safeNavigationCall('pushUiState', {
+        name: 'subscriptionModal',
+        close: async () => {
+            forceCloseSubscriptionModal();
+            return true;
+        }
+    });
+
+    if (elements.subscriptionModal) {
+        const currentRoute = router.getCurrentRoute();
+        if (currentRoute?.name !== 'subscription') {
+            navigationEngine.subscriptionRouteInfo = currentRoute || { name: 'home', params: {} };
+            lastSubscriptionOriginRoute = navigationEngine.subscriptionRouteInfo;
+        }
+        hideAuthOverlay(false, { routeHandled: true, skipHandleBack: true });
+        elements.subscriptionModal.classList.add('visible');
+        if (window.location.hash) {
+            try {
+                const cleanUrl = window.location.pathname + window.location.search;
+                window.history.replaceState(window.history.state || {}, document.title, cleanUrl);
+            } catch (_) { }
+        }
+        setSubscriptionSubpage(lastSubscriptionPage || DEFAULT_SUBSCRIPTION_SECTION);
+        ensureSubscriptionPanelState(lastSubscriptionPage || DEFAULT_SUBSCRIPTION_SECTION);
+        refreshSubscriptionSettingsUi();
+        refreshSubscriptionFromServer().then(() => {
+            refreshSubscriptionSettingsUi();
+        });
+        if (!routeManager.isSubscriptionSyncSuppressed()) {
+            setTimeout(() => {
+                routeManager.syncSubscriptionRoute(routeManager.getActiveSubscriptionSection());
+            }, 0);
+        }
+    }
+}
+
 function openSettingsToPage(pageName) {
+    if (pageName === 'subscription') {
+        openSubscriptionModal();
+        return;
+    }
     if (elements.settingsBtn) {
         elements.settingsBtn.click();
         setTimeout(() => {
@@ -4802,6 +6358,1884 @@ function openSettingsToPage(pageName) {
 }
 
 window.openSettingsToPage = openSettingsToPage;
+
+function normalizeSubscriptionStatus(rawStatus) {
+    const value = String(rawStatus || '').toLowerCase();
+    const numeric = Number(rawStatus);
+    if (!Number.isNaN(numeric) && (numeric === 1 || numeric === -1)) {
+        return 'active';
+    }
+    if (['active', 'trialing', 'paid', 'pro'].includes(value)) {
+        return 'active';
+    }
+    return 'free';
+}
+
+const FORCE_SUBSCRIPTION_ACTIVE = false;
+
+async function openExternalUrl(url) {
+    if (!url) return;
+    const base = API_BASE_URL || 'https://littleaibox.com';
+    let absoluteUrl = url;
+    try {
+        absoluteUrl = new URL(url, base).href;
+    } catch (_) { }
+
+    if (isNativeApp) {
+        try {
+            await Browser.open({ url: absoluteUrl });
+        } catch (error) {
+            console.error(getToastMessage('console.cannotOpenBrowser'), error);
+            try {
+                window.open(absoluteUrl, '_blank');
+            } catch (_) { }
+        }
+        return;
+    }
+
+    try {
+        location.href = url;
+    } catch (_) {
+        try { location.href = absoluteUrl; } catch (_) { }
+    }
+}
+
+function normalizeSubscriptionSource(rawSource) {
+    // Open-source placeholder: subscription source classification removed.
+    return 'none';
+}
+
+function formatSubscriptionDate(value, fallbackKey) {
+    if (!value) return getToastMessage(fallbackKey);
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return String(value);
+    }
+    const locale = (currentUser && currentUser.language) || getCurrentLanguage();
+    return date.toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function formatSubscriptionExpiry(expiresAt) {
+    return formatSubscriptionDate(expiresAt, 'ui.subscriptionExpiresUnknown');
+}
+
+function formatSubscriptionStart(startAt) {
+    return formatSubscriptionDate(startAt, 'ui.subscriptionStartUnknown');
+}
+
+function applyCachedSubscriptionForUi() {
+    if (!sessionId) return false;
+    let cachedUser = null;
+    try {
+        const cachedUserFromStorage = localStorage.getItem(`user_cache_${sessionId}`);
+        if (cachedUserFromStorage) {
+            cachedUser = JSON.parse(cachedUserFromStorage);
+        }
+    } catch (_) {
+        cachedUser = null;
+    }
+    if (!cachedUser || typeof cachedUser !== 'object') return false;
+
+    if (currentUser && typeof currentUser === 'object') {
+        currentUser = mergeSubscriptionFields(cachedUser, currentUser);
+    } else {
+        currentUser = cachedUser;
+    }
+
+    updateSubscriptionIcon();
+    refreshSubscriptionSettingsUi();
+    return true;
+}
+
+async function refreshSubscriptionFromServer() {
+    // Open-source placeholder: subscription sync removed.
+    return false;
+}
+
+async function refreshRedeemPlanCodeFromServer() {
+    // Open-source placeholder: redeem code sync removed.
+    return false;
+}
+
+async function refreshRedeemPlanCodeIfNeeded() {
+    // Open-source placeholder: redeem code logic removed.
+    return false;
+}
+
+async function refreshSubscriptionOnStartup() {
+    // Open-source placeholder: startup subscription refresh removed.
+}
+
+async function syncSubscriptionFromRedirect() {
+    // Open-source placeholder: checkout redirect sync removed.
+}
+
+function resolveSubscriptionState() {
+    const keyTier = getKeyTier();
+    const hasPaidKey = hasConfiguredApiKeyForUi() && keyTier === 'paid';
+    // Open-source placeholder: subscription state is hardcoded to free.
+    return {
+        status: 'free',
+        startAt: null,
+        expiresAt: null,
+        hasPaidKey,
+        hasAccess: hasPaidKey,
+        subscriptionSource: 'none',
+        cancelAtPeriodEnd: false,
+        autoRenew: false
+    };
+}
+
+function calcRedeemRemainingDays(expiresAt) {
+    if (!expiresAt) return 0;
+    const expiresTime = new Date(expiresAt).getTime();
+    if (Number.isNaN(expiresTime)) return 0;
+    const diff = expiresTime - Date.now();
+    if (diff <= 0) return 0;
+    return Math.ceil(diff / (24 * 60 * 60 * 1000));
+}
+
+function resolveRedeemState() {
+    // Open-source placeholder: redeem state removed.
+    return {
+        redeemStartAt: null,
+        redeemExpiresAt: null,
+        remainingDays: 0,
+        pendingDays: 0,
+        pendingApplyAfter: null,
+        pendingConfirmed: false
+    };
+}
+
+const SLASH_CUSTOM_STORAGE_KEY_PREFIX = 'slash_custom_commands';
+const BUILTIN_SLASH_COMMANDS = [];
+let slashLibraryInitialized = false;
+let slashCommandCache = [];
+let slashCommandCacheReady = false;
+let slashCommandCachePromise = null;
+
+function canUseSlashCommands() {
+    if (!currentUser) return false;
+    const state = resolveSubscriptionState();
+    const isPro = state?.status === 'active';
+    const keyTier = getKeyTier ? getKeyTier() : (currentUser?.keyTier || currentUser?.key_tier || 'free');
+    const isByok = hasConfiguredApiKeyForUi() && String(keyTier).toLowerCase() === 'paid';
+    return isPro || isByok;
+}
+
+function getSlashStorageKey() {
+    return `${SLASH_CUSTOM_STORAGE_KEY_PREFIX}:${sessionId || 'guest'}`;
+}
+
+function normalizeSlashCommandName(value) {
+    return String(value || '').trim().replace(/^\/+/, '');
+}
+
+function loadCustomSlashCommands() {
+    const storageKey = getSlashStorageKey();
+    try {
+        const raw = localStorage.getItem(storageKey);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+        return [];
+    }
+}
+
+function saveCustomSlashCommands(commands) {
+    const storageKey = getSlashStorageKey();
+    try {
+        localStorage.setItem(storageKey, JSON.stringify(commands));
+    } catch (_) { }
+}
+
+async function fetchRemoteSlashCommands() {
+    if (!currentUser) return [];
+    try {
+        const result = await makeApiRequest('slash-commands', { method: 'GET' });
+        return Array.isArray(result?.commands) ? result.commands : [];
+    } catch (error) {
+        console.warn('Failed to fetch slash commands:', error);
+        return [];
+    }
+}
+
+async function ensureSlashCommandCache(force = false) {
+    if (!force && slashCommandCacheReady) return slashCommandCache;
+    if (slashCommandCachePromise) return slashCommandCachePromise;
+    slashCommandCachePromise = (async () => {
+        const commands = currentUser ? await fetchRemoteSlashCommands() : loadCustomSlashCommands();
+        slashCommandCache = Array.isArray(commands) ? commands : [];
+        slashCommandCacheReady = true;
+        slashCommandCachePromise = null;
+        return slashCommandCache;
+    })();
+    return slashCommandCachePromise;
+}
+
+function mergeSlashCommands(builtin, custom) {
+    const result = [];
+    const seen = new Set();
+    const append = (cmd, source) => {
+        const name = normalizeSlashCommandName(cmd?.name || '');
+        if (!name || seen.has(name.toLowerCase())) return;
+        seen.add(name.toLowerCase());
+        result.push({ ...cmd, name, source });
+    };
+    builtin.forEach(cmd => append(cmd, 'builtin'));
+    custom.forEach(cmd => append(cmd, 'custom'));
+    return result;
+}
+
+function renderSlashCommandList(listEl, commands, { allowDelete }) {
+    if (!listEl) return;
+    const emptyEl = listEl.querySelector('.subscription-empty-state');
+    listEl.querySelectorAll('.subscription-slash-item').forEach((item) => item.remove());
+    if (!commands.length) {
+        if (emptyEl) emptyEl.style.display = '';
+        return;
+    }
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    commands.forEach((command) => {
+        const item = document.createElement('div');
+        item.className = 'subscription-slash-item';
+        const body = document.createElement('div');
+        const title = document.createElement('div');
+        title.className = 'subscription-slash-item-title';
+        title.textContent = `/${command.name}`;
+        const desc = document.createElement('div');
+        desc.className = 'subscription-slash-item-desc';
+        desc.textContent = command.description || '';
+        body.appendChild(title);
+        if (desc.textContent) body.appendChild(desc);
+        item.appendChild(body);
+        if (allowDelete) {
+            const menuWrap = document.createElement('div');
+            menuWrap.className = 'subscription-slash-menu';
+
+            const menuBtn = document.createElement('button');
+            menuBtn.type = 'button';
+            menuBtn.className = 'subscription-slash-menu-btn';
+            menuBtn.dataset.commandName = command.name;
+            menuBtn.dataset.action = 'menu';
+            menuBtn.setAttribute('aria-haspopup', 'true');
+            menuBtn.setAttribute('aria-expanded', 'false');
+            menuBtn.textContent = '⋯';
+            menuBtn.setAttribute('aria-label', getToastMessage('common.more'));
+
+            const menuPanel = document.createElement('div');
+            menuPanel.className = 'subscription-slash-menu-panel';
+            menuPanel.setAttribute('aria-hidden', 'true');
+
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'subscription-slash-menu-item';
+            editBtn.dataset.commandName = command.name;
+            editBtn.dataset.action = 'edit';
+            editBtn.textContent = getToastMessage('common.edit');
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'subscription-slash-menu-item danger';
+            removeBtn.dataset.commandName = command.name;
+            removeBtn.dataset.action = 'delete';
+            removeBtn.textContent = getToastMessage('common.delete');
+
+            menuPanel.appendChild(editBtn);
+            menuPanel.appendChild(removeBtn);
+            menuWrap.appendChild(menuBtn);
+            menuWrap.appendChild(menuPanel);
+            item.appendChild(menuWrap);
+        }
+        listEl.appendChild(item);
+    });
+}
+
+async function refreshSlashLibraryUi() {
+    const builtinList = document.getElementById('subscription-slash-builtin-list');
+    const customList = document.getElementById('subscription-slash-custom-list');
+    if (!builtinList || !customList) return;
+    if (!canUseSlashCommands()) {
+        renderSlashCommandList(builtinList, [], { allowDelete: false });
+        renderSlashCommandList(customList, [], { allowDelete: true });
+        return;
+    }
+    const allCommands = currentUser ? await ensureSlashCommandCache(true) : loadCustomSlashCommands();
+    const builtinCommands = allCommands.filter(cmd => Number(cmd?.is_builtin) === 1);
+    const customCommands = allCommands.filter(cmd => Number(cmd?.is_builtin) !== 1);
+    renderSlashCommandList(builtinList, builtinCommands, { allowDelete: false });
+    renderSlashCommandList(customList, customCommands, { allowDelete: true });
+}
+
+function getSortedChatIdsForExport() {
+    const sidebarList = elements?.chatHistoryList;
+    const sidebarIds = sidebarList
+        ? Array.from(sidebarList.querySelectorAll('.history-item'))
+            .map((item) => item.dataset.chatId)
+            .filter(Boolean)
+        : [];
+    const fallbackIds = sortChatIdsForSidebar(Object.keys(chats));
+    const sourceIds = sidebarIds.length ? sidebarIds : fallbackIds;
+
+    return sourceIds.filter((id) => {
+        const chat = chats[id];
+        return chat && !chat.isTemp && !chat.isNewlyCreated;
+    });
+}
+
+function refreshExportRecordsUi() {
+    const listEl = document.getElementById('subscription-export-list');
+    if (!listEl) return;
+    const emptyEl = listEl.querySelector('.subscription-empty-state');
+    listEl.querySelectorAll('.subscription-export-item').forEach((item) => item.remove());
+
+    const shouldMultiSelect = exportMultiSelectActive;
+    listEl.classList.remove('multi-select-active');
+
+    const chatIds = getSortedChatIdsForExport();
+    if (selectedExportChatIds.size > 0) {
+        const idSet = new Set(chatIds);
+        Array.from(selectedExportChatIds).forEach((id) => {
+            if (!idSet.has(id)) {
+                selectedExportChatIds.delete(id);
+            }
+        });
+    }
+    if (chatIds.length === 0) {
+        if (emptyEl) emptyEl.style.display = '';
+        return;
+    }
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    chatIds.forEach((chatId) => {
+        const chat = chats[chatId];
+        if (!chat) return;
+        const item = document.createElement('div');
+        item.className = 'subscription-export-item';
+        item.dataset.chatId = chatId;
+        item.setAttribute('role', 'listitem');
+        item.setAttribute('tabindex', '0');
+
+        const left = document.createElement('div');
+        left.className = 'subscription-export-left';
+
+        const checkboxWrap = document.createElement('div');
+        checkboxWrap.className = 'subscription-export-checkbox-wrap';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'subscription-export-checkbox';
+        checkbox.dataset.chatId = chatId;
+        checkbox.setAttribute('aria-label', getToastMessage('ui.subscriptionExportSelectLabel'));
+        checkbox.checked = selectedExportChatIds.has(chatId);
+        item.classList.toggle('selected', checkbox.checked);
+        checkbox.addEventListener('click', (event) => {
+            event.stopPropagation();
+        });
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+                selectedExportChatIds.add(chatId);
+            } else {
+                selectedExportChatIds.delete(chatId);
+            }
+            item.classList.toggle('selected', checkbox.checked);
+            updateBatchExportActions();
+        });
+
+        const title = document.createElement('span');
+        title.className = 'subscription-export-title';
+        title.textContent = chat.title || getToastMessage('ui.untitled');
+
+        checkboxWrap.appendChild(checkbox);
+        left.appendChild(checkboxWrap);
+        left.appendChild(title);
+
+        const exportBtn = document.createElement('button');
+        exportBtn.type = 'button';
+        exportBtn.className = 'btn-secondary subscription-export-single-btn';
+        exportBtn.textContent = getToastMessage('ui.subscriptionExportSingle');
+        exportBtn.dataset.chatId = chatId;
+        exportBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openExportFormatModal((format) => handleChatExport(format, [chatId]));
+        });
+
+        item.appendChild(left);
+        item.appendChild(exportBtn);
+        listEl.appendChild(item);
+
+        item.addEventListener('click', (event) => {
+            if (!exportMultiSelectActive) return;
+            if (event.target && event.target === checkbox) return;
+            checkbox.checked = !checkbox.checked;
+            if (checkbox.checked) {
+                selectedExportChatIds.add(chatId);
+            } else {
+                selectedExportChatIds.delete(chatId);
+            }
+            item.classList.toggle('selected', checkbox.checked);
+            updateBatchExportActions();
+        });
+
+        item.addEventListener('keydown', (event) => {
+            if (!exportMultiSelectActive) return;
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                checkbox.checked = !checkbox.checked;
+                if (checkbox.checked) {
+                    selectedExportChatIds.add(chatId);
+                } else {
+                    selectedExportChatIds.delete(chatId);
+                }
+                item.classList.toggle('selected', checkbox.checked);
+                updateBatchExportActions();
+            }
+        });
+    });
+
+    if (shouldMultiSelect) {
+        requestAnimationFrame(() => {
+            listEl.classList.add('multi-select-active');
+        });
+    }
+    updateBatchExportActions();
+}
+
+function setExportMultiSelectActive(active) {
+    exportMultiSelectActive = !!active;
+    if (!exportMultiSelectActive) {
+        exportBatchActionMode = 'none';
+        const listEl = document.getElementById('subscription-export-list');
+        if (listEl) {
+            listEl.classList.remove('multi-select-active');
+        }
+        selectedExportChatIds.clear();
+        setTimeout(() => {
+            refreshExportRecordsUi();
+        }, 220);
+        updateBatchExportActions();
+        return;
+    }
+    refreshExportRecordsUi();
+    updateBatchExportActions();
+}
+
+function selectAllExportItems() {
+    const listEl = document.getElementById('subscription-export-list');
+    if (!listEl) return;
+    listEl.querySelectorAll('.subscription-export-checkbox').forEach((checkbox) => {
+        const chatId = checkbox.dataset.chatId;
+        checkbox.checked = true;
+        if (chatId) {
+            selectedExportChatIds.add(chatId);
+        }
+    });
+    updateBatchExportActions();
+}
+
+function setupExportRecordsUi() {
+    const batchBtn = document.getElementById('subscription-export-selected-btn');
+    const allBtn = document.getElementById('subscription-export-all-btn');
+    const cancelBtn = document.getElementById('subscription-export-cancel-btn');
+    const confirmBtn = document.getElementById('subscription-export-confirm-btn');
+    setupExportFormatModal();
+    if (batchBtn) {
+        batchBtn.addEventListener('click', () => {
+            if (!exportMultiSelectActive) {
+                exportBatchActionMode = 'batch';
+                setExportMultiSelectActive(true);
+                updateBatchExportActions();
+                return;
+            }
+        });
+    }
+    if (allBtn) {
+        allBtn.addEventListener('click', () => {
+            exportBatchActionMode = 'all';
+            setExportMultiSelectActive(true);
+            selectAllExportItems();
+            requestAnimationFrame(() => {
+                const chatIds = getSortedChatIdsForExport();
+                if (!chatIds || chatIds.length === 0) {
+                    showToast(getToastMessage('ui.subscriptionExportEmpty'), 'warning');
+                    resetExportSelection();
+                    return;
+                }
+                openExportFormatModal(
+                    (format) => handleChatExport(format, chatIds),
+                    () => resetExportSelection()
+                );
+            });
+        });
+    }
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+            resetExportSelection();
+        });
+    }
+    if (confirmBtn) {
+        confirmBtn.addEventListener('click', () => {
+            if (selectedExportChatIds.size === 0) {
+                showToast(getToastMessage('ui.subscriptionExportSelectLabel'), 'warning');
+                return;
+            }
+            const chatIds = Array.from(selectedExportChatIds);
+            openExportFormatModal(
+                (format) => handleChatExport(format, chatIds),
+                () => resetExportSelection()
+            );
+        });
+    }
+}
+
+async function loadRelayConfigIfNeeded() {
+    if (relayConfigLoaded || relayConfigLoading) {
+        return relayConfigPromise;
+    }
+    const relayToggle = document.getElementById('subscription-relay-enable');
+    if (!relayToggle) return;
+    if (!currentUser) return;
+    const state = resolveSubscriptionState();
+    if (!state?.hasAccess) return;
+    relayConfigLoading = true;
+    relayConfigPromise = (async () => {
+        try {
+            const result = await makeAuthRequest('provider-config', { action: 'get' });
+            if (!result?.success) {
+                relayIsEnabled = false;
+                relayHasValidCheck = false;
+                relayConfigLoaded = true;
+                if (relayToggle) {
+                    relayToggle.checked = false;
+                    relayToggle.disabled = true;
+                }
+                clearRelayLocalCache();
+                refreshRelayModelMenu();
+                return;
+            }
+            relayConfigLoaded = true;
+            const providers = Array.isArray(result.providers) ? result.providers : [];
+            const hasValidCheck = providers.some(p => !!(p.api_key && p.base_url));
+            relayHasValidCheck = hasValidCheck;
+            relayToggle.disabled = !hasValidCheck;
+            relayToggle.checked = hasValidCheck ? !!result.relayEnabled : false;
+            relayIsEnabled = hasValidCheck ? !!result.relayEnabled : false;
+            if (!hasValidCheck && result.relayEnabled) {
+                await makeAuthRequest('provider-config', { relayEnabled: false });
+            }
+            const lookup = new Map(providers.map(p => [String(p.provider || '').toLowerCase(), p]));
+            const fillProvider = (provider, keyId, baseId) => {
+                const row = lookup.get(provider);
+                const keyInput = document.getElementById(keyId);
+                const baseInput = document.getElementById(baseId);
+                if (keyInput && row?.api_key) keyInput.value = row.api_key;
+                if (baseInput && row?.base_url) baseInput.value = row.base_url;
+            };
+            fillProvider('gpt', 'subscription-gpt-key', 'subscription-gpt-base');
+            fillProvider('claude', 'subscription-claude-key', 'subscription-claude-base');
+            fillProvider('gemini', 'subscription-gemini-key', 'subscription-gemini-base');
+            fillProvider('grok', 'subscription-grok-key', 'subscription-grok-base');
+            fillProvider('deepseek', 'subscription-deepseek-key', 'subscription-deepseek-base');
+            const providerCards = Array.from(document.querySelectorAll('.subscription-provider-card'));
+            providerCards.forEach((card) => {
+                const provider = String(card.dataset.provider || '').toLowerCase();
+                const row = lookup.get(provider);
+                if (!row?.api_key || !row?.base_url) {
+                    persistRelayModels(provider, []);
+                    persistRelaySelectedModels(provider, []);
+                    renderRelayModelSection(provider, card);
+                    return;
+                }
+                const models = (Array.isArray(row?.models) ? row.models : [])
+                    .map(item => String(item).replace(/^models\//i, ''))
+                    .filter(Boolean)
+                    .slice(0, 200);
+                persistRelayModels(provider, models);
+                if (!models.length) {
+                    persistRelaySelectedModels(provider, []);
+                }
+                renderRelayModelSection(provider, card);
+            });
+            refreshRelayModelMenu();
+        } catch (error) {
+            console.error('Failed to load relay config:', error);
+            relayIsEnabled = false;
+            relayHasValidCheck = false;
+            relayConfigLoaded = true;
+            if (relayToggle) {
+                relayToggle.checked = false;
+                relayToggle.disabled = true;
+            }
+            clearRelayLocalCache();
+            refreshRelayModelMenu();
+        } finally {
+            relayConfigLoading = false;
+        }
+    })();
+    return relayConfigPromise;
+}
+
+function loadRelayModels(provider) {
+    const normalizedProvider = String(provider || '').toLowerCase();
+    const cached = relayModelCache.get(normalizedProvider);
+    if (Array.isArray(cached)) {
+        return cached.map(item => String(item)).filter(Boolean);
+    }
+    try {
+        const raw = localStorage.getItem(`${RELAY_MODEL_STORAGE_PREFIX}${normalizedProvider}`);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        const cleaned = Array.isArray(parsed)
+            ? parsed.map(item => String(item)).filter(Boolean).slice(0, 200)
+            : [];
+        relayModelCache.set(normalizedProvider, cleaned);
+        return cleaned;
+    } catch (_) {
+        return [];
+    }
+}
+
+function persistRelayModels(provider, models) {
+    const normalizedProvider = String(provider || '').toLowerCase();
+    const cleaned = Array.isArray(models)
+        ? models.map(item => String(item)).filter(Boolean).slice(0, 200)
+        : [];
+    relayModelCache.set(normalizedProvider, cleaned);
+    try {
+        localStorage.setItem(`${RELAY_MODEL_STORAGE_PREFIX}${normalizedProvider}`, JSON.stringify(cleaned));
+    } catch (_) { }
+}
+
+function loadRelaySelectedModels(provider) {
+    const normalizedProvider = String(provider || '').toLowerCase();
+    const cached = relaySelectedCache.get(normalizedProvider);
+    if (Array.isArray(cached)) {
+        return cached.map(item => String(item)).filter(Boolean);
+    }
+    try {
+        const raw = localStorage.getItem(`${RELAY_MODEL_SELECTED_PREFIX}${normalizedProvider}`);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        const cleaned = Array.isArray(parsed)
+            ? parsed.map(item => String(item)).filter(Boolean).slice(0, 200)
+            : [];
+        relaySelectedCache.set(normalizedProvider, cleaned);
+        return cleaned;
+    } catch (_) {
+        return [];
+    }
+}
+
+function persistRelaySelectedModels(provider, values) {
+    const normalizedProvider = String(provider || '').toLowerCase();
+    const cleaned = Array.isArray(values)
+        ? values.map(item => String(item)).filter(Boolean).slice(0, 200)
+        : [];
+    relaySelectedCache.set(normalizedProvider, cleaned);
+    try {
+        localStorage.setItem(`${RELAY_MODEL_SELECTED_PREFIX}${normalizedProvider}`, JSON.stringify(cleaned));
+    } catch (_) { }
+}
+
+
+function initRelayModelToggle(wrapper) {
+    if (!wrapper || wrapper.dataset.toggleReady === 'true') return;
+    const toggle = wrapper.querySelector('.subscription-model-toggle');
+    const content = wrapper.querySelector('.subscription-model-content');
+    if (!toggle || !content) return;
+    toggle.addEventListener('click', () => {
+        const isOpen = wrapper.classList.toggle('is-open');
+        content.hidden = !isOpen;
+        toggle.setAttribute('aria-expanded', String(isOpen));
+    });
+    wrapper.dataset.toggleReady = 'true';
+}
+
+function updateRelayModelSummary(wrapper, selectedCount, totalCount) {
+    if (!wrapper) return;
+    const summary = wrapper.querySelector('.subscription-model-summary');
+    if (!summary) return;
+    if (!totalCount) {
+        summary.textContent = getToastMessage('ui.subscriptionRelayModelsEmpty');
+        return;
+    }
+    const currentLang = getCurrentLanguage();
+    summary.textContent = t(currentLang, 'ui.subscriptionRelayModelsSelected', {
+        selected: selectedCount,
+        total: totalCount
+    });
+}
+
+function renderRelayModelSection(provider, card) {
+    if (!card) return;
+    const wrapper = card.querySelector('.subscription-provider-models');
+    if (!wrapper) return;
+    initRelayModelToggle(wrapper);
+    const models = loadRelayModels(provider)
+        .map(item => String(item).replace(/^models\//i, ''));
+    let selected = loadRelaySelectedModels(provider);
+    const list = wrapper.querySelector('.subscription-model-list');
+    const empty = wrapper.querySelector('.subscription-model-empty');
+    const content = wrapper.querySelector('.subscription-model-content');
+    const toggle = wrapper.querySelector('.subscription-model-toggle');
+    if (!list || !empty) return;
+    list.innerHTML = '';
+
+    if (models.length && selected.length === 0) {
+        selected = [...models];
+        persistRelaySelectedModels(provider, selected);
+    }
+    const normalizedSelected = selected.filter(item => models.includes(item));
+    if (normalizedSelected.length !== selected.length) {
+        persistRelaySelectedModels(provider, normalizedSelected);
+    }
+
+    if (!models.length) {
+        empty.style.display = 'block';
+        if (content) content.hidden = true;
+        wrapper.classList.remove('is-open');
+        if (toggle) toggle.setAttribute('aria-expanded', 'false');
+        updateRelayModelSummary(wrapper, 0, 0);
+        return;
+    }
+    empty.style.display = 'none';
+    models.forEach((modelId) => {
+        const label = document.createElement('label');
+        label.className = 'subscription-model-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = modelId;
+        checkbox.checked = normalizedSelected.includes(modelId);
+        checkbox.addEventListener('change', () => {
+            const next = loadRelaySelectedModels(provider);
+            const set = new Set(next);
+            if (checkbox.checked) {
+                set.add(modelId);
+            } else {
+                set.delete(modelId);
+            }
+            const updated = Array.from(set);
+            const totalAfter = relayIsEnabled
+                ? getRelaySelectedModelIds(updated, provider).length
+                : updated.length;
+            if (relayIsEnabled && totalAfter === 0) {
+                checkbox.checked = true;
+                showToast(getToastMessage('ui.subscriptionRelayModelsMinRequired'), 'info');
+                return;
+            }
+            persistRelaySelectedModels(provider, updated);
+            updateRelayModelSummary(wrapper, updated.length, models.length);
+            if (relayIsEnabled) {
+                refreshRelayModelMenu();
+            }
+        });
+        const name = document.createElement('span');
+        name.textContent = formatRelayModelLabel(modelId);
+        label.appendChild(checkbox);
+        label.appendChild(name);
+        list.appendChild(label);
+    });
+    updateRelayModelSummary(wrapper, normalizedSelected.length, models.length);
+}
+
+function getRelaySelectedModelIds(currentProviderModels = null, currentProvider = '') {
+    const providers = ['gpt', 'claude', 'gemini', 'grok', 'deepseek'];
+    const selected = new Set();
+    providers.forEach((provider) => {
+        if (provider === currentProvider && Array.isArray(currentProviderModels)) {
+            currentProviderModels.forEach((modelId) => {
+                if (modelId) selected.add(modelId);
+            });
+            return;
+        }
+        loadRelaySelectedModels(provider).forEach((modelId) => {
+            if (modelId) selected.add(modelId);
+        });
+    });
+    return Array.from(selected);
+}
+
+function refreshRelayModelMenu() {
+    try {
+        renderModelMenu();
+        updateActiveModel();
+    } catch (_) { }
+}
+
+function resolveRelayErrorMessage(rawMessage, fallbackKey = 'ui.subscriptionRelayCheckFailed') {
+    const fallback = getToastMessage(fallbackKey);
+    if (!rawMessage) return fallback;
+    const translated = getToastMessage(rawMessage);
+    return translated && translated !== rawMessage ? translated : rawMessage;
+}
+
+function clearRelayLocalCache() {
+    relayModelCache.clear();
+    relaySelectedCache.clear();
+    try {
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i += 1) {
+            const key = localStorage.key(i);
+            if (!key) continue;
+            if (key.startsWith(RELAY_MODEL_STORAGE_PREFIX) || key.startsWith(RELAY_MODEL_SELECTED_PREFIX)) {
+                keysToRemove.push(key);
+            }
+        }
+        keysToRemove.forEach((key) => {
+            localStorage.removeItem(key);
+        });
+    } catch (_) { }
+}
+
+function setupRelayConfigUi() {
+    const relayToggle = document.getElementById('subscription-relay-enable');
+    if (!relayToggle) return;
+
+    const saveRelayConfig = async (payload) => {
+        try {
+            await makeAuthRequest('provider-config', payload);
+        } catch (error) {
+            showToast(error?.message || getToastMessage('ui.subscriptionRelayCheckFailed'), 'error');
+        }
+    };
+
+    relayToggle.addEventListener('change', () => {
+        if (relayToggle.checked && !relayHasValidCheck) {
+            relayToggle.checked = false;
+            return;
+        }
+        if (relayToggle.checked) {
+            const selectedModels = getRelaySelectedModelIds();
+            if (selectedModels.length === 0) {
+                relayToggle.checked = false;
+                showToast(getToastMessage('ui.subscriptionRelayModelsMinRequired'), 'info');
+                return;
+            }
+        }
+        relayIsEnabled = !!relayToggle.checked;
+        saveRelayConfig({ relayEnabled: !!relayToggle.checked });
+        refreshRelayModelMenu();
+    });
+
+    const providerCards = Array.from(document.querySelectorAll('.subscription-provider-card'));
+    providerCards.forEach((card) => {
+        const provider = String(card.dataset.provider || '').toLowerCase();
+        if (!provider) return;
+        const keyInput = card.querySelector('input[type="password"]');
+        const baseInput = card.querySelector('input[type="text"]');
+        const checkBtn = card.querySelector('.subscription-provider-check');
+        const clearBtn = card.querySelector('.subscription-provider-clear');
+
+        if (checkBtn) {
+            checkBtn.addEventListener('click', async () => {
+                const apiKey = keyInput ? keyInput.value.trim() : '';
+                const baseUrl = baseInput ? baseInput.value.trim() : '';
+                if (!apiKey || !baseUrl) {
+                    showToast(getToastMessage('ui.subscriptionRelayCheckEmpty'), 'info');
+                    return;
+                }
+                try {
+                    const result = await makeAuthRequest('provider-check', {
+                        provider,
+                        apiKey,
+                        baseUrl
+                    });
+                    if (result?.success) {
+                        relayHasValidCheck = true;
+                        relayToggle.disabled = false;
+                        const models = (Array.isArray(result?.models) ? result.models : [])
+                            .map(item => String(item).replace(/^models\//i, ''));
+                        persistRelayModels(provider, models);
+                        renderRelayModelSection(provider, card);
+                        if (relayIsEnabled) {
+                            refreshRelayModelMenu();
+                        }
+                        showToast(getToastMessage('ui.subscriptionRelayCheckSuccess'), 'success');
+                    } else {
+                        persistRelayModels(provider, []);
+                        persistRelaySelectedModels(provider, []);
+                        renderRelayModelSection(provider, card);
+                        refreshRelayModelMenu();
+                        showToast(resolveRelayErrorMessage(result?.error || result?.message), 'error');
+                    }
+                } catch (error) {
+                    persistRelayModels(provider, []);
+                    persistRelaySelectedModels(provider, []);
+                    renderRelayModelSection(provider, card);
+                    refreshRelayModelMenu();
+                    showToast(resolveRelayErrorMessage(error?.message), 'error');
+                }
+            });
+        }
+
+        if (clearBtn) {
+            clearBtn.addEventListener('click', async () => {
+                if (keyInput) keyInput.value = '';
+                if (baseInput) baseInput.value = '';
+                persistRelayModels(provider, []);
+                persistRelaySelectedModels(provider, []);
+                renderRelayModelSection(provider, card);
+                let clearFailed = false;
+                try {
+                    await makeAuthRequest('provider-clear', { provider });
+                } catch (error) {
+                    showToast(resolveRelayErrorMessage(error?.message, 'ui.subscriptionRelayClearFailed'), 'error');
+                    clearFailed = true;
+                }
+
+                const stillHasAny = getRelaySelectedModelIds().length > 0;
+                relayHasValidCheck = stillHasAny;
+                relayToggle.disabled = !stillHasAny;
+                if (!stillHasAny) {
+                    relayToggle.checked = false;
+                    relayIsEnabled = false;
+                    try { await makeAuthRequest('provider-config', { relayEnabled: false }); } catch (_) { }
+                }
+                refreshRelayModelMenu();
+                if (!clearFailed) {
+                    showToast(getToastMessage('ui.subscriptionRelayCleared'), 'success');
+                }
+            });
+        }
+    });
+}
+
+function setupSlashLibraryUi() {
+    if (slashLibraryInitialized) return;
+    const addBtn = document.getElementById('subscription-slash-add-btn');
+    const slashModal = document.getElementById('subscription-slash-modal-overlay');
+    const closeBtn = document.getElementById('subscription-slash-close-btn');
+    const cancelBtn = document.getElementById('subscription-slash-cancel-btn');
+    const form = document.getElementById('subscription-slash-form');
+    const nameInput = document.getElementById('subscription-slash-name');
+    const promptInput = document.getElementById('subscription-slash-prompt');
+    const descInput = document.getElementById('subscription-slash-desc');
+    const saveBtn = document.getElementById('subscription-slash-save-btn');
+    const customList = document.getElementById('subscription-slash-custom-list');
+    let activeMenu = null;
+
+    const resetForm = () => {
+        if (nameInput) nameInput.value = '';
+        if (promptInput) promptInput.value = '';
+        if (descInput) descInput.value = '';
+    };
+
+    const openModal = () => {
+        if (!slashModal) return;
+        slashModal.classList.add('visible');
+        if (nameInput) {
+            setTimeout(() => nameInput.focus(), 0);
+        }
+    };
+
+    const closeModal = () => {
+        if (!slashModal) return;
+        if (form) {
+            delete form.dataset.editingName;
+        }
+        slashModal.classList.remove('visible');
+    };
+
+    if (addBtn) {
+        addBtn.addEventListener('click', () => {
+            resetForm();
+            if (form) delete form.dataset.editingName;
+            openModal();
+        });
+    }
+
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+            closeModal();
+        });
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            closeModal();
+        });
+    }
+
+    if (slashModal) {
+        slashModal.addEventListener('click', (event) => {
+            if (event.target === slashModal) closeModal();
+        });
+    }
+
+    if (saveBtn) {
+        saveBtn.addEventListener('click', async () => {
+            const rawName = normalizeSlashCommandName(nameInput?.value);
+            const prompt = String(promptInput?.value || '').trim();
+            const description = String(descInput?.value || '').trim();
+
+            if (!rawName || !prompt) {
+                showToast(getToastMessage('toast.saveFailed'), 'error');
+                return;
+            }
+
+            const editingName = form?.dataset.editingName || '';
+            try {
+                await upsertSlashCommand({ name: rawName, prompt, description }, editingName);
+                await refreshSlashLibraryUi();
+                closeModal();
+                showToast(getToastMessage('common.success'), 'success');
+            } catch (error) {
+                console.error('Failed to save slash command:', error);
+                const message = error?.message || '';
+                if (message.includes('slash_command_name_conflict')) {
+                    showToast(getToastMessage('toast.slashCommandNameTaken') || '指令名已被占用', 'error');
+                } else if (message.includes('slash_command_not_allowed')) {
+                    showToast(getToastMessage('toast.slashCommandNotAllowed') || '当前权益无法使用该功能', 'error');
+                } else {
+                    showToast(getToastMessage('toast.saveFailed'), 'error');
+                }
+            }
+        });
+    }
+
+    const closeActiveMenu = () => {
+        if (!activeMenu) return;
+        const btn = activeMenu.querySelector('.subscription-slash-menu-btn');
+        const panel = activeMenu.querySelector('.subscription-slash-menu-panel');
+        if (panel) {
+            panel.classList.remove('visible');
+            panel.setAttribute('aria-hidden', 'true');
+        }
+        if (btn) {
+            btn.setAttribute('aria-expanded', 'false');
+        }
+        activeMenu = null;
+    };
+
+    if (customList) {
+        customList.addEventListener('click', async (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+            if (target.classList.contains('subscription-slash-menu-btn')) {
+                const menuWrap = target.closest('.subscription-slash-menu');
+                if (!menuWrap) return;
+                const panel = menuWrap.querySelector('.subscription-slash-menu-panel');
+                if (!panel) return;
+                if (activeMenu && activeMenu !== menuWrap) closeActiveMenu();
+                const isOpen = panel.classList.toggle('visible');
+                panel.setAttribute('aria-hidden', String(!isOpen));
+                target.setAttribute('aria-expanded', String(isOpen));
+                activeMenu = isOpen ? menuWrap : null;
+                return;
+            }
+            if (!target.classList.contains('subscription-slash-menu-item')) return;
+            const name = target.dataset.commandName;
+            const action = target.dataset.action || 'delete';
+            if (!name) return;
+            const commands = await ensureSlashCommandCache(true);
+            if (action === 'edit') {
+                const match = commands.find((cmd) => cmd.name === name);
+                if (!match) return;
+                if (nameInput) nameInput.value = match.name || '';
+                if (promptInput) promptInput.value = match.prompt || '';
+                if (descInput) descInput.value = match.description || '';
+                if (form) form.dataset.editingName = match.name || '';
+                closeActiveMenu();
+                openModal();
+                return;
+            }
+            try {
+                await deleteSlashCommandByName(name);
+                await refreshSlashLibraryUi();
+            } catch (error) {
+                console.error('Failed to delete slash command:', error);
+                showToast(getToastMessage('toast.deleteFailed'), 'error');
+            }
+            closeActiveMenu();
+        });
+    }
+
+    document.addEventListener('click', (event) => {
+        if (!activeMenu) return;
+        if (!(event.target instanceof HTMLElement)) return;
+        if (activeMenu.contains(event.target)) return;
+        closeActiveMenu();
+    });
+
+    slashLibraryInitialized = true;
+    refreshSlashLibraryUi().catch(() => { });
+    closeModal();
+}
+
+let slashSuggestState = {
+    visible: false,
+    items: [],
+    selectedIndex: 0,
+    trigger: null
+};
+
+function getSlashTriggerInfo(text, cursorIndex) {
+    if (!text || cursorIndex == null) return null;
+    const beforeCursor = text.slice(0, cursorIndex);
+    const match = beforeCursor.match(/(^|\s)\/([\p{L}\p{N}_-]*)$/u);
+    if (!match) return null;
+    const prefix = match[2] || '';
+    const tokenStart = (match.index || 0) + match[1].length;
+    return {
+        prefix,
+        rangeStart: tokenStart,
+        rangeEnd: beforeCursor.length
+    };
+}
+
+function hideSlashPanel() {
+    if (!elements.slashCommandPanel) return;
+    elements.slashCommandPanel.classList.remove('visible');
+    elements.slashCommandPanel.setAttribute('aria-hidden', 'true');
+    slashSuggestState.visible = false;
+    slashSuggestState.items = [];
+    slashSuggestState.selectedIndex = 0;
+    slashSuggestState.trigger = null;
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function updateMessageInputHighlight() {
+    const input = elements.messageInput;
+    const highlight = elements.messageInputHighlight;
+    if (!input || !highlight) return;
+    if (input.selectionStart !== input.selectionEnd) {
+        highlight.innerHTML = '';
+        highlight.classList.remove('active');
+        input.classList.remove('slash-highlight-active');
+        return;
+    }
+    const raw = String(input.value || '');
+    const match = raw.match(/^(\s*\/[\p{L}\p{N}_-]+)([\s\S]*)$/u);
+    if (!match) {
+        highlight.innerHTML = '';
+        highlight.classList.remove('active');
+        input.classList.remove('slash-highlight-active');
+        return;
+    }
+    const commandPart = escapeHtml(match[1]);
+    const restPart = escapeHtml(match[2] || '');
+    highlight.innerHTML = `<span class="slash-command-highlight">${commandPart}</span><span class="slash-command-rest">${restPart}</span>`;
+    highlight.classList.add('active');
+    input.classList.add('slash-highlight-active');
+}
+
+function renderSlashPanel(items, selectedIndex) {
+    const panel = elements.slashCommandPanel;
+    if (!panel) return;
+    panel.innerHTML = '';
+    if (!items.length) {
+        hideSlashPanel();
+        return;
+    }
+    items.forEach((command, index) => {
+        const item = document.createElement('div');
+        item.className = 'slash-command-item';
+        if (index === selectedIndex) {
+            item.classList.add('active');
+        }
+        item.dataset.commandName = command.name;
+
+        const main = document.createElement('div');
+        main.className = 'slash-command-main';
+
+        const nameEl = document.createElement('div');
+        nameEl.className = 'slash-command-name';
+        nameEl.textContent = `/${command.name}`;
+
+        const descEl = document.createElement('div');
+        descEl.className = 'slash-command-desc';
+        descEl.textContent = command.description || '';
+
+        main.appendChild(nameEl);
+        if (descEl.textContent) {
+            main.appendChild(descEl);
+        }
+
+        const source = document.createElement('div');
+        source.className = 'slash-command-source';
+        source.textContent = command.source === 'builtin' ? 'Built-in' : 'Custom';
+
+        item.appendChild(main);
+        item.appendChild(source);
+        panel.appendChild(item);
+    });
+    panel.classList.add('visible');
+    panel.setAttribute('aria-hidden', 'false');
+    slashSuggestState.visible = true;
+}
+
+function normalizeSlashMatchName(value) {
+    return normalizeSlashCommandName(value || '').toLowerCase();
+}
+
+async function getSlashCommandsForInput() {
+    const commands = currentUser ? await ensureSlashCommandCache() : loadCustomSlashCommands();
+    if (!Array.isArray(commands)) return [];
+    return commands.map((cmd) => ({
+        ...cmd,
+        source: Number(cmd?.is_builtin) === 1 ? 'builtin' : 'custom'
+    }));
+}
+
+async function updateSlashSuggestions() {
+    const input = elements.messageInput;
+    const panel = elements.slashCommandPanel;
+    if (!input || !panel) return;
+    if (!canUseSlashCommands()) {
+        hideSlashPanel();
+        return;
+    }
+    const cursorIndex = input.selectionStart;
+    const trigger = getSlashTriggerInfo(input.value, cursorIndex);
+    if (!trigger) {
+        hideSlashPanel();
+        return;
+    }
+
+    const commands = await getSlashCommandsForInput();
+    const prefix = normalizeSlashMatchName(trigger.prefix);
+    const filtered = commands.filter(cmd => {
+        const name = normalizeSlashMatchName(cmd?.name || '');
+        const baseName = normalizeSlashMatchName(cmd?.base_name || '');
+        return (name && name.startsWith(prefix)) || (baseName && baseName.startsWith(prefix));
+    });
+    const limited = filtered.slice(0, 8);
+
+    if (!limited.length) {
+        hideSlashPanel();
+        return;
+    }
+
+    slashSuggestState.items = limited;
+    slashSuggestState.selectedIndex = Math.min(slashSuggestState.selectedIndex, limited.length - 1);
+    slashSuggestState.trigger = trigger;
+    renderSlashPanel(limited, slashSuggestState.selectedIndex);
+}
+
+function applySlashSelection(command) {
+    const input = elements.messageInput;
+    if (!input || !slashSuggestState.trigger) return;
+    const { rangeStart, rangeEnd } = slashSuggestState.trigger;
+    const text = input.value;
+    const before = text.slice(0, rangeStart);
+    const after = text.slice(rangeEnd);
+    const insert = `/${command.name} `;
+    const nextValue = `${before}${insert}${after}`;
+    input.value = nextValue;
+    const cursorPos = before.length + insert.length;
+    input.setSelectionRange(cursorPos, cursorPos);
+    input.dispatchEvent(new Event('input'));
+    hideSlashPanel();
+}
+
+function setupSlashCommandInput() {
+    const input = elements.messageInput;
+    const panel = elements.slashCommandPanel;
+    if (!input || !panel) return;
+
+    input.addEventListener('input', () => {
+        slashSuggestState.selectedIndex = 0;
+        updateMessageInputHighlight();
+        updateSlashSuggestions().catch(() => { });
+    });
+
+    input.addEventListener('select', () => {
+        updateMessageInputHighlight();
+    });
+
+    input.addEventListener('keyup', () => {
+        updateMessageInputHighlight();
+    });
+
+    input.addEventListener('scroll', () => {
+        if (elements.messageInputHighlight) {
+            elements.messageInputHighlight.scrollTop = input.scrollTop;
+        }
+    });
+
+    input.addEventListener('keydown', (event) => {
+        if (!slashSuggestState.visible || !slashSuggestState.items.length) return;
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            event.stopPropagation();
+            slashSuggestState.selectedIndex = (slashSuggestState.selectedIndex + 1) % slashSuggestState.items.length;
+            renderSlashPanel(slashSuggestState.items, slashSuggestState.selectedIndex);
+            const activeItem = panel.querySelectorAll('.slash-command-item')[slashSuggestState.selectedIndex];
+            if (activeItem) {
+                activeItem.scrollIntoView({ block: 'nearest' });
+            }
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            event.stopPropagation();
+            slashSuggestState.selectedIndex = (slashSuggestState.selectedIndex - 1 + slashSuggestState.items.length) % slashSuggestState.items.length;
+            renderSlashPanel(slashSuggestState.items, slashSuggestState.selectedIndex);
+            const activeItem = panel.querySelectorAll('.slash-command-item')[slashSuggestState.selectedIndex];
+            if (activeItem) {
+                activeItem.scrollIntoView({ block: 'nearest' });
+            }
+        } else if (event.key === 'Tab' || event.key === ' ') {
+            event.preventDefault();
+            event.stopPropagation();
+            const selected = slashSuggestState.items[slashSuggestState.selectedIndex];
+            if (selected) {
+                applySlashSelection(selected);
+            }
+        } else if (event.key === 'Escape') {
+            event.stopPropagation();
+            hideSlashPanel();
+        }
+    });
+
+    panel.addEventListener('mousedown', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const item = target.closest('.slash-command-item');
+        if (!item) return;
+        event.preventDefault();
+        const name = item.dataset.commandName;
+        const command = slashSuggestState.items.find(cmd => cmd.name === name);
+        if (command) {
+            applySlashSelection(command);
+        }
+    });
+
+    input.addEventListener('blur', () => {
+        setTimeout(() => {
+            if (document.activeElement !== input) {
+                hideSlashPanel();
+            }
+        }, 100);
+    });
+}
+
+function refreshSubscriptionSettingsUi() {
+    const root = document.getElementById('subscription-settings-page');
+    if (!root) return;
+    const modal = document.getElementById('subscription-modal');
+    const subscribeCtaBtn = document.getElementById('subscription-cta-btn');
+    const cardStack = document.getElementById('subscription-card-stack');
+    const relayToggle = document.getElementById('subscription-relay-enable');
+
+    const state = resolveSubscriptionState();
+    if (!state.hasAccess) {
+        relayIsEnabled = false;
+        if (relayToggle) {
+            relayToggle.checked = false;
+            relayToggle.disabled = true;
+        }
+        refreshRelayModelMenu();
+    }
+    updateSubscriptionIcon();
+    root.dataset.subscriptionStatus = state.status;
+    root.dataset.subscriptionAccess = state.hasAccess ? 'true' : 'false';
+    delete root.dataset.subscriptionKeyAccess;
+    root.dataset.subscriptionSource = state.subscriptionSource;
+    const redeemState = resolveRedeemState();
+    const now = Date.now();
+    const officialStartAt = state.startAt ? new Date(state.startAt).getTime() : null;
+    const officialExpiresAt = state.expiresAt ? new Date(state.expiresAt).getTime() : null;
+    const redeemStartAt = redeemState.redeemStartAt ? new Date(redeemState.redeemStartAt).getTime() : null;
+    const redeemExpiresAt = redeemState.redeemExpiresAt ? new Date(redeemState.redeemExpiresAt).getTime() : null;
+    const redeemPendingApplyAfter = redeemState.pendingApplyAfter ? new Date(redeemState.pendingApplyAfter).getTime() : null;
+    const pendingConfirmed = redeemState.pendingConfirmed !== false;
+    const isRedeemPending = pendingConfirmed && (redeemState.pendingDays > 0
+        || (redeemPendingApplyAfter && redeemPendingApplyAfter > now));
+    const officialTimeValid = (!officialStartAt || officialStartAt <= now)
+        && (!officialExpiresAt || officialExpiresAt > now);
+    const hasOfficialActive = state.subscriptionSource === 'official'
+        && state.status === 'active'
+        && officialTimeValid;
+    const redeemInEffect = !!(redeemStartAt && redeemExpiresAt && redeemStartAt <= now && redeemExpiresAt > now);
+    const hasRedeemActive = redeemInEffect
+        || (isRedeemPending && hasOfficialActive)
+        || (state.subscriptionSource === 'redeem' && state.status === 'active');
+    root.dataset.subscriptionOfficialActive = hasOfficialActive ? 'true' : 'false';
+    root.dataset.subscriptionRedeemActive = hasRedeemActive ? 'true' : 'false';
+    if (modal) {
+        modal.dataset.subscriptionStatus = state.status;
+        modal.dataset.subscriptionAccess = state.hasAccess ? 'true' : 'false';
+        delete modal.dataset.subscriptionKeyAccess;
+        modal.dataset.subscriptionSource = state.subscriptionSource;
+        modal.dataset.subscriptionOfficialActive = hasOfficialActive ? 'true' : 'false';
+        modal.dataset.subscriptionRedeemActive = hasRedeemActive ? 'true' : 'false';
+    }
+
+    if (subscribeCtaBtn) {
+        subscribeCtaBtn.style.display = '';
+    }
+
+    const statusTextEl = root.querySelector('.subscription-status-text');
+    if (statusTextEl) {
+        const statusKey = state.hasPaidKey
+            ? 'ui.subscriptionStatusByok'
+            : (state.status === 'active' ? 'ui.subscriptionStatusActive' : 'ui.subscriptionStatusFree');
+        statusTextEl.setAttribute('data-i18n-key', statusKey);
+        statusTextEl.textContent = getToastMessage(statusKey);
+    }
+
+    const isOfficialActive = state.status === 'active' &&
+        ['checkout', 'official', 'creem', 'stripe', 'auto', 'subscription'].includes(state.subscriptionSource);
+    const redeemNoteEl = document.getElementById('subscription-redeem-note');
+    if (redeemNoteEl) {
+        const pendingDays = redeemState.pendingDays > 0 ? redeemState.pendingDays : 0;
+        const remainingDays = redeemState.remainingDays > 0 ? redeemState.remainingDays : 0;
+        const displayDays = pendingDays || remainingDays;
+        if (isOfficialActive && displayDays > 0) {
+            redeemNoteEl.textContent = getToastMessage('ui.subscriptionRedeemPendingInfo', { days: displayDays });
+            redeemNoteEl.hidden = false;
+        } else {
+            redeemNoteEl.hidden = true;
+        }
+    }
+
+    const startRowEl = root.querySelector('.subscription-start-row');
+    if (startRowEl) {
+        startRowEl.style.display = '';
+    }
+
+    const keyNoteEl = root.querySelector('.subscription-key-note');
+    const keyTierEl = root.querySelector('.subscription-key-tier');
+    if (keyNoteEl && keyTierEl) {
+        const hasKeys = hasConfiguredApiKeyForUi();
+        const keyTier = getKeyTier();
+        let tierKey = 'free';
+        let tierLabelKey = 'ui.keyTierFree';
+        let tierNoteKey = 'ui.keyTierFreeNote';
+        if (hasKeys && String(keyTier).toLowerCase() === 'paid') {
+            tierKey = 'paid';
+            tierLabelKey = 'ui.keyTierPaid';
+            tierNoteKey = 'ui.keyTierPaidNote';
+        } else if (hasKeys) {
+            tierKey = 'normal';
+            tierLabelKey = 'ui.keyTierNormal';
+            tierNoteKey = 'ui.keyTierNormalNote';
+        }
+        keyTierEl.dataset.keyTier = tierKey;
+        keyTierEl.setAttribute('data-i18n-key', tierLabelKey);
+        keyTierEl.textContent = getToastMessage(tierLabelKey);
+        keyNoteEl.setAttribute('data-i18n-key', tierNoteKey);
+        keyNoteEl.textContent = getToastMessage(tierNoteKey);
+    }
+    // Open-source placeholder: redeem action buttons removed from the public build.
+
+    if (cardStack && !state.hasPaidKey) {
+        cardStack.classList.remove('is-revealed');
+        const toggleBtn = cardStack.querySelector('.subscription-card-toggle');
+        if (toggleBtn) {
+            toggleBtn.setAttribute('aria-expanded', 'false');
+        }
+    }
+
+    const expiresEl = root.querySelector('[data-subscription-expires]');
+    if (expiresEl) {
+        const expiresText = state.status === 'active'
+            ? formatSubscriptionExpiry(state.expiresAt)
+            : getToastMessage('ui.subscriptionNoExpiry');
+        expiresEl.textContent = expiresText;
+    }
+
+    const startEl = root.querySelector('[data-subscription-start]');
+    if (startEl) {
+        const startText = state.status === 'active'
+            ? formatSubscriptionStart(state.startAt)
+            : getToastMessage('ui.subscriptionNoStart');
+        startEl.textContent = startText;
+    }
+
+    const cancelToggle = document.getElementById('subscription-cancel-toggle');
+    if (cancelToggle) {
+        const canManageAutoRenew = state.status === 'active' &&
+            (state.subscriptionSource === 'checkout' || state.subscriptionSource === 'official');
+        cancelToggle.checked = canManageAutoRenew ? state.autoRenew : false;
+        cancelToggle.disabled = !canManageAutoRenew;
+    }
+
+    const dailyEl = document.getElementById('subscription-daily-usage');
+    if (dailyEl) {
+        const dailyCount = currentUser ? currentUserUsage.count : guestUsageStats.count;
+        dailyEl.textContent = Number.isFinite(dailyCount) ? String(dailyCount) : '-';
+    }
+
+    const monthlyEl = document.getElementById('subscription-monthly-usage');
+    if (monthlyEl) {
+        monthlyEl.textContent = getToastMessage('ui.subscriptionUsageUnknown');
+    }
+
+    let preferredManageTab = null;
+    if (hasRedeemActive && !hasOfficialActive) {
+        preferredManageTab = 'redeem';
+    } else if (hasOfficialActive && !hasRedeemActive) {
+        preferredManageTab = 'auto';
+    }
+    const resolvedManageTab = setSubscriptionManageTab(
+        preferredManageTab || lastSubscriptionManageTab || resolveSubscriptionManageTab(state)
+    );
+    if (resolvedManageTab) {
+        lastSubscriptionManageTab = resolvedManageTab;
+    }
+
+    updateSubscriptionIcon();
+    refreshSlashLibraryUi().catch(() => { });
+    refreshExportRecordsUi();
+    updateSubscriptionLimitsPanel();
+    updateSubscriptionActiveUsageCards();
+    loadRelayConfigIfNeeded();
+}
+
+function updateSubscriptionLimitsPanel() {
+    const card = document.getElementById('subscription-limits-card');
+    if (!card) return;
+    if (!currentUser || !currentUserUsage) {
+        card.style.display = 'none';
+        return;
+    }
+    card.style.display = '';
+    const fallbackLimits = getLimitFallbacksForUi();
+    const items = [
+        {
+            key: 'chat',
+            countDefault: Number(currentUserUsage.requestCount) || 0,
+            countRelay: Number(currentUserUsage.relayRequestCount) || 0,
+            limit: currentUserUsage.limit,
+            warnAt: null
+        },
+        {
+            key: 'richDoc',
+            count: Number(currentUserUsage.richDocAnalysisCount) || 0,
+            limit: currentUserUsage.richDocLimit,
+            warnAt: null
+        },
+        {
+            key: 'image',
+            count: Number(currentUserUsage.imagesCount) || 0,
+            limit: currentUserUsage.imageLimit,
+            warnAt: null
+        },
+        {
+            key: 'cloud',
+            count: Number(currentUserUsage.cloudSyncCount) || 0,
+            limit: currentUserUsage.cloudSyncLimit,
+            warnAt: currentUserUsage.cloudSyncWarnAt
+        }
+    ];
+
+    items.forEach((item) => {
+        const row = card.querySelector(`.subscription-limit-item[data-limit="${item.key}"]`);
+        if (!row) return;
+        const valueEl = row.querySelector('[data-limit-value]');
+        const barEl = row.querySelector('[data-limit-bar]');
+        const defaultBarEl = row.querySelector('[data-limit-bar-default]');
+        const relayBarEl = row.querySelector('[data-limit-bar-relay]');
+        const showRelaySplit = item.key === 'chat' && resolveSubscriptionState().hasAccess;
+        const fallbackLimit = item.key === 'chat'
+            ? fallbackLimits.chatLimit
+            : (item.key === 'richDoc'
+                ? fallbackLimits.richDocLimit
+                : (item.key === 'image'
+                    ? fallbackLimits.imageLimit
+                    : fallbackLimits.cloudSyncLimit));
+        const limit = Number.isFinite(item.limit) || item.limit === Infinity
+            ? item.limit
+            : fallbackLimit;
+        const effectiveWarnAt = (item.key === 'cloud' ? (item.warnAt ?? fallbackLimits.cloudSyncWarnAt) : null);
+        const count = item.key === 'chat'
+            ? Math.max(Number(item.countDefault) || 0, Number(item.countRelay) || 0)
+            : item.count;
+
+        row.classList.remove('is-warning', 'is-orange', 'is-danger', 'is-unlimited');
+
+        const displayCount = Number.isFinite(count) ? count : 0;
+        if (limit == null || !Number.isFinite(limit)) {
+            if (item.key === 'chat' && showRelaySplit) {
+                const labelDefault = getToastMessage('ui.limitChatDefault') || '默认';
+                const labelRelay = getToastMessage('ui.limitChatRelay') || '中转';
+                const safeDefault = Math.max(0, Number(item.countDefault) || 0);
+                const safeRelay = Math.max(0, Number(item.countRelay) || 0);
+                if (valueEl) valueEl.textContent = `${labelDefault} ${safeDefault}/∞ · ${labelRelay} ${safeRelay}/∞`;
+                if (defaultBarEl) defaultBarEl.style.width = '50%';
+                if (relayBarEl) relayBarEl.style.width = '50%';
+                if (relayBarEl) relayBarEl.style.display = '';
+            } else {
+                if (valueEl) valueEl.textContent = `${displayCount}/∞`;
+                if (item.key === 'chat' && defaultBarEl) {
+                    defaultBarEl.style.width = '100%';
+                    if (relayBarEl) relayBarEl.style.display = 'none';
+                } else if (barEl) {
+                    barEl.style.width = '100%';
+                }
+            }
+            row.classList.add('is-unlimited');
+            return;
+        }
+
+        const safeLimit = Math.max(0, Number(limit) || 0);
+        const safeCount = Math.max(0, displayCount);
+        const percent = safeLimit > 0 ? Math.min(safeCount / safeLimit, 1) : 1;
+        if (item.key === 'chat' && showRelaySplit) {
+            const labelDefault = getToastMessage('ui.limitChatDefault') || '默认';
+            const labelRelay = getToastMessage('ui.limitChatRelay') || '中转';
+            const safeDefault = Math.max(0, Number(item.countDefault) || 0);
+            const safeRelay = Math.max(0, Number(item.countRelay) || 0);
+            if (valueEl) valueEl.textContent = `${labelDefault} ${safeDefault}/${safeLimit} · ${labelRelay} ${safeRelay}/${safeLimit}`;
+            const defaultPercent = safeLimit > 0 ? Math.min(safeDefault / safeLimit, 1) : 1;
+            const relayPercent = safeLimit > 0 ? Math.min(safeRelay / safeLimit, 1) : 1;
+            if (defaultBarEl) defaultBarEl.style.width = `${Math.round(defaultPercent * 50)}%`;
+            if (relayBarEl) relayBarEl.style.width = `${Math.round(relayPercent * 50)}%`;
+            if (relayBarEl) relayBarEl.style.display = '';
+        } else {
+            if (valueEl) valueEl.textContent = `${safeCount}/${safeLimit}`;
+            if (item.key === 'chat' && defaultBarEl) {
+                defaultBarEl.style.width = `${Math.round(percent * 100)}%`;
+                if (relayBarEl) relayBarEl.style.display = 'none';
+            } else if (barEl) {
+                barEl.style.width = `${Math.round(percent * 100)}%`;
+            }
+        }
+
+        if (safeLimit > 0) {
+            const warnAt = Number.isFinite(effectiveWarnAt)
+                ? effectiveWarnAt
+                : Math.ceil(safeLimit * 0.7);
+            const orangeAt = Math.ceil(safeLimit * 0.9);
+            if (safeCount >= safeLimit) {
+                row.classList.add('is-danger');
+            } else if (safeCount >= orangeAt) {
+                row.classList.add('is-orange');
+            } else if (safeCount >= warnAt) {
+                row.classList.add('is-warning');
+            }
+        }
+    });
+}
+
+function updateSubscriptionActiveUsageCards() {
+    const dailyEl = document.getElementById('subscription-daily-active-value');
+    const monthlyEl = document.getElementById('subscription-monthly-active-value');
+    if (!dailyEl && !monthlyEl) return;
+    const dailyChars = Number(currentUserUsage?.dailyCharCount) || 0;
+    const dailyExchanges = Number(currentUserUsage?.dailyExchangeCount) || 0;
+    const perDaySuffix = getToastMessage('ui.perDaySuffix') || '/天';
+    const formatPerDay = (value) => {
+        const count = Math.max(0, Number(value) || 0);
+        return `${count}${perDaySuffix}`;
+    };
+    if (dailyEl) {
+        dailyEl.textContent = formatPerDay(dailyChars);
+    }
+    if (monthlyEl) {
+        monthlyEl.textContent = formatPerDay(dailyExchanges);
+    }
+}
+
+function ensureSubscriptionPanelState(preferredSection) {
+    const root = document.getElementById('subscription-settings-page');
+    if (!root) return;
+    if (!root.classList.contains('active')) {
+        root.classList.add('active');
+    }
+    const navActive = document.querySelector('.subscription-nav-item.active');
+    const activeSection = navActive?.dataset.subpage || preferredSection || lastSubscriptionPage || DEFAULT_SUBSCRIPTION_SECTION;
+    const hasActiveSubpage = !!root.querySelector('.subscription-subpage.active');
+    if (!hasActiveSubpage) {
+        const resolvedSection = setSubscriptionSubpage(activeSection);
+        if (resolvedSection && resolvedSection !== lastSubscriptionPage) {
+            lastSubscriptionPage = resolvedSection;
+        }
+    }
+}
+
+function setSubscriptionSubpage(target) {
+    const root = document.getElementById('subscription-settings-page');
+    if (!root) return;
+    const restrictedSections = new Set(['export', 'slash', 'relay']);
+    const state = resolveSubscriptionState();
+    const safeTarget = target || DEFAULT_SUBSCRIPTION_SECTION;
+    const resolvedTarget = (!state.hasAccess && restrictedSections.has(safeTarget))
+        ? DEFAULT_SUBSCRIPTION_SECTION
+        : safeTarget;
+    const tabs = Array.from(document.querySelectorAll('.subscription-nav-item'));
+    const pages = Array.from(root.querySelectorAll('.subscription-subpage'));
+    tabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.subpage === resolvedTarget));
+    pages.forEach((page) => page.classList.toggle('active', page.dataset.subpage === resolvedTarget));
+    if (resolvedTarget === 'usage' && currentUser) {
+        updateSubscriptionLimitsPanel();
+        updateSubscriptionActiveUsageCards();
+        refreshUsageStats(true).catch(err => console.error(`${getToastMessage('console.usageStatsFailed')}:`, err));
+    }
+    return resolvedTarget;
+}
+
+function resolveSubscriptionManageTab(state) {
+    if (state.subscriptionSource === 'redeem') return 'redeem';
+    return 'auto';
+}
+
+function setSubscriptionManageTab(target) {
+    const root = document.getElementById('subscription-settings-page');
+    if (!root) return null;
+    const state = resolveSubscriptionState();
+    const fallbackTab = resolveSubscriptionManageTab(state);
+    const resolvedTab = target
+        || (state.subscriptionSource === 'redeem'
+            ? 'redeem'
+            : (state.subscriptionSource === 'official' ? 'auto' : null))
+        || lastSubscriptionManageTab
+        || fallbackTab;
+    const tabs = Array.from(document.querySelectorAll('.subscription-manage-tab'));
+    const panels = Array.from(document.querySelectorAll('.subscription-manage-panel'));
+    root.dataset.manageTab = resolvedTab;
+    tabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.manageTab === resolvedTab));
+    panels.forEach((panel) => panel.classList.toggle('active', panel.dataset.managePanel === resolvedTab));
+    return resolvedTab;
+}
+
+function initSubscriptionSettingsUi() {
+    const root = document.getElementById('subscription-settings-page');
+    if (!root) return;
+
+    const tabs = Array.from(document.querySelectorAll('.subscription-nav-item'));
+    const nav = document.getElementById('subscription-nav');
+    const navOverlay = document.getElementById('subscription-nav-overlay');
+    const navToggle = document.getElementById('subscription-nav-toggle-btn');
+    const navClose = document.getElementById('subscription-nav-close-btn');
+    const cardStack = document.getElementById('subscription-card-stack');
+    const cardShell = document.getElementById('subscription-card-shell');
+    const cardToggle = cardShell ? cardShell.querySelector('.subscription-card-toggle') : null;
+
+    const openNav = () => {
+        if (nav) nav.classList.add('open');
+        if (navOverlay) navOverlay.classList.add('visible');
+    };
+
+    const closeNav = () => {
+        if (nav) nav.classList.remove('open');
+        if (navOverlay) navOverlay.classList.remove('visible');
+    };
+
+    if (navToggle) navToggle.addEventListener('click', openNav);
+    if (navClose) navClose.addEventListener('click', closeNav);
+    if (navOverlay) navOverlay.addEventListener('click', closeNav);
+    if (cardToggle) {
+        cardToggle.addEventListener('click', () => {
+            if (!cardStack) return;
+            cardStack.classList.toggle('is-revealed');
+            const expanded = cardStack.classList.contains('is-revealed');
+            cardToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        });
+    }
+
+    const setActive = (target) => {
+        return setSubscriptionSubpage(target);
+    };
+
+    tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+            const target = tab.dataset.subpage || 'manage';
+            const resolvedTarget = setActive(target);
+            closeNav();
+            lastSubscriptionPage = resolvedTarget || target;
+            routeManager.syncSubscriptionRoute(resolvedTarget || target, { replace: true });
+        });
+    });
+
+    const manageTabs = Array.from(document.querySelectorAll('.subscription-manage-tab'));
+    if (manageTabs.length) {
+        manageTabs.forEach((tab) => {
+            tab.addEventListener('click', () => {
+                const target = tab.dataset.manageTab || 'auto';
+                const resolvedTab = setSubscriptionManageTab(target);
+                if (resolvedTab) {
+                    lastSubscriptionManageTab = resolvedTab;
+                }
+            });
+        });
+        const initialManageTab = setSubscriptionManageTab(lastSubscriptionManageTab);
+        if (initialManageTab) {
+            lastSubscriptionManageTab = initialManageTab;
+        }
+    }
+
+    // Open-source placeholder: redeem code modal/actions removed.
+    const redeemModal = document.getElementById('subscription-redeem-modal-overlay');
+    const redeemCloseBtn = document.getElementById('subscription-redeem-close-btn');
+    const redeemCancelBtn = document.getElementById('subscription-redeem-cancel-btn');
+    const redeemConfirmBtn = document.getElementById('subscription-redeem-confirm-btn');
+    const redeemInput = document.getElementById('subscription-redeem-input');
+    const subscribeCtaBtn = document.getElementById('subscription-cta-btn');
+    const closeRedeemModal = () => {
+        if (redeemModal) redeemModal.classList.remove('visible');
+    };
+    [redeemCloseBtn, redeemCancelBtn, redeemConfirmBtn].forEach((btn) => {
+        if (btn) btn.addEventListener('click', closeRedeemModal);
+    });
+    if (redeemInput) {
+        redeemInput.disabled = true;
+        redeemInput.placeholder = '';
+    }
+
+    setupSlashLibraryUi();
+    setupExportRecordsUi();
+
+    // Open-source placeholder: subscribe / promo links are disabled.
+    if (subscribeCtaBtn) {
+        subscribeCtaBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            showToast(getToastMessage('ui.comingSoon'), 'info');
+        });
+    }
+
+    // Open-source placeholder: auto-renew update removed.
+    const updateSubscriptionAutoRenew = async () => false;
+
+    const cancelToggle = document.getElementById('subscription-cancel-toggle');
+    const cancelToggleLabel = cancelToggle?.closest('.subscription-toggle');
+    const handleAutoRenewToggleRequest = async (event) => {
+        if (!cancelToggle || cancelToggle.disabled) return;
+        event.preventDefault();
+        const isEnabled = cancelToggle.checked;
+        cancelToggle.disabled = true;
+        if (isEnabled) {
+            const confirmed = await showCustomConfirm(
+                getToastMessage('dialog.subscriptionCancelTitle'),
+                getToastMessage('dialog.subscriptionCancelMessage'),
+                ICONS.HELP,
+                { manageHistory: false }
+            );
+            if (!confirmed) {
+                cancelToggle.disabled = false;
+                return;
+            }
+        }
+        const ok = await updateSubscriptionAutoRenew(!isEnabled);
+        cancelToggle.checked = ok ? !isEnabled : isEnabled;
+        cancelToggle.disabled = false;
+    };
+    if (cancelToggleLabel) {
+        cancelToggleLabel.addEventListener('click', handleAutoRenewToggleRequest);
+    } else if (cancelToggle) {
+        cancelToggle.addEventListener('click', handleAutoRenewToggleRequest);
+    }
+    if (cancelToggle) {
+        cancelToggle.addEventListener('keydown', (event) => {
+            if (event.key === ' ' || event.key === 'Enter') {
+                handleAutoRenewToggleRequest(event);
+            }
+        });
+    }
+
+    setActive(lastSubscriptionPage || 'manage');
+    ensureSubscriptionPanelState(lastSubscriptionPage || 'manage');
+    refreshSubscriptionSettingsUi();
+}
 
 function createInitialAvatar(avatarWrapper, name) {
     if (!avatarWrapper) return;
@@ -4903,6 +8337,10 @@ function setupSettingsModalUI() {
         const profileNavItem = document.querySelector('.settings-nav-item[data-page="profile"]');
         const apiNavItem = document.querySelector('.settings-nav-item[data-page="api"]');
         const securityNavItem = document.querySelector('.settings-nav-item[data-page="security"]');
+
+        if (avatarWrapper) {
+            avatarWrapper.classList.toggle('early-bird', Number(currentUser?.early_bird) === 1);
+        }
 
         const existingInitial = avatarWrapper.querySelector('.avatar-initial-text');
         if (existingInitial) {
@@ -5239,13 +8677,13 @@ function setupSecurityPageUI() {
         if (!mfaModal) return;
         openModal(mfaModal);
         const canvas = mfaModal.querySelector('#security-qr-canvas');
-        drawSecurityQRCode(canvas, null);
+        await drawSecurityQRCode(canvas, null);
         updateManualCodeDisplay(null);
         resetCodeInputs('security-mfa-code');
         try {
             const setupData = await makeAuthRequest('mfa/initiate', {});
             currentMfaSetup = setupData;
-            drawSecurityQRCode(canvas, setupData.otpAuthUrl);
+            await drawSecurityQRCode(canvas, setupData.otpAuthUrl);
             updateManualCodeDisplay(setupData.manualCode);
         } catch (error) {
             console.error('Failed to start MFA setup:', error);
@@ -5416,7 +8854,7 @@ function setupSecurityPageUI() {
     updateCurrentPasswordPlaceholderInput();
 }
 
-function drawSecurityQRCode(canvas, data) {
+async function drawSecurityQRCode(canvas, data) {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#fff';
@@ -5425,6 +8863,7 @@ function drawSecurityQRCode(canvas, data) {
         return;
     }
     try {
+        const qrcodeGenerator = await loadQRCodeGenerator();
         const qr = qrcodeGenerator(0, 'M');
         qr.addData(data);
         qr.make();
@@ -5621,7 +9060,11 @@ function hideAuthOverlay(manageHistory = true, options = {}) {
         elements.chatContainer.style.display = 'flex';
     }
     updateLoginButtonVisibility();
-    if (!currentChatId && (!elements.chatContainer?.innerHTML?.trim() || !welcomePageShown)) {
+    const activeChat = currentChatId ? (chats ? chats[currentChatId] : null) : null;
+    const canTreatAsEmptyTemp = currentChatId && String(currentChatId).startsWith('temp_') &&
+        (!activeChat || (Array.isArray(activeChat.messages) ? activeChat.messages.length : 0) === 0);
+
+    if ((!currentChatId || canTreatAsEmptyTemp) && (!elements.chatContainer?.innerHTML?.trim() || !welcomePageShown)) {
         try {
             showEmptyState();
         } catch (_) { }
@@ -5684,6 +9127,30 @@ function safeNavigationCall(method, ...args) {
     return api[method] ? api[method](...args) : undefined;
 }
 
+function forceCloseSubscriptionModal() {
+    if (!elements.subscriptionModal?.classList.contains('visible')) {
+        return false;
+    }
+    elements.subscriptionModal.classList.remove('visible');
+    return true;
+}
+
+function hideSubscriptionModal(manageHistory = true, options = {}) {
+    if (!forceCloseSubscriptionModal()) {
+        return false;
+    }
+    safeNavigationCall('removeUiStateByName', 'subscriptionModal');
+    handlePanelRouteClose('subscription', manageHistory, false, {
+        getOriginRoute: () => lastSubscriptionOriginRoute,
+        setOriginRoute: (value) => { lastSubscriptionOriginRoute = value; },
+        skipHandleBack: options.skipHandleBack === true
+    });
+    if (navigationEngine) {
+        navigationEngine.subscriptionRouteInfo = null;
+    }
+    return true;
+}
+
 function hideSettingsModal(manageHistory = true, options = {}) {
     if (!elements.settingsModal?.classList.contains('visible')) {
         return false;
@@ -5708,34 +9175,58 @@ function hideSettingsModal(manageHistory = true, options = {}) {
     if (!currentChatId && (!welcomePageShown || !(elements.chatContainer?.innerHTML || '').trim())) {
         showEmptyState();
     }
+    handlePanelRouteClose('settings', manageHistory, skipRouteNavigation, {
+        getOriginRoute: () => lastSettingsOriginRoute,
+        setOriginRoute: (value) => { lastSettingsOriginRoute = value; },
+        skipHandleBack: options.skipHandleBack === true
+    });
+    return true;
+}
+
+function handlePanelRouteClose(routeName, manageHistory, skipRouteNavigation, options = {}) {
     const currentRoute = router.getCurrentRoute();
-    const isSettingsRoute = currentRoute?.name === 'settings';
-    const shouldPop = manageHistory && isSettingsRoute && !skipRouteNavigation;
-    if (shouldPop) {
+    const isPanelRoute = currentRoute?.name === routeName;
+    if (!isPanelRoute) {
+        return;
+    }
+    if (skipRouteNavigation) {
+        if (typeof options.setOriginRoute === 'function') {
+            options.setOriginRoute(null);
+        }
+        return;
+    }
+    const originRoute = typeof options.getOriginRoute === 'function'
+        ? options.getOriginRoute()
+        : null;
+    const fallbackFromChat = currentChatId ? {
+        name: String(currentChatId).startsWith('temp_') ? 'tempChat' : 'chat',
+        params: { chatId: currentChatId }
+    } : { name: 'home', params: {} };
+    const fallbackRoute = originRoute || fallbackFromChat;
+    if (manageHistory) {
         navigationEngine.requestProgrammaticBack({
             skipHandleBack: options.skipHandleBack === true
         });
         requestAnimationFrame(() => {
-            if (router.getCurrentRoute()?.name === 'settings') {
-                const fallbackRoute = lastSettingsOriginRoute || { name: 'home', params: {} };
-                router.navigate(fallbackRoute.name, fallbackRoute.params || {}, { replace: true, silent: true });
-                lastSettingsOriginRoute = null;
+            if (router.getCurrentRoute()?.name === routeName) {
+                router.navigate(fallbackRoute.name, fallbackRoute.params || {}, {
+                    replace: true,
+                    silent: !originRoute
+                });
+                if (typeof options.setOriginRoute === 'function') {
+                    options.setOriginRoute(null);
+                }
             }
         });
-    } else if (isSettingsRoute && !skipRouteNavigation) {
-        const fallbackRoute = lastSettingsOriginRoute || (currentChatId ? {
-            name: String(currentChatId).startsWith('temp_') ? 'tempChat' : 'chat',
-            params: { chatId: currentChatId }
-        } : { name: 'home', params: {} });
-        router.navigate(fallbackRoute.name, fallbackRoute.params || {}, {
-            replace: true,
-            silent: !lastSettingsOriginRoute
-        });
-        lastSettingsOriginRoute = null;
-    } else if (isSettingsRoute && skipRouteNavigation) {
-        lastSettingsOriginRoute = null;
+        return;
     }
-    return true;
+    router.navigate(fallbackRoute.name, fallbackRoute.params || {}, {
+        replace: true,
+        silent: !originRoute
+    });
+    if (typeof options.setOriginRoute === 'function') {
+        options.setOriginRoute(null);
+    }
 }
 
 // 使用统计相关函数
@@ -5895,20 +9386,93 @@ async function fetchUsageStats(forceRefresh = false) {
         const result = await makeApiRequest('user/usage', { signal: usageFetchController.signal });
         if (result.success) {
             currentUserUsage.count = result.count;
-            currentUserUsage.limit = result.limit || (hasConfiguredApiKeyForUi() ? Infinity : LOGGED_IN_LIMIT);
+            currentUserUsage.limit = result.limit || (hasPaidAccessForUi() ? Infinity : LOGGED_IN_LIMIT);
             currentUserUsage.apiMode = result.apiMode || currentUser.api_mode;
             currentUserUsage.hasKeys = typeof result.hasKeys === 'boolean' ? result.hasKeys : hasConfiguredApiKeyForUi();
             if (typeof result.hasKeys === 'boolean') {
                 rememberCustomKeyPresence(result.hasKeys);
             }
+            currentUserUsage.requestCount = typeof result.requestCount === 'number'
+                ? result.requestCount
+                : (currentUserUsage.requestCount || 0);
+            currentUserUsage.relayRequestCount = typeof result.relayRequestCount === 'number'
+                ? result.relayRequestCount
+                : (currentUserUsage.relayRequestCount || 0);
             currentUserUsage.fallbackCount = typeof result.fallbackCount === 'number'
                 ? result.fallbackCount
                 : ((result.fallbackRequestCount || 0) + (result.serverFallbackCount || 0));
             currentUserUsage.fallbackLimit = typeof result.fallbackLimit === 'number' ? result.fallbackLimit : 15;
             currentUserUsage.totalCount = typeof result.totalCount === 'number' ? result.totalCount : currentUserUsage.count;
+            currentUserUsage.richDocAnalysisCount = typeof result.richDocAnalysisCount === 'number'
+                ? result.richDocAnalysisCount
+                : (currentUserUsage.richDocAnalysisCount || 0);
+            currentUserUsage.richDocLimit = typeof result.richDocLimit === 'number'
+                ? result.richDocLimit
+                : (currentUserUsage.richDocLimit || null);
+            currentUserUsage.imagesCount = typeof result.imagesCount === 'number'
+                ? result.imagesCount
+                : (currentUserUsage.imagesCount || 0);
+            currentUserUsage.imageLimit = typeof result.imageLimit === 'number'
+                ? result.imageLimit
+                : (currentUserUsage.imageLimit || null);
+            currentUserUsage.cloudSyncCount = typeof result.cloudSyncCount === 'number'
+                ? result.cloudSyncCount
+                : (currentUserUsage.cloudSyncCount || 0);
+            currentUserUsage.cloudSyncLimit = typeof result.cloudSyncLimit === 'number'
+                ? result.cloudSyncLimit
+                : (currentUserUsage.cloudSyncLimit || null);
+            currentUserUsage.cloudSyncWarnAt = typeof result.cloudSyncWarnAt === 'number'
+                ? result.cloudSyncWarnAt
+                : (currentUserUsage.cloudSyncWarnAt || null);
+            currentUserUsage.dailyCharCount = typeof result.dailyCharCount === 'number'
+                ? result.dailyCharCount
+                : (currentUserUsage.dailyCharCount || 0);
+            currentUserUsage.dailyExchangeCount = typeof result.dailySessionCount === 'number'
+                ? result.dailySessionCount
+                : (typeof result.dailyExchangeCount === 'number'
+                    ? result.dailyExchangeCount
+                    : (currentUserUsage.dailyExchangeCount || 0));
+
+            const serverSnapshot = {
+                count: Number(currentUserUsage.count) || 0,
+                fallbackCount: Number(currentUserUsage.fallbackCount) || 0,
+                richDocAnalysisCount: Number(currentUserUsage.richDocAnalysisCount) || 0,
+                imagesCount: Number(currentUserUsage.imagesCount) || 0,
+                cloudSyncCount: Number(currentUserUsage.cloudSyncCount) || 0,
+                dailyCharCount: Number(currentUserUsage.dailyCharCount) || 0,
+                dailyExchangeCount: Number(currentUserUsage.dailyExchangeCount) || 0
+            };
+
+            if (usageOptimisticFloor && Date.now() < usageOptimisticExpiresAt) {
+                currentUserUsage.count = Math.max(serverSnapshot.count, Number(usageOptimisticFloor.count) || 0);
+                currentUserUsage.fallbackCount = Math.max(serverSnapshot.fallbackCount, Number(usageOptimisticFloor.fallbackCount) || 0);
+                currentUserUsage.richDocAnalysisCount = Math.max(serverSnapshot.richDocAnalysisCount, Number(usageOptimisticFloor.richDocAnalysisCount) || 0);
+                currentUserUsage.imagesCount = Math.max(serverSnapshot.imagesCount, Number(usageOptimisticFloor.imagesCount) || 0);
+                currentUserUsage.cloudSyncCount = Math.max(serverSnapshot.cloudSyncCount, Number(usageOptimisticFloor.cloudSyncCount) || 0);
+                currentUserUsage.dailyCharCount = Math.max(serverSnapshot.dailyCharCount, Number(usageOptimisticFloor.dailyCharCount) || 0);
+                currentUserUsage.dailyExchangeCount = Math.max(serverSnapshot.dailyExchangeCount, Number(usageOptimisticFloor.dailyExchangeCount) || 0);
+
+                const serverCaughtUp = serverSnapshot.count >= (Number(usageOptimisticFloor.count) || 0)
+                    && serverSnapshot.fallbackCount >= (Number(usageOptimisticFloor.fallbackCount) || 0)
+                    && serverSnapshot.richDocAnalysisCount >= (Number(usageOptimisticFloor.richDocAnalysisCount) || 0)
+                    && serverSnapshot.imagesCount >= (Number(usageOptimisticFloor.imagesCount) || 0)
+                    && serverSnapshot.cloudSyncCount >= (Number(usageOptimisticFloor.cloudSyncCount) || 0)
+                    && serverSnapshot.dailyCharCount >= (Number(usageOptimisticFloor.dailyCharCount) || 0)
+                    && serverSnapshot.dailyExchangeCount >= (Number(usageOptimisticFloor.dailyExchangeCount) || 0);
+
+                if (serverCaughtUp) {
+                    usageOptimisticFloor = null;
+                    usageOptimisticExpiresAt = 0;
+                }
+            } else if (usageOptimisticFloor) {
+                usageOptimisticFloor = null;
+                usageOptimisticExpiresAt = 0;
+            }
 
             if (fetchId === usageFetchSeq) {
                 updateUsageDisplay();
+                updateSubscriptionLimitsPanel();
+                updateSubscriptionActiveUsageCards();
             }
         }
     } catch (error) {
@@ -5980,6 +9544,10 @@ function updateUsageDisplay() {
     }
 
     const usage = checkUsageLimit();
+    const resolvedLimit = Number.isFinite(usage.limit) ? String(usage.limit) : '∞';
+    const resolvedFallbackLimit = Number.isFinite(currentUserUsage?.fallbackLimit)
+        ? String(currentUserUsage.fallbackLimit)
+        : resolvedLimit;
     let text;
 
     const hasKeys = (typeof (currentUserUsage?.hasKeys) === 'boolean')
@@ -5991,11 +9559,11 @@ function updateUsageDisplay() {
         : 0;
 
     if (!hasKeys) {
-        text = getToastMessage('ui.todayUsageNoKeys', { count: usage.count });
+        text = getToastMessage('ui.todayUsageNoKeys', { count: usage.count, limit: resolvedLimit });
     } else if ((currentUserUsage?.apiMode) === 'server_fallback') {
-        text = getToastMessage('ui.todayUsageServerFallback', { count: fallbackCount });
+        text = getToastMessage('ui.todayUsageServerFallback', { count: fallbackCount, limit: resolvedFallbackLimit });
     } else {
-        text = getToastMessage('ui.todayUsage', { count: usage.count });
+        text = getToastMessage('ui.todayUsage', { count: usage.count, limit: resolvedLimit });
     }
 
     if (elements.usageStats) {
@@ -6078,6 +9646,10 @@ async function uploadImage(file) {
 // 认证相关函数
 async function _makeRequest(prefix, endpoint, options = {}) {
     const { isSessionCheck = false, isBackgroundSync = false, suppressAutoLogout = false } = options;
+    if (prefix === '/api/') {
+        const mocked = buildOpenSourceMockApiResult(endpoint, options);
+        if (mocked) return mocked;
+    }
 
     const headers = {
         'Content-Type': 'application/json',
@@ -6086,13 +9658,27 @@ async function _makeRequest(prefix, endpoint, options = {}) {
 
     if (sessionId) {
         headers['X-Session-ID'] = sessionId;
+        const fingerprint = await getDeviceFingerprint();
+        if (fingerprint && fingerprint !== 'fingerprint_unavailable') {
+            headers['X-Device-Fingerprint'] = fingerprint;
+        }
     } else if (prefix === '/api/') {
         headers['X-Visitor-ID'] = await getGuestVisitorId();
     }
 
 
     try {
-        const response = await fetch(`${prefix}${endpoint}`, { ...options, headers });
+        const { signal: externalSignal, timeoutMs, retries, retryDelayMs, ...fetchOptions } = options;
+        const response = await fetchWithRetry(
+            `${prefix}${endpoint}`,
+            { ...fetchOptions, headers },
+            {
+                signal: externalSignal || null,
+                timeoutMs: typeof timeoutMs === 'number' ? timeoutMs : 30000,
+                retries: typeof retries === 'number' ? retries : 1,
+                retryDelayMs: typeof retryDelayMs === 'number' ? retryDelayMs : 600
+            }
+        );
 
         if (response.status === 401 && (currentUser || sessionId)) {
             const error = new Error(getToastMessage('errors.sessionInvalidOrExpired'));
@@ -6118,6 +9704,8 @@ async function _makeRequest(prefix, endpoint, options = {}) {
                 const expiredSessionId = sessionId;
                 sessionId = null;
                 currentUser = null;
+                cachedDeviceFingerprint = null;
+                try { localStorage.removeItem(DEVICE_FP_STORAGE_KEY); } catch (_) { }
                 rememberCustomKeyPresence(false);
                 refreshSecurityMfaToggleFromUser?.();
                 updateCurrentPasswordPlaceholderInput();
@@ -6139,10 +9727,14 @@ async function _makeRequest(prefix, endpoint, options = {}) {
                 const responseText = await response.text();
                 if (responseText.trim()) {
                     const result = JSON.parse(responseText);
-                    errorMessage = result.error || errorMessage;
+                    errorMessage = result.error || result.message || errorMessage;
                 }
             } catch (parseError) {
                 // 如果解析失败，使用默认错误消息
+            }
+            const translated = getToastMessage(errorMessage);
+            if (translated && translated !== errorMessage) {
+                errorMessage = translated;
             }
             const error = new Error(errorMessage);
             error.status = response.status;
@@ -6167,7 +9759,12 @@ async function _makeRequest(prefix, endpoint, options = {}) {
         }
 
         if (result.success === false) {
-            const error = new Error(result.error || 'API returned a failure status.');
+            let errorMessage = result.error || result.message || 'API returned a failure status.';
+            const translated = getToastMessage(errorMessage);
+            if (translated && translated !== errorMessage) {
+                errorMessage = translated;
+            }
+            const error = new Error(errorMessage);
             error.isApiError = true;
             throw error;
         }
@@ -6192,11 +9789,19 @@ async function _makeRequest(prefix, endpoint, options = {}) {
 }
 
 function makeAuthRequest(endpoint, data, extraOptions = {}) {
+    const rawMethod = extraOptions?.method || 'POST';
+    const method = String(rawMethod).toUpperCase();
     const options = {
-        method: 'POST',
-        body: JSON.stringify(data),
+        method,
         ...(extraOptions || {})
     };
+    if (method !== 'GET' && method !== 'HEAD') {
+        if (options.body == null) {
+            options.body = JSON.stringify(data);
+        }
+    } else {
+        delete options.body;
+    }
 
     if (endpoint === 'me') {
         options.isSessionCheck = true;
@@ -6227,7 +9832,7 @@ async function fetchWeeklyFeatureStatus() {
             if (wasExpired && result.can_use && !result.expires_at) {
                 aiParameters = {
                     systemPrompt: '',
-                    temperature: 0.5,
+                    temperature: 1,
                     topK: 40,
                     topP: 0.95,
                 };
@@ -6329,11 +9934,18 @@ async function applyAuthenticatedSession(result, options = {}) {
         throw new Error(getToastMessage('errors.serverError'));
     }
 
+    cachedDeviceFingerprint = null;
+    try { localStorage.removeItem(DEVICE_FP_STORAGE_KEY); } catch (_) { }
     sessionId = result.sessionId;
     localStorage.setItem('sessionId', sessionId);
     localStorage.setItem('userId', result.user?.id || '');
     currentUser = result.user;
+    startPeriodicSync();
+    slashCommandCacheReady = false;
+    slashCommandCache = [];
     rememberCustomKeyPresence(!!(currentUser.custom_api_key || currentUser.custom_api_key_t));
+    updateSubscriptionIcon();
+    refreshSubscriptionSettingsUi();
     updateCurrentPasswordPlaceholderInput();
     refreshSecurityMfaToggleFromUser?.();
     window.currentUser = result.user;
@@ -6359,6 +9971,19 @@ async function applyAuthenticatedSession(result, options = {}) {
 
     await deleteChatsFromDB('guest');
     localStorage.removeItem('usage_stats_guest');
+    localStorage.removeItem('guestThemeSettings');
+    localStorage.removeItem('pending_background_tasks');
+    sessionStorage.removeItem('guest_selectedLanguage');
+    localStorage.removeItem(DOC_IMAGE_UPLOAD_QUEUE_KEY);
+    localStorage.removeItem(CLOUD_SYNC_QUEUE_KEY);
+    guestApiState = { keyOne: '', keyTwo: '', mode: 'mixed', toggle: '0', keyTier: 'free' };
+    localStorage.removeItem('guest_api_key_one');
+    localStorage.removeItem('guest_api_key_two');
+    localStorage.removeItem('guest_api_mode');
+    localStorage.removeItem('guest_api_key_toggle');
+    localStorage.removeItem('guest_api_key_tier');
+    guestUsageStats = { count: 0, limit: GUEST_LIMIT, loaded: false };
+    guestThemeSettings = { preset: 'light', font: 'system' };
     Object.keys(localStorage).forEach(key => {
         if (key.startsWith('pending_chat_')) {
             localStorage.removeItem(key);
@@ -6414,14 +10039,14 @@ async function applyAuthenticatedSession(result, options = {}) {
                 .catch(() => finalizePostLoginUI(false));
         } else {
             try {
-                const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'zh-CN';
+                const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'en';
                 const defaultLang = (browserLang && (browserLang.startsWith('zh-TW') || browserLang.startsWith('zh-HK'))) ? 'zh-TW'
                     : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
                         : (browserLang && browserLang.startsWith('ja')) ? 'ja'
                             : (browserLang && browserLang.startsWith('ko')) ? 'ko'
                                 : (browserLang && browserLang.startsWith('es')) ? 'es'
                                     : (browserLang && browserLang.startsWith('en')) ? 'en'
-                                        : 'zh-CN';
+                                        : 'en';
                 localStorage.setItem('selectedLanguage', defaultLang);
                 currentUser.language = defaultLang;
                 try {
@@ -6438,8 +10063,20 @@ async function applyAuthenticatedSession(result, options = {}) {
     resetToDefaultModel();
     refreshUsageStats().catch(err => console.error(`${getToastMessage('console.usageStatsFailed')}:`, err));
     fetchWeeklyFeatureStatus().catch(err => console.error(`${getToastMessage('console.weeklyFeatureStatusFailed')}:`, err));
-    loadUserAIParameters().catch(err => console.error(`${getToastMessage('console.aiParametersLoadFailed')}:`, err));
-    loadChats(true).catch(err => console.error(`${getToastMessage('console.chatHistoryLoadFailed')}:`, err));
+    try { sessionStorage.setItem('chat_sync_on_login', '1'); } catch (_) { }
+    Promise.allSettled([
+        loadUserAIParameters(),
+        loadChats(true)
+    ]).then(results => {
+        const [paramsResult, chatsResult] = results;
+        if (paramsResult.status === 'rejected') {
+            console.error(`${getToastMessage('console.aiParametersLoadFailed')}:`, paramsResult.reason);
+        }
+        if (chatsResult.status === 'rejected') {
+            console.error(`${getToastMessage('console.chatHistoryLoadFailed')}:`, chatsResult.reason);
+        }
+    });
+    refreshSubscriptionOnStartup().catch(err => console.error('Failed to refresh subscription after login:', err));
     hideLoadingScreen();
 
     makeAuthRequest('me', {}).then(result => {
@@ -6549,6 +10186,7 @@ async function logout() {
     }
 
     const sessionIdToClean = sessionId;
+    const userIdToClean = currentUser?.id || null;
 
     try {
         if (sessionId) {
@@ -6560,20 +10198,37 @@ async function logout() {
         notifyBackendCacheInvalidation('user_logout', { sessionId: sessionIdToClean });
         sessionId = null;
         currentUser = null;
+        slashCommandCacheReady = false;
+        slashCommandCache = [];
+        hideSlashPanel();
         rememberCustomKeyPresence(false);
         refreshSecurityMfaToggleFromUser?.();
         updateCurrentPasswordPlaceholderInput();
+        updateSubscriptionIcon();
+        refreshSubscriptionSettingsUi();
         simpleCache.cache.clear();
+        simpleCache.expiry.clear();
         localStorage.removeItem('sessionId');
+        localStorage.removeItem('userId');
+        localStorage.removeItem('userThemeSettingsUpdatedAt');
+        sessionStorage.removeItem('key_validation_last_check_ts');
+        sessionStorage.removeItem('chat_sync_on_login');
 
         if (sessionIdToClean) {
             localStorage.removeItem(`user_cache_${sessionIdToClean}`);
+            asyncStorage.removeItem(`user_cache_${sessionIdToClean}`).catch(() => { });
         }
-
+        if (userIdToClean) {
+            localStorage.removeItem(`chat_cache_warmed_${userIdToClean}`);
+            localStorage.removeItem(`migrated_client_message_ids_${userIdToClean}`);
+            localStorage.removeItem(`client_message_id_backfill_done_${userIdToClean}`);
+            localStorage.removeItem(`${DOC_IMAGE_UPLOAD_QUEUE_KEY}_${userIdToClean}`);
+            localStorage.removeItem(`${CLOUD_SYNC_QUEUE_KEY}_${userIdToClean}`);
+        }
         // 清理用户和访客数据
         try {
-            if (currentUser?.id) {
-                await deleteChatsFromDB(currentUser.id);
+            if (userIdToClean) {
+                await deleteChatsFromDB(userIdToClean);
             }
             await deleteChatsFromDB('guest');
             localStorage.removeItem('usage_stats_guest');
@@ -6597,23 +10252,48 @@ async function logout() {
 
         chats = {};
         currentChatId = null;
+        sidebarElementsCache.clear();
+        if (elements?.chatHistoryList) {
+            elements.chatHistoryList.innerHTML = '';
+        }
         attachments = [];
         chatDraftStore.clear();
         activeResponses.clear();
-        currentUserUsage = { count: 0, limit: LOGGED_IN_LIMIT, apiMode: 'mixed' };
+        currentUserUsage = {
+            count: 0,
+            limit: LOGGED_IN_LIMIT,
+            apiMode: 'mixed',
+            richDocAnalysisCount: 0,
+            richDocLimit: null,
+            imagesCount: 0,
+            imageLimit: null,
+            cloudSyncCount: 0,
+            cloudSyncLimit: null,
+            cloudSyncWarnAt: null
+        };
         weeklyFeatureStatus = { can_use: true, expires_at: null, loaded: false };
 
         aiParameters = {
             systemPrompt: '',
-            temperature: 0.5,
+            temperature: 1,
             topK: 40,
             topP: 0.95,
             taskPreset: ''
         };
 
+        relayIsEnabled = false;
+        relayHasValidCheck = false;
+        relayConfigLoaded = false;
+        relayConfigLoading = false;
+        clearRelayLocalCache();
+        resetDocImageUploadRuntimeState();
+        resetCloudSyncRuntimeState();
+
         currentQuote = null;
         wasImageGenerated = false;
         guestVisitorId = null;
+        cachedDeviceFingerprint = null;
+        try { localStorage.removeItem(DEVICE_FP_STORAGE_KEY); } catch (_) { }
 
         if (weeklyTimerInterval) clearInterval(weeklyTimerInterval);
 
@@ -6629,12 +10309,12 @@ async function logout() {
 
             setTimeout(() => {
                 // 应用浏览器默认语言
-                const browserLang = navigator.language || navigator.languages[0] || 'zh-CN';
+                const browserLang = navigator.language || navigator.languages[0] || 'en';
                 const defaultLang = browserLang.startsWith('zh') ? 'zh-CN' :
                     browserLang.startsWith('ja') ? 'ja' :
                         browserLang.startsWith('ko') ? 'ko' :
                             browserLang.startsWith('es') ? 'es' :
-                                browserLang.startsWith('en') ? 'en' : 'zh-CN';
+                                browserLang.startsWith('en') ? 'en' : 'en';
 
                 applyLanguage(defaultLang).then(() => {
                     intentAnalyzer.clearKeywordCache();
@@ -6736,6 +10416,7 @@ async function checkSession() {
     const cachedUser = simpleCache.get(`user_session_${sessionId}`);
     if (cachedUser) {
         currentUser = cachedUser;
+        startPeriodicSync();
         updateCurrentPasswordPlaceholderInput();
         refreshSecurityMfaToggleFromUser?.();
         if (currentUser.language) {
@@ -6745,10 +10426,14 @@ async function checkSession() {
         sessionValidationPromise = makeAuthRequest('me').then(async result => {
             if (result.success && result.user) {
                 const previousLanguage = currentUser?.language || null;
-                currentUser = { ...(currentUser || {}), ...result.user };
+                currentUser = mergeSubscriptionFields(currentUser, {
+                    ...(currentUser || {}),
+                    ...result.user
+                });
+                startPeriodicSync();
                 updateCurrentPasswordPlaceholderInput();
                 refreshSecurityMfaToggleFromUser?.();
-                simpleCache.set(`user_session_${sessionId}`, currentUser, 60000);
+                simpleCache.set(`user_session_${sessionId}`, currentUser, 90000);
 
                 if (result.user.language) {
                     asyncStorage.setItem('selectedLanguage', result.user.language);
@@ -6776,6 +10461,7 @@ async function checkSession() {
     }
 
     const cachedUserFromStorage = localStorage.getItem(`user_cache_${sessionId}`);
+    let hasValidCachedUser = false;
     if (cachedUserFromStorage) {
         try {
             currentUser = JSON.parse(cachedUserFromStorage);
@@ -6784,13 +10470,16 @@ async function checkSession() {
             if (currentUser && typeof currentUser === 'object') {
                 delete currentUser.custom_api_key;
                 delete currentUser.custom_api_key_t;
+                hasValidCachedUser = true;
             }
 
-            if (currentUser.language) {
+            if (currentUser?.language) {
                 localStorage.setItem('selectedLanguage', currentUser.language);
             }
         } catch (e) {
             console.error(`${getToastMessage('console.failedToParseCachedUser')}:`, e);
+            try { localStorage.removeItem(`user_cache_${sessionId}`); } catch (_) { }
+            currentUser = null;
         }
     }
 
@@ -6800,11 +10489,12 @@ async function checkSession() {
 
             if (result.success && result.user) {
                 const previousLanguage = currentUser?.language || null;
-                currentUser = result.user;
+                currentUser = mergeSubscriptionFields(currentUser, result.user);
+                startPeriodicSync();
                 rememberCustomKeyPresence(!!(currentUser.custom_api_key || currentUser.custom_api_key_t));
                 updateCurrentPasswordPlaceholderInput();
                 refreshSecurityMfaToggleFromUser?.();
-                simpleCache.set(`user_session_${sessionId}`, result.user, 60000);
+                simpleCache.set(`user_session_${sessionId}`, result.user, 90000);
 
                 if (currentUser.theme_settings) {
                     if (currentUser.theme_settings.preset) {
@@ -6852,10 +10542,17 @@ async function checkSession() {
         }
     })();
 
-    if (cachedUserFromStorage) {
+    if (hasValidCachedUser) {
         return true;
     }
     return sessionValidationPromise;
+}
+
+function clearByokFallbackHold() {
+    try {
+        localStorage.removeItem('byok_fallback_hold');
+        localStorage.removeItem('byok_fallback_hold_until');
+    } catch (_) { }
 }
 
 async function updateApiKey(apiKey, mode = 'mixed', options = {}) {
@@ -6879,6 +10576,7 @@ async function updateApiKey(apiKey, mode = 'mixed', options = {}) {
         currentUser.api_mode = serverMode;
         currentUser.keyTier = serverKeyTier || (hasAnyKey ? (currentUser.keyTier || 'free') : 'free');
         rememberCustomKeyPresence(hasAnyKey);
+        clearByokFallbackHold();
 
         if (!suppressToast) {
             if (context === 'mode') {
@@ -6892,6 +10590,9 @@ async function updateApiKey(apiKey, mode = 'mixed', options = {}) {
         }
         if (context !== 'mode') {
             updateUI();
+            try {
+                refreshSubscriptionSettingsUi();
+            } catch (_) { }
             if (!currentChatId) {
                 showEmptyState();
             }
@@ -6907,6 +10608,9 @@ async function updateApiKey(apiKey, mode = 'mixed', options = {}) {
                 updateUsageDisplay();
             }
         } catch (_) { }
+        if (context !== 'mode') {
+            temporarilyDisableSendButton(400);
+        }
 
         if (!hasAnyKey) {
             try {
@@ -6935,6 +10639,16 @@ function shouldPreserveEphemeralChat(chatId, chatData) {
     if (!chatData) return false;
     if (chatData.isTemp) return true;
     return String(chatId || '').startsWith('temp_');
+}
+
+function isChatPromoted(chatId, chatData = null) {
+    const resolvedChat = chatData || chats?.[chatId] || null;
+    if (!resolvedChat) {
+        return !String(chatId || '').startsWith('temp_');
+    }
+    if (resolvedChat.isTemp || resolvedChat.isNewlyCreated) return false;
+    const resolvedId = chatId || resolvedChat.id;
+    return !String(resolvedId || '').startsWith('temp_');
 }
 
 function extractEphemeralChats(source = chats) {
@@ -6966,12 +10680,203 @@ function replaceChatsPreservingEphemeral(nextChats = {}) {
     chats = mergeEphemeralChats(nextChats || {}, ephemeral);
 }
 
+function isServerChatNewer(localUpdatedAt, serverUpdatedAt) {
+    if (!serverUpdatedAt) return false;
+    if (!localUpdatedAt) return true;
+    const serverTime = Date.parse(serverUpdatedAt);
+    const localTime = Date.parse(localUpdatedAt);
+    if (Number.isNaN(serverTime)) return false;
+    if (Number.isNaN(localTime)) return true;
+    return serverTime > localTime;
+}
+
+function pickSafeFetchedMessages(result, existingMessages = null, context = 'chat-sync') {
+    if (Array.isArray(result?.messages)) {
+        return { ok: true, messages: result.messages };
+    }
+
+    const hasMessagesField = !!(result && Object.prototype.hasOwnProperty.call(result, 'messages'));
+    if (result?.success || hasMessagesField) {
+        console.warn(`[${context}] invalid messages payload, keep local cache`, {
+            hasMessagesField,
+            messagesType: typeof result?.messages
+        });
+    }
+
+    if (Array.isArray(existingMessages)) {
+        return { ok: false, messages: existingMessages };
+    }
+    return { ok: false, messages: [] };
+}
+
+function extractMessageMatchText(message) {
+    if (!message || typeof message !== 'object') return '';
+    const content = message.content;
+    if (typeof content === 'string') return content.trim();
+    if (content && typeof content === 'object') {
+        if (typeof content.content === 'string') return content.content.trim();
+    }
+    return '';
+}
+
+function readMessageCitations(message) {
+    if (!message || typeof message !== 'object') return null;
+    if (Array.isArray(message.citations) && message.citations.length > 0) {
+        return message.citations;
+    }
+    const content = message.content;
+    if (content && typeof content === 'object' && Array.isArray(content.citations) && content.citations.length > 0) {
+        return content.citations;
+    }
+    return null;
+}
+
+function readMessageReasoning(message) {
+    if (!message || typeof message !== 'object') return '';
+    if (typeof message.reasoning === 'string' && message.reasoning.trim()) {
+        return message.reasoning;
+    }
+    const content = message.content;
+    if (content && typeof content === 'object' && typeof content.reasoning === 'string' && content.reasoning.trim()) {
+        return content.reasoning;
+    }
+    return '';
+}
+
+function mergeFetchedMessagesWithLocalMetadata(fetchedMessages, localMessages = []) {
+    if (!Array.isArray(fetchedMessages)) return [];
+    if (!Array.isArray(localMessages) || localMessages.length === 0) return fetchedMessages;
+
+    const localByClientId = new Map();
+    const localBySignature = new Map();
+
+    for (const msg of localMessages) {
+        if (!msg || typeof msg !== 'object') continue;
+        const clientId = msg.client_message_id || msg.clientMessageId || null;
+        if (clientId && !localByClientId.has(clientId)) {
+            localByClientId.set(clientId, msg);
+            continue;
+        }
+        const role = String(msg.role || '');
+        const text = extractMessageMatchText(msg);
+        if (!role || !text) continue;
+        const signature = `${role}::${text}`;
+        if (!localBySignature.has(signature)) {
+            localBySignature.set(signature, []);
+        }
+        localBySignature.get(signature).push(msg);
+    }
+
+    return fetchedMessages.map((fetched) => {
+        if (!fetched || typeof fetched !== 'object') return fetched;
+
+        const clientId = fetched.client_message_id || fetched.clientMessageId || null;
+        let localMatch = clientId ? localByClientId.get(clientId) : null;
+        if (!localMatch) {
+            const signature = `${String(fetched.role || '')}::${extractMessageMatchText(fetched)}`;
+            const bucket = localBySignature.get(signature);
+            if (bucket && bucket.length > 0) {
+                localMatch = bucket.shift();
+            }
+        }
+        if (!localMatch) return fetched;
+
+        const merged = { ...fetched };
+        const remoteCitations = readMessageCitations(fetched);
+        const localCitations = readMessageCitations(localMatch);
+        if ((!remoteCitations || remoteCitations.length === 0) && localCitations && localCitations.length > 0) {
+            merged.citations = localCitations;
+        }
+
+        const remoteReasoning = readMessageReasoning(fetched);
+        const localReasoning = readMessageReasoning(localMatch);
+        if (!remoteReasoning && localReasoning) {
+            merged.reasoning = localReasoning;
+        }
+
+        return merged;
+    });
+}
+
+async function syncChatsFromOtherDevice(serverChats, cachedChats, deviceFingerprint) {
+    if (!currentUser) return;
+    if (!deviceFingerprint || deviceFingerprint === 'fingerprint_unavailable') return;
+
+    const targets = [];
+    for (const [chatId, serverChat] of Object.entries(serverChats || {})) {
+        if (!serverChat || String(chatId).startsWith('temp_')) {
+            continue;
+        }
+        const lastDeviceFp = serverChat.last_device_fp;
+        if (!lastDeviceFp || lastDeviceFp === deviceFingerprint) {
+            continue;
+        }
+        const localChat = cachedChats?.[chatId];
+        const shouldSync = !localChat?.messages?.length
+            || isServerChatNewer(localChat?.updated_at, serverChat.updated_at);
+        if (shouldSync) {
+            targets.push(chatId);
+        }
+    }
+
+    if (!targets.length) return;
+
+    let shouldReloadCurrent = false;
+    for (const chatId of targets) {
+        try {
+            const result = await makeApiRequest(`chats/messages?conversationId=${chatId}`, { suppressAutoLogout: true, timeoutMs: 30000 });
+            if (result?.success) {
+                if (!chats[chatId]) {
+                    continue;
+                }
+                const resolved = pickSafeFetchedMessages(result, chats[chatId].messages, 'sync-other-device');
+                chats[chatId].messages = mergeFetchedMessagesWithLocalMetadata(resolved.messages, chats[chatId].messages);
+                chats[chatId].updated_at = serverChats[chatId]?.updated_at || chats[chatId].updated_at;
+                chats[chatId].last_device_fp = serverChats[chatId]?.last_device_fp || chats[chatId].last_device_fp;
+                if (currentChatId === chatId && resolved.ok) {
+                    shouldReloadCurrent = true;
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to sync remote chat messages:', error);
+        }
+    }
+
+    try {
+        await saveChatsToDB(currentUser.id, chats);
+    } catch (error) {
+        console.warn('Failed to update synced chats cache:', error);
+    }
+
+    if (shouldReloadCurrent && currentChatId) {
+        loadChat(currentChatId).catch((error) => {
+            console.warn('Failed to reload active chat after sync:', error);
+        });
+    }
+}
+
 async function loadChats(isSessionValid = false) {
     if (!isSessionValid && !currentUser) {
         await new Promise(resolve => setTimeout(resolve, 150));
     }
     const loader = document.getElementById('chat-history-loader');
-    const forceServerChatsReload = currentUser && localStorage.getItem('forceServerChatsReload') === '1';
+    if (isSessionValid && !currentUser) {
+        if (loader) loader.style.display = 'flex';
+        chatHistoryLoading = true;
+        try {
+            await checkSession();
+        } catch (_) { }
+    }
+    const cacheWarmKey = currentUser ? `chat_cache_warmed_${currentUser.id}` : null;
+    let cacheWarm = !!(cacheWarmKey && localStorage.getItem(cacheWarmKey) === '1');
+    const loginSyncKey = 'chat_sync_on_login';
+    let shouldSyncOnLogin = false;
+    try {
+        shouldSyncOnLogin = sessionStorage.getItem(loginSyncKey) === '1';
+        if (shouldSyncOnLogin) {
+            sessionStorage.removeItem(loginSyncKey);
+        }
+    } catch (_) { }
 
     if (currentUser && isSessionValid) {
         try {
@@ -6982,27 +10887,85 @@ async function loadChats(isSessionValid = false) {
                 console.warn('Failed to get cached chats:', error);
             }
 
-            if (cachedChats) {
+            const hasCachedChats = cachedChats && typeof cachedChats === 'object'
+                && Object.keys(cachedChats).length > 0;
+            if (hasCachedChats) {
+                scheduleClientMessageIdBackfill(currentUser.id, cachedChats);
+            }
+
+            if (hasCachedChats) {
                 replaceChatsPreservingEphemeral(cachedChats);
                 renderSidebar();
-            } else if (loader) {
-                loader.style.display = 'flex';
+                if (loader) {
+                    loader.style.display = shouldSyncOnLogin ? 'flex' : 'none';
+                }
+                if (!shouldSyncOnLogin) {
+                    chatHistoryLoading = false;
+                }
+            } else {
+                if (loader) {
+                    loader.style.display = 'flex';
+                }
+
             }
 
-            if (forceServerChatsReload && loader) {
-                loader.style.display = 'flex';
+            // 离线场景直接使用本地状态，不发起服务端同步，避免超时等待
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+                if (loader) {
+                    loader.style.display = 'none';
+                }
+                chatHistoryLoading = false;
+                if (!hasCachedChats) {
+                    renderSidebar();
+                }
+                if (currentUser) {
+                    resumePendingDocImageUploadsOnce();
+                    resumePendingCloudSyncOnce();
+                    scheduleClientMessageIdMigration();
+                }
+                return;
             }
 
-            makeApiRequest('chats/conversations', { suppressAutoLogout: true }).then(async (result) => {
-                if (result.success) {
+            const shouldAttemptServerSync = shouldSyncOnLogin || !cacheWarm || !hasCachedChats;
+            if (shouldAttemptServerSync) {
+                if (loader) {
+                    loader.style.display = 'flex';
+                }
+                chatHistoryLoading = true;
+            }
+            if (!shouldAttemptServerSync) {
+                chatHistoryLoading = false;
+                if (currentUser) {
+                    resumePendingDocImageUploadsOnce();
+                    resumePendingCloudSyncOnce();
+                    scheduleClientMessageIdMigration();
+                }
+                return;
+            }
+
+            if (shouldSyncOnLogin || !hasCachedChats) {
+                chatHistoryLoading = true;
+            }
+            makeApiRequest('chats/conversations', {
+                suppressAutoLogout: true,
+                timeoutMs: CHAT_HISTORY_SYNC_TIMEOUT_MS,
+                retries: 0
+            }).then(async (result) => {
+                const hasServerChats = Array.isArray(result?.conversations);
+                if (result?.success || hasServerChats) {
                     const serverChats = {};
-                    for (const conv of result.conversations) {
+                    const deviceFingerprint = await getDeviceFingerprint();
+                    for (const conv of result.conversations || []) {
                         serverChats[conv.id] = {
                             id: conv.id,
                             title: conv.title,
                             model_name: conv.model_name,
                             created_at: conv.created_at,
                             updated_at: conv.updated_at,
+                            last_device_fp: conv.last_device_fp || null,
+                            isBridge: !!conv.is_bridge,
+                            parent_chat_id: conv.parent_chat_id || null,
+                            bridge_enabled: conv.bridge_enabled ? 1 : 0,
                             messages: []
                         };
                     }
@@ -7016,45 +10979,76 @@ async function loadChats(isSessionValid = false) {
                                 mergedChats[chatId] = {
                                     ...serverChat,
                                     messages: localChat.messages,
-                                    docAttachments: Array.isArray(localChat.docAttachments) ? localChat.docAttachments : []
+                                    docAttachments: Array.isArray(localChat.docAttachments) ? localChat.docAttachments : [],
+                                    isBridge: typeof serverChat.isBridge !== 'undefined' ? !!serverChat.isBridge : !!localChat.isBridge,
+                                    parent_chat_id: typeof serverChat.parent_chat_id !== 'undefined' ? (serverChat.parent_chat_id || null) : (localChat.parent_chat_id || null),
+                                    bridge_enabled: typeof serverChat.bridge_enabled !== 'undefined' ? (serverChat.bridge_enabled ? 1 : 0) : (localChat.bridge_enabled ? 1 : 0),
+                                    bridge_settings: localChat.bridge_settings && typeof localChat.bridge_settings === 'object'
+                                        ? { ...localChat.bridge_settings }
+                                        : undefined
                                 };
                             } else if (localChat && Array.isArray(localChat.docAttachments) && localChat.docAttachments.length > 0) {
                                 mergedChats[chatId] = {
                                     ...serverChat,
-                                    docAttachments: localChat.docAttachments
+                                    docAttachments: localChat.docAttachments,
+                                    isBridge: typeof serverChat.isBridge !== 'undefined' ? !!serverChat.isBridge : !!localChat.isBridge,
+                                    parent_chat_id: typeof serverChat.parent_chat_id !== 'undefined' ? (serverChat.parent_chat_id || null) : (localChat.parent_chat_id || null),
+                                    bridge_enabled: typeof serverChat.bridge_enabled !== 'undefined' ? (serverChat.bridge_enabled ? 1 : 0) : (localChat.bridge_enabled ? 1 : 0),
+                                    bridge_settings: localChat.bridge_settings && typeof localChat.bridge_settings === 'object'
+                                        ? { ...localChat.bridge_settings }
+                                        : undefined
                                 };
                             }
                         }
                     }
 
-                    preloadChatContents(mergedChats, currentUser.id).catch(err =>
-                        console.warn('Failed to preload chat contents:', err)
-                    );
-
                     await saveChatsToDB(currentUser.id, mergedChats);
                     replaceChatsPreservingEphemeral(mergedChats);
                     renderSidebar();
+                    scheduleClientMessageIdBackfill(currentUser.id, mergedChats);
+                    if (cacheWarmKey) {
+                        localStorage.setItem(cacheWarmKey, '1');
+                    }
 
                     if (loader) {
                         loader.style.display = 'none';
                     }
+                    chatHistoryLoading = false;
 
-                    if (forceServerChatsReload) {
-                        localStorage.removeItem('forceServerChatsReload');
-                    }
+                    syncChatsFromOtherDevice(serverChats, cachedChats, deviceFingerprint).catch(() => { });
 
                     if (cachedChats) {
                         const serverChatIds = new Set(Object.keys(serverChats));
                         const localChatIds = Object.keys(cachedChats);
                         const deletedChatIds = localChatIds.filter(chatId => !serverChatIds.has(chatId));
                     }
+                } else {
+                    if (loader) {
+                        loader.style.display = 'none';
+                    }
+                    chatHistoryLoading = false;
+                    const fallbackChats = cachedChats;
+                    if (fallbackChats) {
+                        scheduleClientMessageIdBackfill(currentUser.id, fallbackChats);
+                        replaceChatsPreservingEphemeral(fallbackChats);
+                        renderSidebar();
+                    } else if (loader && (!chats || Object.keys(chats).length === 0)) {
+                        loader.style.display = 'flex';
+                        const loadingText = loader.querySelector('.loading-text');
+                        if (loadingText) loadingText.textContent = getToastMessage('status.recordLoadFailed');
+                        const spinner = loader.querySelector('.loading-spinner');
+                        if (spinner) spinner.style.display = 'none';
+                    }
                 }
             }).catch((error) => {
                 if (loader) {
                     loader.style.display = 'none';
                 }
-                if (cachedChats) {
-                    replaceChatsPreservingEphemeral(cachedChats);
+                chatHistoryLoading = false;
+                const fallbackChats = cachedChats;
+                if (fallbackChats) {
+                    scheduleClientMessageIdBackfill(currentUser.id, fallbackChats);
+                    replaceChatsPreservingEphemeral(fallbackChats);
                     renderSidebar();
                 } else if (loader && (!chats || Object.keys(chats).length === 0)) {
                     loader.style.display = 'flex';
@@ -7069,6 +11063,7 @@ async function loadChats(isSessionValid = false) {
                 }
             });
         } catch (error) {
+            chatHistoryLoading = false;
             if (loader && (!chats || Object.keys(chats).length === 0)) {
                 loader.style.display = 'flex';
                 const loadingText = loader.querySelector('.loading-text');
@@ -7078,13 +11073,18 @@ async function loadChats(isSessionValid = false) {
             }
         }
     } else {
+        chatHistoryLoading = false;
         const localChats = await getChatsFromDB('guest');
-        replaceChatsPreservingEphemeral(localChats || {});
+        const nextChats = localChats || {};
+        scheduleClientMessageIdBackfill('guest', nextChats);
+        replaceChatsPreservingEphemeral(nextChats);
         renderSidebar();
     }
 
     if (currentUser) {
         resumePendingDocImageUploadsOnce();
+        resumePendingCloudSyncOnce();
+        scheduleClientMessageIdMigration();
     }
 }
 
@@ -7094,9 +11094,9 @@ function updateUI(showLoginPage = true) {
 
     elements.userNameDisplay.style.display = 'none';
     userAvatarButton.style.display = 'none';
+    userAvatarButton.classList.remove('early-bird');
 
     if (currentUser) {
-        // 如果用户已登录，确保隐藏登录页面
         hideAuthOverlay();
     }
 
@@ -7104,13 +11104,17 @@ function updateUI(showLoginPage = true) {
 
     const apiNavItem = document.querySelector('.settings-nav-item[data-page="api"]');
     if (apiNavItem) apiNavItem.style.display = '';
+    if (elements.subscriptionBtn) {
+        elements.subscriptionBtn.style.display = currentUser ? '' : 'none';
+    }
 
     if (currentUser) {
         if (!currentUserUsage.limit || currentUserUsage.limit === LOGGED_IN_LIMIT) {
-            currentUserUsage.limit = hasConfiguredApiKeyForUi() ? Infinity : LOGGED_IN_LIMIT;
+            currentUserUsage.limit = hasPaidAccessForUi() ? Infinity : LOGGED_IN_LIMIT;
         }
 
         const name = currentUser.username || currentUser.email;
+        const isEarlyBird = Number(currentUser.early_bird) === 1;
 
         requestAnimationFrame(() => {
             elements.userNameDisplay.textContent = name;
@@ -7118,6 +11122,9 @@ function updateUI(showLoginPage = true) {
 
             userAvatarButton.innerHTML = '';
             userAvatarButton.style.display = 'flex';
+            if (isEarlyBird) {
+                userAvatarButton.classList.add('early-bird');
+            }
 
             if (currentUser.avatar_url) {
                 const img = document.createElement('img');
@@ -7138,6 +11145,7 @@ function updateUI(showLoginPage = true) {
         checkPasswordChangeStatus().catch(err => console.error(`${getToastMessage('console.passwordChangeStatusFailed')}:`, err));
 
         elements.rightSidebarToggleBtn.style.display = 'flex';
+        updateSubscriptionIcon();
         // 兼容旧存储：custom_api_key 可能为逗号分隔的两个key
         const storedKey = currentUser.custom_api_key || '';
         if (elements.apiKeyOneInput && elements.apiKeyTwoInput) {
@@ -7236,11 +11244,6 @@ function updateUI(showLoginPage = true) {
         isLoadingParameters = false;
     }
 
-    const clearCacheBtn = document.getElementById('clear-cache-btn');
-    if (clearCacheBtn) {
-        clearCacheBtn.style.display = 'flex';
-    }
-
     updateUsageDisplay();
     updateWeeklyTimer();
 }
@@ -7277,6 +11280,13 @@ async function validateApiKeyWithTier(apiKey) {
     try {
         const proResult = await callValidationEndpoint(apiKey, 'gemini-2.5-pro');
         if (proResult.success) {
+            return { success: true, tier: 'paid' };
+        }
+
+        const retryDelayMs = 450;
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        const proRetryResult = await callValidationEndpoint(apiKey, 'gemini-2.5-pro');
+        if (proRetryResult.success) {
             return { success: true, tier: 'paid' };
         }
 
@@ -7340,6 +11350,14 @@ async function loadChat(chatId) {
         console.error(getToastMessage('console.chatNotFound', { chatId }));
         return;
     }
+    const chatAccess = await dispatchBridge(BRIDGE_DISPATCH.CHAT_ACCESS, { chatId });
+    if (!chatAccess?.allowed) {
+        if (!currentChatId || currentChatId === chatId) {
+            currentChatId = null;
+            showEmptyState();
+        }
+        return;
+    }
 
     const wasAlreadyInChat = !!currentChatId;
     const wasSameChat = currentChatId === chatId;
@@ -7362,20 +11380,38 @@ async function loadChat(chatId) {
         updateImageModeUI();
     }
 
+    const isTempChat = String(chatId).startsWith('temp_');
+    let deviceFingerprint = null;
+    let shouldForceRemoteSync = false;
+    let shouldMarkDevice = false;
+    if (currentUser && !isTempChat) {
+        deviceFingerprint = await getDeviceFingerprint();
+        if (deviceFingerprint && deviceFingerprint !== 'fingerprint_unavailable') {
+            const lastDeviceFp = chats[chatId]?.last_device_fp;
+            if (!lastDeviceFp) {
+                shouldMarkDevice = true;
+            } else if (lastDeviceFp !== deviceFingerprint) {
+                shouldForceRemoteSync = true;
+                shouldMarkDevice = true;
+            }
+        }
+    }
+
     try {
         elements.chatLoaderBar.classList.add('loading');
         elements.chatContainer.innerHTML = '';
 
         // 检查消息是否已加载
         let didFetchFromServer = false;
-        if (!chats[chatId].messages || chats[chatId].messages.length === 0) {
+        if (!chats[chatId].messages || chats[chatId].messages.length === 0 || shouldForceRemoteSync) {
             if (currentUser) {
                 // 登录用户
-                if (!String(chatId).startsWith('temp_')) {
-                    const result = await makeApiRequest(`chats/messages?conversationId=${chatId}`);
+                if (!isTempChat) {
+                    const result = await makeApiRequest(`chats/messages?conversationId=${chatId}`, { timeoutMs: 30000 });
                     if (result.success) {
-                        chats[chatId].messages = result.messages || [];
-                        didFetchFromServer = true;
+                        const resolved = pickSafeFetchedMessages(result, chats[chatId].messages, 'load-chat');
+                        chats[chatId].messages = mergeFetchedMessagesWithLocalMetadata(resolved.messages, chats[chatId].messages);
+                        didFetchFromServer = resolved.ok;
                     } else {
                         throw new Error(result.error || getToastMessage('errors.cannotLoadMessage'));
                     }
@@ -7392,8 +11428,34 @@ async function loadChat(chatId) {
                 }
             }
         }
+        if (didFetchFromServer && currentUser && !isTempChat) {
+            try {
+                await saveChatsToDB(currentUser.id, chats);
+            } catch (error) {
+                console.warn('Failed to persist chat messages to cache:', error);
+            }
+        }
+
         const messagesLoaded = Array.isArray(chats[chatId].messages) && chats[chatId].messages.length > 0;
         deferDocAttachmentMount(chatId, chats[chatId], messagesLoaded);
+
+        if (currentUser && !isTempChat && shouldMarkDevice && deviceFingerprint && (!shouldForceRemoteSync || didFetchFromServer)) {
+            (async () => {
+                try {
+                    const result = await makeApiRequest('chats/mark-device', {
+                        method: 'POST',
+                        body: JSON.stringify({ conversationId: chatId }),
+                        suppressAutoLogout: true,
+                        timeoutMs: 30000
+                    });
+                    if (result?.success) {
+                        chats[chatId].last_device_fp = deviceFingerprint;
+                    }
+                } catch (error) {
+                    console.warn('Failed to mark conversation device:', error);
+                }
+            })();
+        }
 
         if (loadId !== currentLoadChatId) {
             return;
@@ -7410,7 +11472,7 @@ async function loadChat(chatId) {
                 return;
             }
             requestAnimationFrame(() => {
-                elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+                scrollManager.setAutoScrollTop(elements.chatContainer.scrollHeight);
             });
         };
 
@@ -7425,7 +11487,9 @@ async function loadChat(chatId) {
 
                     for (let i = index; i < end; i++) {
                         const msg = messagesToRender[i];
-                        const { element: messageElement, promise: renderPromise } = createMessageElement(msg.role, msg);
+                        const { element: messageElement, promise: renderPromise } = createMessageElement(msg.role, msg, {
+                            historyRender: true
+                        });
                         fragment.appendChild(messageElement);
                         if (renderPromise && typeof renderPromise.then === 'function') {
                             allRenderPromises.push(renderPromise);
@@ -7441,14 +11505,24 @@ async function loadChat(chatId) {
             await renderAllChunks();
 
             setTimeout(() => {
-                elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+                scrollManager.setAutoScrollTop(elements.chatContainer.scrollHeight);
             }, 0);
 
             isWelcomePage = false;
             elements.chatContainer.style.overflowY = 'auto';
 
         } else {
-            showEmptyState();
+            if (isTempChat) {
+                elements.chatContainer.innerHTML = '';
+                elements.chatContainer.style.overflowY = 'auto';
+                isWelcomePage = false;
+                if (elements.chatContainer?.dataset) {
+                    delete elements.chatContainer.dataset.view;
+                    delete elements.chatContainer.dataset.lang;
+                }
+            } else {
+                showEmptyState();
+            }
         }
         scheduleRenderSidebar();
 
@@ -7497,14 +11571,34 @@ async function loadChat(chatId) {
 
 function showEmptyState(forceLanguage = null) {
     if (currentChatId !== null) {
-        elements.chatContainer.innerHTML = '';
-        elements.chatContainer.style.overflowY = 'auto';
+        const chat = chats && currentChatId ? chats[currentChatId] : null;
+        const isTemp = currentChatId && String(currentChatId).startsWith('temp_');
+        const msgCount = chat && Array.isArray(chat.messages) ? chat.messages.length : 0;
+        const canTreatAsEmpty = (!chat) || (isTemp && msgCount === 0);
+
+        if (!canTreatAsEmpty) {
+            elements.chatContainer.innerHTML = '';
+            elements.chatContainer.style.overflowY = 'auto';
+            isWelcomePage = false;
+            // 清除欢迎页标记，避免后续判断误判
+            if (elements.chatContainer && elements.chatContainer.dataset) {
+                delete elements.chatContainer.dataset.view;
+                delete elements.chatContainer.dataset.lang;
+            }
+            return;
+        }
+
+        currentChatId = null;
+    }
+
+    if (isMindmapModeActive) {
+        welcomePageShown = false;
         isWelcomePage = false;
-        // 清除欢迎页标记，避免后续判断误判
-        if (elements.chatContainer && elements.chatContainer.dataset) {
+        if (elements.chatContainer?.dataset) {
             delete elements.chatContainer.dataset.view;
             delete elements.chatContainer.dataset.lang;
         }
+        elements.chatContainer.style.overflowY = 'auto';
         return;
     }
 
@@ -7638,7 +11732,7 @@ async function handleLeaveTemporaryChat(skipProcessingCheck = false) {
         }
     }
 
-    if (currentChatId && chats[currentChatId]?.messages?.length === 0) {
+    if (currentChatId && String(currentChatId).startsWith('temp_') && chats[currentChatId]?.messages?.length === 0) {
         const confirmed = await showCustomConfirm(
             getToastMessage('dialog.confirmLeave'),
             getToastMessage('dialog.unsavedTempChatMessage'),
@@ -7661,6 +11755,13 @@ async function handleLeaveTemporaryChat(skipProcessingCheck = false) {
 function clearInputAndAttachments(clearAttachmentsArray = false) {
     elements.messageInput.value = '';
     elements.messageInput.style.height = 'auto';
+    elements.messageInput.classList.remove('slash-command-active');
+    if (elements.messageInputHighlight) {
+        elements.messageInputHighlight.innerHTML = '';
+        elements.messageInputHighlight.scrollTop = 0;
+        elements.messageInputHighlight.classList.remove('active');
+    }
+    elements.messageInput.classList.remove('slash-highlight-active');
     if (clearAttachmentsArray) {
         attachments = [];
     }
@@ -7719,7 +11820,7 @@ function cleanupActiveResponses() {
     }
 }
 
-const cleanupInterval = setInterval(cleanupActiveResponses, 60000);
+const cleanupInterval = setInterval(cleanupActiveResponses, 90000);
 addGlobalCleanup(() => clearInterval(cleanupInterval));
 
 function resetSendButtonState() {
@@ -7764,10 +11865,56 @@ function closeAllDropdowns() {
 
 let activeContextMenu = null;
 let activeContextCleanup = null;
+const contextMenuParents = new Map();
+let lastContextMenuOpenAt = 0;
+let contextMenuAutoCloseTimer = null;
+
+async function handleContextMenuAction(chatId, action) {
+    if (!chatId || !action) return;
+    const historyItem = sidebarElementsCache.get(chatId)
+        || elements.chatHistoryList.querySelector(`.history-item[data-chat-id="${chatId}"]`);
+    if (!historyItem) return;
+
+    const bridgeAction = await dispatchBridge(BRIDGE_DISPATCH.CONTEXT_MENU, { chatId, action, historyItem });
+    if (bridgeAction?.handled) {
+        return;
+    }
+
+    if (action === 'rename') {
+        safeNavigationCall('popUiState');
+        renameChat(chatId);
+    } else if (action === 'copy-title') {
+        safeNavigationCall('popUiState');
+        const titleNode = historyItem.querySelector('.title');
+        const titleToCopy = buildCopyTextFromContent(titleNode);
+        navigator.clipboard.writeText(titleToCopy).then(() => {
+            showToast(getToastMessage('toast.titleCopied'), 'success');
+        }).catch(() => {
+            showToast(getToastMessage('toast.copyFailed'), 'error');
+        });
+    } else if (action === 'share') {
+        safeNavigationCall('popUiState');
+        shareChat(chatId);
+    } else if (action === 'multi-select') {
+        safeNavigationCall('removeUiStateByName', `contextMenu-${chatId}`);
+        enterMultiSelectMode();
+    } else if (action === 'delete') {
+        safeNavigationCall('removeUiStateByName', `contextMenu-${chatId}`);
+        deleteChat(chatId, true);
+    }
+}
 
 function closeActiveContextMenu() {
     if (activeContextMenu) {
         try { activeContextMenu.style.display = 'none'; } catch (_) { }
+        try {
+            const originalParent = contextMenuParents.get(activeContextMenu);
+            if (originalParent && originalParent.isConnected) {
+                originalParent.appendChild(activeContextMenu);
+            } else if (activeContextMenu.parentNode) {
+                activeContextMenu.parentNode.removeChild(activeContextMenu);
+            }
+        } catch (_) { }
         if (typeof activeContextCleanup === 'function') {
             try { activeContextCleanup(); } catch (_) { }
         }
@@ -7776,7 +11923,25 @@ function closeActiveContextMenu() {
     }
 }
 
-function openContextMenu(menu, trigger) {
+function delay(ms = 0) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const bridgeSettingsUi = createBridgeSettingsUiController({
+    elements,
+    getToastMessage,
+    BRIDGE_DISPATCH,
+    dispatchBridge: (...args) => dispatchBridge(...args),
+    getChats: () => chats,
+    getCurrentUser: () => currentUser,
+    saveChatsToDB,
+    scheduleRenderSidebar,
+    showToast,
+    touchChatUpdatedAt,
+    normalizeBridgeParentContextTurns
+});
+
+function openContextMenu(menu, trigger, anchorPoint = null) {
     if (!menu) return;
     if (activeContextMenu === menu) {
         closeActiveContextMenu();
@@ -7790,37 +11955,133 @@ function openContextMenu(menu, trigger) {
     });
 
     menu.style.display = 'block';
+    if (!contextMenuParents.has(menu)) {
+        contextMenuParents.set(menu, menu.parentNode);
+    }
+    const historyItem = trigger?.closest?.('.history-item') || null;
+    menu.dataset.chatId = historyItem?.dataset?.chatId || '';
+    if (menu.parentNode !== document.body) {
+        document.body.appendChild(menu);
+    }
+    menu.style.position = 'fixed';
+    menu.style.visibility = 'hidden';
+    menu.style.left = '0px';
+    menu.style.top = '0px';
+    menu.style.right = 'auto';
+    menu.style.bottom = 'auto';
+    menu.style.maxWidth = 'calc(100vw - 16px)';
+    menu.style.zIndex = '10000';
+    menu.style.pointerEvents = 'auto';
+
+    const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    const positionMenu = () => {
+        const menuRect = menu.getBoundingClientRect();
+        const margin = 8;
+        if (!isTouchDevice && anchorPoint && Number.isFinite(anchorPoint.x) && Number.isFinite(anchorPoint.y)) {
+            let left = anchorPoint.x;
+            let top = anchorPoint.y;
+            if (left + menuRect.width > window.innerWidth - margin) {
+                left = window.innerWidth - menuRect.width - margin;
+            }
+            if (left < margin) left = margin;
+            if (top + menuRect.height > window.innerHeight - margin) {
+                top = Math.max(margin, anchorPoint.y - menuRect.height);
+            }
+            if (top < margin) top = margin;
+            menu.style.left = `${left}px`;
+            menu.style.top = `${top}px`;
+            menu.style.visibility = 'visible';
+            return;
+        }
+
+        const anchorElement = (isTouchDevice && historyItem) ? historyItem : trigger;
+        const anchorRect = anchorElement.getBoundingClientRect();
+        let left = Math.min(window.innerWidth - menuRect.width - margin, anchorRect.right - menuRect.width);
+        if (left < margin) left = margin;
+        let top = anchorRect.bottom + 6;
+        if (top + menuRect.height > window.innerHeight - margin) {
+            top = Math.max(margin, anchorRect.top - menuRect.height - 6);
+        }
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
+        menu.style.visibility = 'visible';
+    };
+
+    requestAnimationFrame(positionMenu);
 
     const GRACE_PX = 16;
-    const onMouseMove = (e) => {
+    const AUTO_CLOSE_DELAY_MS = 100;
+    const AUTO_CLOSE_GRACE_PX = 20;
+    const onMouseMove = isTouchDevice ? null : (e) => {
+        if (Date.now() - lastContextMenuOpenAt < 160) return;
         if (menu.style.display !== 'block') return;
         const rect = menu.getBoundingClientRect();
-        const left = rect.left - GRACE_PX;
-        const right = rect.right + GRACE_PX;
-        const top = rect.top - GRACE_PX;
-        const bottom = rect.bottom + GRACE_PX;
-        const inside = e.clientX >= left && e.clientX <= right && e.clientY >= top && e.clientY <= bottom;
-        if (!inside && !trigger.contains(e.target)) {
-            closeActiveContextMenu();
+        const left = rect.left - AUTO_CLOSE_GRACE_PX;
+        const right = rect.right + AUTO_CLOSE_GRACE_PX;
+        const top = rect.top - AUTO_CLOSE_GRACE_PX;
+        const bottom = rect.bottom + AUTO_CLOSE_GRACE_PX;
+        const insideMenu = e.clientX >= left && e.clientX <= right && e.clientY >= top && e.clientY <= bottom;
+        const insideTrigger = trigger.contains(e.target);
+        if (insideMenu || insideTrigger) {
+            if (contextMenuAutoCloseTimer) {
+                clearTimeout(contextMenuAutoCloseTimer);
+                contextMenuAutoCloseTimer = null;
+            }
+            return;
+        }
+        if (!contextMenuAutoCloseTimer) {
+            contextMenuAutoCloseTimer = setTimeout(() => {
+                contextMenuAutoCloseTimer = null;
+                closeActiveContextMenu();
+            }, AUTO_CLOSE_DELAY_MS);
         }
     };
     const onClick = (e) => {
+        if (Date.now() - lastContextMenuOpenAt < 160) return;
         if (!menu.contains(e.target) && !trigger.contains(e.target)) closeActiveContextMenu();
+    };
+    const onPointerDown = (e) => {
+        if (Date.now() - lastContextMenuOpenAt < 160) return;
+        if (!menu.contains(e.target) && !trigger.contains(e.target)) closeActiveContextMenu();
+    };
+    const onMenuClick = (e) => {
+        const button = e.target.closest('button[data-action]');
+        if (!button) return;
+        e.stopPropagation();
+        const action = button.dataset.action;
+        const chatId = menu.dataset.chatId || '';
+        closeActiveContextMenu();
+        void handleContextMenuAction(chatId, action);
     };
     const onKey = (e) => { if (e.key === 'Escape') closeActiveContextMenu(); };
     const onScroll = () => closeActiveContextMenu();
     const onResize = () => closeActiveContextMenu();
 
-    document.addEventListener('mousemove', onMouseMove);
+    if (onMouseMove) document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('click', onClick);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    if (isTouchDevice) {
+        document.addEventListener('touchstart', onPointerDown, { capture: true, passive: true });
+    }
+    menu.addEventListener('click', onMenuClick);
     document.addEventListener('keydown', onKey);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onResize);
 
     activeContextMenu = menu;
+    lastContextMenuOpenAt = Date.now();
     activeContextCleanup = () => {
-        document.removeEventListener('mousemove', onMouseMove);
+        if (onMouseMove) document.removeEventListener('mousemove', onMouseMove);
+        if (contextMenuAutoCloseTimer) {
+            clearTimeout(contextMenuAutoCloseTimer);
+            contextMenuAutoCloseTimer = null;
+        }
         document.removeEventListener('click', onClick);
+        document.removeEventListener('pointerdown', onPointerDown, true);
+        if (isTouchDevice) {
+            document.removeEventListener('touchstart', onPointerDown, true);
+        }
+        menu.removeEventListener('click', onMenuClick);
         document.removeEventListener('keydown', onKey);
         window.removeEventListener('scroll', onScroll, true);
         window.removeEventListener('resize', onResize);
@@ -7837,9 +12098,12 @@ function updateSendButton() {
     const hasText = elements.messageInput.value.trim().length > 0;
     const hasAttachments = attachments.length > 0;
     const allFilesReady = filesCurrentlyProcessing === 0;
-    const { isOverLimit } = updateCharacterCountUI(); // Check limit status
+    const { isOverLimit } = updateCharacterCountUI(); 
 
-    const shouldEnable = (hasText || hasAttachments) && !isProcessing && allFilesReady && !isOverLimit;
+    const shouldEnable = (isSearchModeActive ? hasText : (hasText || hasAttachments))
+        && !isProcessing
+        && allFilesReady
+        && !isOverLimit;
 
     elements.sendButton.disabled = !shouldEnable;
 
@@ -7847,122 +12111,195 @@ function updateSendButton() {
         resetSendButtonState();
     }
 }
-function renderSidebar() {
-    const loader = document.getElementById('chat-history-loader');
-    if (loader) {
-        loader.remove();
-    }
 
-    const chatIds = Object.keys(chats).sort((a, b) => {
-        const chatA = chats[a];
-        const chatB = chats[b];
-
-        const aIsNew = chatA.isTemp || chatA.isNewlyCreated;
-        const bIsNew = chatB.isTemp || chatB.isNewlyCreated;
-
-
-        if (aIsNew && !bIsNew) return -1;
-        if (!aIsNew && bIsNew) return 1;
-        return 0;
-    });
-
-    if (sidebarElementsCache.size === 0) {
-        elements.chatHistoryList.querySelectorAll('.history-item').forEach(el => {
-            sidebarElementsCache.set(el.dataset.chatId, el);
-        });
-    }
-
-    const fragment = document.createDocumentFragment();
-    const newElements = [];
-
-    chatIds.forEach(id => {
-        const chatData = chats[id];
-        const existingEl = sidebarElementsCache.get(id);
-
-        if (existingEl) {
-            const titleEl = existingEl.querySelector('.title');
-            if (titleEl && titleEl.textContent !== chatData.title) {
-                titleEl.textContent = chatData.title;
-            }
-            existingEl.classList.toggle('active', id === currentChatId);
-            const checkbox = existingEl.querySelector('.history-item-checkbox');
-            if (checkbox) {
-                checkbox.checked = selectedChatIds.has(id);
-            }
-        } else {
-            const li = createHistoryItem(id, chatData, currentChatId);
-            sidebarElementsCache.set(id, li);
-            newElements.push(li);
-            fragment.appendChild(li);
+function temporarilyDisableSendButton(durationMs = 400) {
+    if (!elements?.sendButton) return;
+    elements.sendButton.disabled = true;
+    setTimeout(() => {
+        if (!isProcessing) {
+            updateSendButton();
         }
-    });
+    }, durationMs);
+}
 
-    if (newElements.length > 0) {
-        elements.chatHistoryList.insertBefore(fragment, elements.chatHistoryList.firstChild);
-    }
+const bridgeFeature = createBridgeFeature({
+    getChats: () => chats,
+    getCurrentUser: () => currentUser,
+    getCurrentChatId: () => currentChatId,
+    getActiveResponses: () => activeResponses,
+    getElements: () => elements,
+    getToastMessage,
+    showToast,
+    safeNavigationCall,
+    isChatPromoted,
+    ensureInlineEditModeClosed,
+    handleLeaveTemporaryChat,
+    generateId,
+    getCurrentModelId: () => currentModelId,
+    scheduleRenderSidebar,
+    loadChat,
+    delay,
+    cleanupDocumentImagesForDeletedChats,
+    makeApiRequest,
+    ensureChatMessagesLoaded: ensureChatMessagesForExport,
+    setBridgeSettingsContextLoading: bridgeSettingsUi.setBridgeSettingsContextLoading,
+    touchChatUpdatedAt,
+    saveChatsToDB,
+    sortChatIdsForSidebar,
+    showCustomConfirm,
+    syncBridgeSettingsUiState: bridgeSettingsUi.syncBridgeSettingsUiState,
+    syncBridgeQuickTopicSelections: bridgeSettingsUi.syncBridgeQuickTopicSelections,
+    syncBridgePresetSelection: bridgeSettingsUi.syncBridgePresetSelection,
+    syncBridgeAutoSummaryState: bridgeSettingsUi.syncBridgeAutoSummaryState,
+    closeSidebarOnInteraction,
+    leaveToHomeAfterBridgeDisabled: async () => {
+        currentChatId = null;
+        showEmptyState();
+        routeManager.navigateToHome({ replace: true, force: true });
+    },
+    ICONS,
+    groupChatMessagesByTurn,
+    normalizeMessageContentForExport,
+    callAISynchronously,
+    getCurrentLanguageCode: () => getCurrentLanguage()
+});
 
-    // 更新现有元素的菜单文本
-    for (const [id, el] of sidebarElementsCache) {
-        if (!chats[id]) {
-            el.remove();
-            sidebarElementsCache.delete(id);
-        } else {
-            // 更新菜单按钮的文本
-            const contextMenu = el.querySelector('.context-menu');
-            if (contextMenu) {
-                const renameBtn = contextMenu.querySelector('[data-action="rename"]');
-                if (renameBtn) {
-                    const icon = renameBtn.querySelector('svg');
-                    renameBtn.innerHTML = '';
-                    if (icon) renameBtn.appendChild(icon);
-                    renameBtn.appendChild(document.createTextNode(getToastMessage('ui.rename')));
-                }
-
-                const copyTitleBtn = contextMenu.querySelector('[data-action="copy-title"]');
-                if (copyTitleBtn) {
-                    const icon = copyTitleBtn.querySelector('svg');
-                    copyTitleBtn.innerHTML = '';
-                    if (icon) copyTitleBtn.appendChild(icon);
-                    copyTitleBtn.appendChild(document.createTextNode(getToastMessage('ui.copyTitle')));
-                }
-
-                const shareBtn = contextMenu.querySelector('[data-action="share"]');
-                if (shareBtn) {
-                    const icon = shareBtn.querySelector('svg');
-                    shareBtn.innerHTML = '';
-                    if (icon) shareBtn.appendChild(icon);
-                    shareBtn.appendChild(document.createTextNode(getToastMessage('ui.share')));
-                }
-
-                const multiSelectBtn = contextMenu.querySelector('[data-action="multi-select"]');
-                if (multiSelectBtn) {
-                    const icon = multiSelectBtn.querySelector('svg');
-                    multiSelectBtn.innerHTML = '';
-                    if (icon) multiSelectBtn.appendChild(icon);
-                    multiSelectBtn.appendChild(document.createTextNode(getToastMessage('ui.multiSelect')));
-                }
-
-                const deleteBtn = contextMenu.querySelector('[data-action="delete"]');
-                if (deleteBtn) {
-                    const icon = deleteBtn.querySelector('svg');
-                    deleteBtn.innerHTML = '';
-                    if (icon) deleteBtn.appendChild(icon);
-                    deleteBtn.appendChild(document.createTextNode(getToastMessage('ui.delete')));
-                }
-            }
-
-            // 更新菜单按钮的 aria-label
-            const menuBtn = el.querySelector('.action-menu-btn');
-            if (menuBtn) {
-                menuBtn.setAttribute('aria-label', getToastMessage('ui.moreActions'));
-            }
+const bridgeController = createBridgeController({
+    feature: bridgeFeature,
+    onChatAccessDenied: (deniedChatId) => {
+        if (!currentChatId || currentChatId === deniedChatId) {
+            currentChatId = null;
+            showEmptyState();
+            scheduleRenderSidebar();
+            routeManager.navigateToHome({ replace: true, force: true });
         }
+    }
+});
+
+async function dispatchBridge(type, payload = {}) {
+    return bridgeController.dispatch(type, payload);
+}
+
+function getChatSortTimestamp(chat) {
+    if (!chat) return 0;
+    const updatedAt = Date.parse(chat.updated_at || '');
+    if (!Number.isNaN(updatedAt)) return updatedAt;
+    const createdAt = Date.parse(chat.created_at || '');
+    if (!Number.isNaN(createdAt)) return createdAt;
+    return 0;
+}
+
+function touchChatUpdatedAt(chatId, timestampMs = null) {
+    if (!chatId || !chats[chatId]) return;
+    const safeMs = Number.isFinite(timestampMs) ? timestampMs : Date.now();
+    const iso = new Date(safeMs).toISOString();
+    chats[chatId].updated_at = iso;
+    if (!chats[chatId].created_at) {
+        chats[chatId].created_at = iso;
     }
 }
 
-function createHistoryItem(id, chatData, currentChatId) {
+function sortChatIdsForSidebar(ids) {
+    return ids.sort((a, b) => {
+        const chatA = chats[a];
+        const chatB = chats[b];
+        const aIsNew = chatA?.isTemp || chatA?.isNewlyCreated;
+        const bIsNew = chatB?.isTemp || chatB?.isNewlyCreated;
+        if (aIsNew && !bIsNew) return -1;
+        if (!aIsNew && bIsNew) return 1;
+        const timeA = getChatSortTimestamp(chatA);
+        const timeB = getChatSortTimestamp(chatB);
+        if (timeA !== timeB) return timeB - timeA;
+        return 0;
+    });
+}
+
+function getSidebarRootChatIds() {
+    const rootIds = Object.keys(chats).filter((chatId) => {
+        const chat = chats[chatId];
+        return chat && !bridgeFeature.isBridgeChildChat(chat);
+    });
+    return sortChatIdsForSidebar(rootIds);
+}
+
+function renderSidebar() {
+    const loader = document.getElementById('chat-history-loader');
+    if (loader) {
+        if (!chatHistoryLoading) {
+            loader.style.display = 'none';
+        }
+    }
+
+    const rootChatIds = getSidebarRootChatIds();
+    const fragment = document.createDocumentFragment();
+    sidebarElementsCache.clear();
+
+    rootChatIds.forEach((id) => {
+        const chatData = chats[id];
+        if (!chatData) return;
+
+        const { bridgeFeatureEnabled, bridgeEnabled, childIds, bridgeExpanded } = resolveBridgeRenderState({
+            currentUser,
+            id,
+            currentChatId,
+            isBridgeEnabled: bridgeFeature.isBridgeEnabled,
+            getBridgeChildIds: bridgeFeature.getBridgeChildIds,
+            isBridgeExpanded: bridgeFeature.isBridgeExpanded,
+            setBridgeExpanded: bridgeFeature.setBridgeExpanded
+        });
+
+        const rootItem = createHistoryItem(id, chatData, currentChatId, {
+            bridgeEnabled,
+            bridgeExpanded,
+            bridgeChild: false
+        });
+        sidebarElementsCache.set(id, rootItem);
+        fragment.appendChild(rootItem);
+
+        if (!bridgeFeatureEnabled || !bridgeEnabled || !bridgeExpanded) {
+            return;
+        }
+
+        childIds.forEach((childId) => {
+            const childData = chats[childId];
+            if (!childData) return;
+            const childItem = createHistoryItem(childId, childData, currentChatId, {
+                bridgeEnabled: false,
+                bridgeExpanded: false,
+                bridgeChild: true
+            });
+            sidebarElementsCache.set(childId, childItem);
+            fragment.appendChild(childItem);
+        });
+
+        const newBridgeItem = bridgeFeature.createBridgeNewItem(id);
+        fragment.appendChild(newBridgeItem);
+    });
+
+    if (elements.chatHistoryList) {
+        elements.chatHistoryList.querySelectorAll('.history-item').forEach(el => el.remove());
+        elements.chatHistoryList.querySelectorAll('.bridge-new-item').forEach(el => el.remove());
+        const anchor = loader && loader.parentNode === elements.chatHistoryList ? loader : null;
+        if (anchor) {
+            elements.chatHistoryList.insertBefore(fragment, anchor);
+        } else {
+            elements.chatHistoryList.appendChild(fragment);
+        }
+    }
+
+    refreshExportRecordsUi();
+}
+
+function createHistoryItem(id, chatData, currentChatId, options = {}) {
+    const { bridgeEnabled = false, bridgeExpanded = false, bridgeChild = false } = options;
     const li = document.createElement('li');
     li.className = 'history-item';
+    if (bridgeChild) {
+        li.classList.add('history-item-bridge-child');
+    }
+    if (bridgeEnabled) {
+        li.classList.add('history-item-bridge-parent');
+    }
     li.dataset.chatId = id;
     if (id === currentChatId) li.classList.add('active');
 
@@ -7978,6 +12315,15 @@ function createHistoryItem(id, chatData, currentChatId) {
     checkmark.className = 'checkmark';
     checkboxLabel.appendChild(checkbox);
     checkboxLabel.appendChild(checkmark);
+
+    attachBridgeVisualElements(li, {
+        bridgeChild,
+        bridgeEnabled,
+        bridgeExpanded,
+        id,
+        currentUser,
+        getToastMessage
+    });
 
     const title = document.createElement('span');
     title.className = 'title';
@@ -8019,13 +12365,27 @@ function createHistoryItem(id, chatData, currentChatId) {
     );
     contextMenu.appendChild(copyTitleBtn);
 
-    if (currentUser) {
-        const shareBtn = createMenuButton('share', ICONS.SHARE, getToastMessage('ui.share'));
-        contextMenu.appendChild(shareBtn);
-    }
+    const isBridgeConversation = !!chatData?.isBridge;
+    appendBridgeMenuItems(contextMenu, {
+        chatData,
+        id,
+        bridgeChild,
+        currentUser,
+        getToastMessage,
+        createMenuButton,
+        shouldShowBridgeToggle: bridgeFeature.shouldShowBridgeToggle,
+        isBridgeEnabled: bridgeFeature.isBridgeEnabled
+    });
 
-    const multiSelectBtn = createMenuButton('multi-select', '<svg viewBox="0 0 24 24"><path d="M7 17h14v-2H7v2zm0-4h14v-2H7v2zm0-4h14V7H7v2zM4 17.27L1.27 14.54l1.41-1.41L4 14.44l3.12-3.12 1.41 1.41L4 17.27zM5.41 9.96L4 8.54 1.27 11.27l1.41 1.41L4 11.39l3.12-3.12-1.41-1.41L4.29 8.29zM4 5.73L1.27 3l1.41-1.41L4 2.9l3.12-3.12 1.41 1.41L4 5.73z"/></svg>', getToastMessage('ui.multiSelect'));
-    contextMenu.appendChild(multiSelectBtn);
+    if (!isBridgeConversation) {
+        if (currentUser && isChatPromoted(id, chatData)) {
+            const shareBtn = createMenuButton('share', ICONS.SHARE, getToastMessage('ui.share'));
+            contextMenu.appendChild(shareBtn);
+        }
+
+        const multiSelectBtn = createMenuButton('multi-select', '<svg viewBox="0 0 24 24"><path d="M7 17h14v-2H7v2zm0-4h14v-2H7v2zm0-4h14V7H7v2zM4 17.27L1.27 14.54l1.41-1.41L4 14.44l3.12-3.12 1.41 1.41L4 17.27zM5.41 9.96L4 8.54 1.27 11.27l1.41 1.41L4 11.39l3.12-3.12-1.41-1.41L4.29 8.29zM4 5.73L1.27 3l1.41-1.41L4 2.9l3.12-3.12 1.41 1.41L4 5.73z"/></svg>', getToastMessage('ui.multiSelect'));
+        contextMenu.appendChild(multiSelectBtn);
+    }
 
     const deleteBtn = createMenuButton('delete', ICONS.DELETE, getToastMessage('ui.delete'));
     contextMenu.appendChild(deleteBtn);
@@ -8217,11 +12577,21 @@ async function deleteChat(chatId, showConfirmation = true, isBatchOperation = fa
     if (!confirmed) {
         return;
     }
-    const isDeletingCurrentChat = (chatId === currentChatId);
+    const childIds = bridgeFeature.getBridgeChildIds(chatId);
+    const allDeleteIds = [chatId, ...childIds];
+    const deletedChats = [];
+    const isDeletingCurrentChat = allDeleteIds.includes(currentChatId);
 
+    allDeleteIds.forEach((id) => {
+        if (!chats[id]) return;
+        deletedChats.push(chats[id]);
+        delete chats[id];
+        bridgeFeature.clearBridgeState(id);
+        localStorage.removeItem(`pending_chat_${id}`);
+    });
+    bridgeFeature.setBridgeEnabled(chatId, false);
+    bridgeFeature.setBridgeExpanded(chatId, false);
 
-    delete chats[chatId];
-    localStorage.removeItem(`pending_chat_${chatId}`);
     if (!currentUser) {
         await saveChatsToDB('guest', chats);
     }
@@ -8230,46 +12600,49 @@ async function deleteChat(chatId, showConfirmation = true, isBatchOperation = fa
     if (isDeletingCurrentChat) {
         currentChatId = null;
         welcomePageShown = false;
+        streamImageRuntime.clearPendingImagePlaceholdersInChatContainer();
         showEmptyState();
         scheduleRenderSidebar();
         routeManager.navigateToHome({ replace: true });
     }
 
     try {
-        const isTempChat = chatId.startsWith('temp_');
-
-        if (currentUser && !isTempChat) {
-            const response = await makeApiRequest(`chats/${chatId}`, {
-                method: 'DELETE'
-            });
-
-            if (!response.success) {
-                throw new Error(response.error || getToastMessage('errors.serverCannotDeleteConversation'));
+        if (currentUser) {
+            for (const id of allDeleteIds) {
+                if (String(id).startsWith('temp_')) continue;
+                const response = await makeApiRequest(`chats/${id}`, { method: 'DELETE' });
+                if (!response.success) {
+                    throw new Error(response.error || getToastMessage('errors.serverCannotDeleteConversation'));
+                }
             }
             await saveChatsToDB(currentUser.id, chats);
-        } else if (currentUser && isTempChat) {
-            await saveChatsToDB(currentUser.id, chats);
         }
-        await cleanupDocumentImagesForDeletedChats([chatToDelete]);
+        await cleanupDocumentImagesForDeletedChats(deletedChats);
 
         if (showConfirmation) {
             showToast(getToastMessage('toast.conversationDeleted'), 'success');
             if (currentUser) {
-                notifyBackendCacheInvalidation('chat_deleted', { chatId });
+                notifyBackendCacheInvalidation('chat_deleted', { chatId, deletedIds: allDeleteIds });
             }
         } else {
 
         }
 
-        if (activeResponses.has(chatId)) {
-            activeResponses.get(chatId).controller.abort();
-            activeResponses.delete(chatId);
-        }
+        allDeleteIds.forEach((id) => {
+            if (activeResponses.has(id)) {
+                activeResponses.get(id).controller.abort();
+                activeResponses.delete(id);
+            }
+        });
 
     } catch (error) {
         showToast(`${getToastMessage('toast.deleteFailed')}: ${error.message}`, 'error');
 
-        chats[chatId] = chatToDelete;
+        deletedChats.forEach((chat) => {
+            if (chat?.id) {
+                chats[chat.id] = chat;
+            }
+        });
         scheduleRenderSidebar();
 
         if (isDeletingCurrentChat) {
@@ -8406,6 +12779,90 @@ class MathRenderer {
                     const after = line.slice(line.indexOf(trimmed) + trimmed.length);
                     lines[i] = `${before}$$${match[1]}$$${after}`;
                 }
+            }
+            return lines.join('\n');
+        } catch (_) {
+            return text;
+        }
+    }
+
+    wrapBareInlineLatexCommands(text) {
+        try {
+            const lines = text.split(/\r?\n/);
+            let fence = null;
+            const inlineRegex = new RegExp(this.inlinePatternSource, 'gu');
+            const hasExplicitMathDelimiters = (line) =>
+                line.includes('$') || line.includes('\\(') || line.includes('\\)') || line.includes('\\[') || line.includes('\\]');
+
+            const maybeWrapMathSegment = (segment) => {
+                const raw = String(segment || '');
+                const trimmed = raw.trim();
+                if (!trimmed) return null;
+                const classified = this.classifyMathLikeContent(trimmed);
+                if (!classified?.shouldWrap || !classified.mathBody) return null;
+
+                const strongMathSignal = /[_^]|(?:^|[^A-Za-z])\d+\s*[=+\-*/]|[=+\-*/]\s*\d+|[=+\-*/].*[_^]/u.test(trimmed);
+                if (!strongMathSignal) return null;
+                return `$$${classified.mathBody}$$`;
+            };
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const fenceMatch = line.match(/^\s{0,3}([`~]{3,})(.*)$/);
+                if (fenceMatch) {
+                    const ch = fenceMatch[1][0];
+                    const len = fenceMatch[1].length;
+                    if (!fence) {
+                        fence = { ch, len };
+                    } else if (fence && ch === fence.ch && len >= fence.len) {
+                        fence = null;
+                    }
+                    continue;
+                }
+
+                if (fence) continue;
+                if (hasExplicitMathDelimiters(line)) {
+                    continue;
+                }
+                if (/\\begin\s*\{[A-Za-z0-9*]+\}/u.test(line)) {
+                    continue;
+                }
+
+                // 1) “说明文字：公式”场景，仅包裹冒号后的公式段
+                const colonMatch = line.match(/^(\s*[^:：\n]{0,80}[：:]\s*)(.+)$/u);
+                if (colonMatch) {
+                    const wrapped = maybeWrapMathSegment(colonMatch[2]);
+                    if (wrapped) {
+                        lines[i] = `${colonMatch[1]}${wrapped}`;
+                        continue;
+                    }
+                }
+
+                // 2) 整行本身就是明显数学表达式
+                const wholeLineWrapped = maybeWrapMathSegment(line);
+                if (wholeLineWrapped) {
+                    lines[i] = wholeLineWrapped;
+                    continue;
+                }
+
+                if (!line.includes('\\')) continue;
+
+                const trimmed = line.trim();
+                inlineRegex.lastIndex = 0;
+                if (trimmed && this.displayLineRegex.test(trimmed) && inlineRegex.test(trimmed)) {
+                    lines[i] = `$$${trimmed}$$`;
+                    continue;
+                }
+
+                const parts = line.split('`');
+                for (let p = 0; p < parts.length; p += 2) {
+                    parts[p] = parts[p].replace(inlineRegex, (match) => {
+                        const trimmed = match.trim();
+                        if (!trimmed) return match;
+                        return `$${trimmed}$`;
+                    });
+                }
+                lines[i] = parts.join('`');
             }
             return lines.join('\n');
         } catch (_) {
@@ -8767,11 +13224,9 @@ class MathRenderer {
 }
 
 const mathRenderer = new MathRenderer(KATEX_CONFIG);
-const { readDocxFile, readPdfFile, readExcelFile, readPptxFile } = createFileParsers({
-    loadScript,
-    mathRenderer,
-    getToastMessage
-});
+if (typeof window !== 'undefined') {
+    window.mathRenderer = mathRenderer;
+}
 const STREAMING_HORIZONTAL_RULE_TAIL_RE = /(?:^|\r?\n)[ \t]{0,3}([\*\-_])(?:[ \t]*\1){2,}[ \t]*$/;
 const EXPLICIT_HORIZONTAL_RULE_RE = /(?:^|\r?\n)[ \t]{0,3}([*\-_])(?:[ \t]*\1){2,}[ \t]*(?:\r?\n|$)/;
 
@@ -8925,6 +13380,9 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                 textDiv.textContent = part.text;
                 element.appendChild(textDiv);
             } else if (part.type === 'image_url') {
+                if (part._hidden) {
+                    return;
+                }
                 const img = document.createElement('img');
                 img.src = part.image_url.url;
                 img.className = 'preview';
@@ -8934,12 +13392,21 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             } else if (part.type === 'file') {
                 const fileChip = document.createElement('div');
                 fileChip.className = 'file-chip-display';
-                fileChip.innerHTML = `
-                    <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
-                    <span class="file-name">${part.filename}</span>`;
+                const fileIcon = document.createElement('svg');
+                fileIcon.setAttribute('viewBox', '0 0 24 24');
+                const filePath = document.createElement('path');
+                filePath.setAttribute('d', 'M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z');
+                fileIcon.appendChild(filePath);
+
+                const fileName = document.createElement('span');
+                fileName.className = 'file-name';
+                fileName.textContent = part.filename || '';
+
+                fileChip.appendChild(fileIcon);
+                fileChip.appendChild(fileName);
                 fileChip.dataset.filename = part.filename;
                 fileChip.addEventListener('click', () => {
-                    showFileViewer(part.filename, part.content);
+                    showFileViewer(part.filename, part.content, part);
                 });
                 element.appendChild(fileChip);
             }
@@ -8953,9 +13420,13 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
 
     let messageText = '';
     let localCitations = citations;
+    let streamImageParts = [];
+    let streamImageLayout = [];
 
     if (typeof content === 'object' && content !== null && 'content' in content) {
         messageText = content.content;
+        streamImageParts = streamImageRuntime.normalizeStreamImageParts(content.image_parts || content.image_urls || []);
+        streamImageLayout = streamImageRuntime.normalizeStreamImageLayout(content.image_layout || []);
         if (content.citations) {
             localCitations = content.citations;
         }
@@ -8970,29 +13441,13 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         return null;
     }
 
+    messageText = rewritePexelsAttributionInMarkdown(messageText);
+
     if (forcePlainText) {
         try { element.dataset.plainText = 'true'; } catch (_) { }
         try { element.dataset.rawText = messageText || ''; } catch (_) { }
         element.textContent = messageText || '';
         element.style.whiteSpace = 'pre-wrap';
-        if (renderTimeout) {
-            clearTimeout(renderTimeout);
-        }
-        clearRenderState();
-        return null;
-    }
-
-    const isPreformattedImageHtml = messageText.includes('<div class="image-preview-container">');
-    if (isPreformattedImageHtml) {
-        if (window.DOMPurify) {
-            element.innerHTML = DOMPurify.sanitize(messageText, {
-                ADD_TAGS: ['svg', 'path', 'div', 'img', 'button', 'p', 'strong'],
-                ADD_ATTR: ['viewBox', 'd', 'fill', 'class', 'src', 'alt', 'style', 'title', 'data-action', 'data-image-url', 'data-description']
-            });
-        } else {
-            element.textContent = messageText.replace(/<[^>]*>/g, '');
-        }
-
         if (renderTimeout) {
             clearTimeout(renderTimeout);
         }
@@ -9022,7 +13477,20 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             return null;
         }
 
-        let correctedContent = mathRenderer.preprocessMarkdown(messageText);
+        const unwrapNestedDiagramFences = (text) => {
+            const fenceRe = /(```|~~~)(?:markdown|md|text|plain)?[^\r\n]*\r?\n([\s\S]*?)(\1)/gi;
+            return text.replace(fenceRe, (m, fence, inner) => {
+                const diagRe = /(```|~~~)\s*(mermaid|vega(?:-lite)?|vega-lite)[^\r\n]*\r?\n([\s\S]*?)(\1)/i;
+                const diagMatch = inner.match(diagRe);
+                if (!diagMatch) return m;
+                const opening = diagMatch[1];
+                const lang = diagMatch[2] || '';
+                const body = diagMatch[3] || '';
+                return `${opening}${lang}\n${body}${opening}`;
+            });
+        };
+
+        let correctedContent = unwrapNestedDiagramFences(mathRenderer.preprocessMarkdown(messageText));
         const displayMath = [];
         const inlineMath = [];
 
@@ -9149,7 +13617,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
 
         const sanitizedHtml = DOMPurify.sanitize(html, {
             ADD_TAGS: ['div', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'img', 'br', 'a', 'h4', 'ul', 'li'],
-            ADD_ATTR: ['style', 'class', 'aria-hidden', 'src', 'alt', 'title', 'href', 'target', 'rel', 'data-cid']
+            ADD_ATTR: ['style', 'class', 'aria-hidden', 'src', 'alt', 'title', 'href', 'target', 'rel', 'data-cid', 'data-stream-image-slot']
         });
 
         const tempContainer = document.createElement('div');
@@ -9301,6 +13769,7 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
         }
 
         if (!renderState.lockedContainer || !renderState.streamingContainer || !element.contains(renderState.lockedContainer)) {
+            const preservedStreamImageNodes = Array.from(element.querySelectorAll('.stream-image-attachments'));
             element.innerHTML = '';
             renderState.lockedContainer = document.createElement('div');
             renderState.lockedContainer.className = 'locked-response-content';
@@ -9310,9 +13779,78 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             renderState.streamingContainer.style.display = 'contents';
             element.appendChild(renderState.lockedContainer);
             element.appendChild(renderState.streamingContainer);
+            preservedStreamImageNodes.forEach((node) => element.appendChild(node));
             renderState.lastLockedHtml = '';
             renderState.streamingHtml = '';
         }
+
+        const isNodeImmediatelyAfter = (node, target) => {
+            if (!node || !target || !target.parentNode) return false;
+            if (node.parentNode !== target.parentNode) return false;
+            let cursor = target.nextSibling;
+            while (cursor && cursor.nodeType === Node.TEXT_NODE && !String(cursor.textContent || '').trim()) {
+                cursor = cursor.nextSibling;
+            }
+            return cursor === node;
+        };
+
+        const repositionPendingNode = (node) => {
+            if (!node || !node.isConnected) return;
+            if (!isFinalRender && scrollManager.isUserScrolling) return;
+
+            let placement = '';
+            const pendingSlot = String(node.dataset.pendingSlot || '').trim();
+            if (pendingSlot) {
+                placement = `slot:${pendingSlot}`;
+            } else {
+                const pendingKey = String(node.dataset.pendingKey || '').trim();
+                if (pendingKey) {
+                    const first = pendingKey.indexOf(':');
+                    const second = first >= 0 ? pendingKey.indexOf(':', first + 1) : -1;
+                    if (second >= 0 && second < pendingKey.length - 1) {
+                        placement = pendingKey.slice(second + 1).trim();
+                    }
+                }
+            }
+            if (!placement) return;
+
+            const normalizedPlacement = streamImageRuntime.normalizeStreamImagePlacement(placement);
+            if (normalizedPlacement.startsWith('slot:')) {
+                const slotId = normalizedPlacement.slice('slot:'.length).trim();
+                const anchor = slotId ? element.querySelector(`[data-stream-image-slot="${slotId}"]`) : null;
+                if (!anchor) return;
+                const anchorBlock = anchor.closest('p, li, blockquote, pre, table, h1, h2, h3, h4, h5, h6');
+                const target = (anchorBlock && anchorBlock.parentNode) ? anchorBlock : (anchor.parentNode ? anchor : null);
+                if (!target) return;
+                if (isNodeImmediatelyAfter(node, target)) return;
+                if (target === anchorBlock) {
+                    anchorBlock.insertAdjacentElement('afterend', node);
+                } else {
+                    anchor.insertAdjacentElement('afterend', node);
+                }
+                return;
+            }
+
+            if (normalizedPlacement.startsWith('after_paragraph:')) {
+                const n = Math.max(1, parseInt(normalizedPlacement.split(':')[1], 10) || 1);
+                const paragraphTargets = Array.from(
+                    element.querySelectorAll('p, li, blockquote, pre, table, h1, h2, h3, h4, h5, h6')
+                ).filter(target => !target.closest('.stream-image-attachments'));
+                const target = paragraphTargets[Math.min(n - 1, paragraphTargets.length - 1)];
+                if (target && target.parentNode) {
+                    if (isNodeImmediatelyAfter(node, target)) return;
+                    target.insertAdjacentElement('afterend', node);
+                }
+                return;
+            }
+
+            if (normalizedPlacement === 'head') {
+                const firstNode = element.firstElementChild;
+                if (firstNode && firstNode !== node) {
+                    element.insertBefore(node, firstNode);
+                }
+            }
+        };
 
         if (renderState.lastLockedHtml !== renderState.lockedHtml) {
             let contentChanged = false;
@@ -9344,27 +13882,113 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             renderState.streamingHtml = streamingHtml;
         }
 
+        Array.from(element.querySelectorAll('.stream-image-attachments[data-pending="1"]')).forEach(repositionPendingNode);
+
+        let reasoningText = '';
+        if (typeof content === 'object' && content !== null && typeof content.reasoning === 'string') {
+            reasoningText = content.reasoning;
+        } else if (options && typeof options.reasoning === 'string') {
+            reasoningText = options.reasoning;
+        }
+
+        const reasoningValue = (typeof reasoningText === 'string') ? reasoningText.trim() : '';
+        const existingReasoning = element.querySelector('.reasoning-toggle');
+        if (reasoningValue) {
+            let reasoningBlock = existingReasoning;
+            if (!reasoningBlock) {
+                reasoningBlock = document.createElement('details');
+                reasoningBlock.className = 'reasoning-toggle';
+                const summaryEl = document.createElement('summary');
+                summaryEl.className = 'reasoning-summary';
+                summaryEl.innerHTML = `
+                    <span class="reasoning-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2a7 7 0 0 0-4.1 12.7L8 22l4-2 4 2 .1-7.3A7 7 0 0 0 12 2Zm0 2a5 5 0 0 1 3 9l-.5.4.1 5-2.6-1.3-2.6 1.3.1-5-.5-.4A5 5 0 0 1 12 4Zm0 3.2a.9.9 0 0 0-.9.9v2.3l-.9.6a.9.9 0 1 0 1 1.6l1.3-.8a.9.9 0 0 0 .4-.8V8.1a.9.9 0 0 0-.9-.9Z"/>
+                        </svg>
+                    </span>
+                    <span class="reasoning-title">${getToastMessage('ui.thinking')}</span>
+                    <span class="reasoning-caret" aria-hidden="true"></span>
+                `;
+                reasoningBlock.appendChild(summaryEl);
+                const bodyEl = document.createElement('div');
+                bodyEl.className = 'reasoning-content';
+                reasoningBlock.appendChild(bodyEl);
+                if (renderState.lockedContainer && element.contains(renderState.lockedContainer)) {
+                    element.insertBefore(reasoningBlock, renderState.lockedContainer);
+                } else {
+                    element.prepend(reasoningBlock);
+                }
+            }
+            const body = reasoningBlock.querySelector('.reasoning-content');
+            if (body) {
+                body.textContent = reasoningValue;
+            }
+        } else if (existingReasoning) {
+            existingReasoning.remove();
+        }
+
+        const pendingAnchorReached = !!(
+            typeof messageText === 'string' &&
+            (
+                messageText.includes(getToastMessage('ui.generatedImageForYou'))
+                || messageText.includes('data-stream-image-slot=')
+            )
+        );
+        streamImageRuntime.syncStreamImageAttachments(element, streamImageParts, streamImageLayout, isFinalRender, {
+            pendingPlaceholder: !options?.staticImageRender && !!options?.pendingImagePlaceholder,
+            staticImageRender: !!options?.staticImageRender,
+            pendingAnchorReached
+        });
+
         if (isFinalRender) {
             scheduleCidImageHydration(element);
         }
-        const mermaidRenderPromise = renderMermaidDiagrams(element, { loadScript, isFinalRender });
+        const chatContainer = elements?.chatContainer || null;
+        const containerRect = chatContainer ? chatContainer.getBoundingClientRect() : null;
+        const elementRect = chatContainer ? element.getBoundingClientRect() : null;
+        const elementVisibleBefore = !!(containerRect && elementRect &&
+            elementRect.bottom > containerRect.top &&
+            elementRect.top < containerRect.bottom);
+        const canAdjustScroll = !elementVisibleBefore;
+        const userInteracting = scrollManager.isUserScrolling || (Date.now() - scrollManager.lastUserScrollAt < 250);
+        const applyProgrammaticScrollTop = (targetTop) => {
+            if (!chatContainer) return;
+            scrollManager.setAutoScrollTop(targetTop);
+        };
+
+        const mermaidRenderPromise = renderMermaidDiagramsLazy(element, { loadScript, isFinalRender });
         if (mermaidRenderPromise) {
             element.__mermaidRenderPromise = mermaidRenderPromise;
             // 记录渲染前的高度和滚动位置
-            const beforeHeight = elements?.chatContainer?.scrollHeight || 0;
-            const beforeScrollTop = elements?.chatContainer?.scrollTop || 0;
+            const beforeHeight = chatContainer?.scrollHeight || 0;
+            const beforeScrollTop = chatContainer?.scrollTop || 0;
+            const beforeUserScrollAt = scrollManager.lastUserScrollAt;
+            const beforeShouldAutoScroll = shouldAutoScroll();
+            const beforePinnedToBottom = scrollManager.getDistanceToBottom() <= scrollManager.bottomStrictThreshold;
+            let elementTopBefore = 0;
+            if (containerRect && elementRect) {
+                elementTopBefore = elementRect.top - containerRect.top + beforeScrollTop;
+            }
             mermaidRenderPromise.catch(() => { }).finally(() => {
-                if (!elements?.chatContainer) return;
-                const afterHeight = elements.chatContainer.scrollHeight;
+                if (!chatContainer) return;
+                const afterHeight = chatContainer.scrollHeight;
                 const heightDelta = afterHeight - beforeHeight;
 
-                if (shouldPreserveScrollPosition()) {
-                    if (heightDelta !== 0 && beforeScrollTop < beforeHeight - elements.chatContainer.clientHeight) {
-                        elements.chatContainer.scrollTop = beforeScrollTop + heightDelta;
-                    }
-                } else {
-                    if (shouldAutoScroll()) {
-                        scheduleAutoScrollToBottomStable();
+                const nowUserInteracting = scrollManager.isUserScrolling ||
+                    (Date.now() - scrollManager.lastUserScrollAt < 250);
+                const pinnedToBottom = scrollManager.getDistanceToBottom() <= scrollManager.bottomStrictThreshold;
+
+                if (nowUserInteracting && !pinnedToBottom && !beforeShouldAutoScroll && !shouldAutoScroll()) return;
+                if (!isFinalRender && (beforeShouldAutoScroll || beforePinnedToBottom || shouldAutoScroll() || pinnedToBottom)) {
+                    scrollManager.scheduleSmoothScrollToBottomStable();
+                } else if (shouldPreserveScrollPosition() && canAdjustScroll) {
+                    const userMoved = scrollManager.lastUserScrollAt !== beforeUserScrollAt ||
+                        Math.abs(chatContainer.scrollTop - beforeScrollTop) > 2;
+                    if (userMoved) return;
+                    if (heightDelta !== 0 &&
+                        elementTopBefore < beforeScrollTop &&
+                        beforeScrollTop < beforeHeight - chatContainer.clientHeight) {
+                        applyProgrammaticScrollTop(beforeScrollTop + heightDelta);
                     }
                 }
             });
@@ -9381,36 +14005,63 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             });
         }
 
-        const vegaRenderPromise = renderVegaLiteDiagrams(element, { loadScript, isFinalRender });
+        const vegaRenderPromise = renderVegaLiteDiagramsLazy(element, { loadScript, isFinalRender });
         const cleanupDiagrams = () => {
             diagramPlaceholders.forEach(el => { el.style.minHeight = ''; });
         };
         if (vegaRenderPromise) {
             element.__vegaLiteRenderPromise = vegaRenderPromise;
             // 记录渲染前的高度和滚动位置
-            const vegaBeforeHeight = elements?.chatContainer?.scrollHeight || 0;
-            const vegaBeforeScrollTop = elements?.chatContainer?.scrollTop || 0;
+            const vegaBeforeHeight = chatContainer?.scrollHeight || 0;
+            const vegaBeforeScrollTop = chatContainer?.scrollTop || 0;
+            const vegaBeforeUserScrollAt = scrollManager.lastUserScrollAt;
+            const vegaBeforeShouldAutoScroll = shouldAutoScroll();
+            const vegaBeforePinnedToBottom = scrollManager.getDistanceToBottom() <= scrollManager.bottomStrictThreshold;
+            let vegaElementTopBefore = 0;
+            if (containerRect && elementRect) {
+                vegaElementTopBefore = elementRect.top - containerRect.top + vegaBeforeScrollTop;
+            }
             vegaRenderPromise.catch(() => { }).finally(() => {
+                const cleanupBeforeHeight = chatContainer?.scrollHeight || 0;
                 cleanupDiagrams();
-                if (!elements?.chatContainer) return;
-                const afterHeight = elements.chatContainer.scrollHeight;
+                const cleanupAfterHeight = chatContainer?.scrollHeight || cleanupBeforeHeight;
+                const cleanupHeightDelta = cleanupAfterHeight - cleanupBeforeHeight;
+                if (!chatContainer) return;
+                const afterHeight = chatContainer.scrollHeight;
                 const heightDelta = afterHeight - vegaBeforeHeight;
 
-                if (shouldPreserveScrollPosition()) {
-                    if (heightDelta !== 0 && vegaBeforeScrollTop < vegaBeforeHeight - elements.chatContainer.clientHeight) {
-                        elements.chatContainer.scrollTop = vegaBeforeScrollTop + heightDelta;
-                    }
-                } else {
-                    if (shouldAutoScroll()) {
-                        scheduleAutoScrollToBottomStable();
+                const nowUserInteracting = scrollManager.isUserScrolling ||
+                    (Date.now() - scrollManager.lastUserScrollAt < 250);
+                const pinnedToBottom = scrollManager.getDistanceToBottom() <= scrollManager.bottomStrictThreshold;
+
+                if (nowUserInteracting && !pinnedToBottom && !vegaBeforeShouldAutoScroll && !shouldAutoScroll()) return;
+
+                if (!isFinalRender && (vegaBeforeShouldAutoScroll || vegaBeforePinnedToBottom || shouldAutoScroll() || pinnedToBottom)) {
+                    scrollManager.scheduleSmoothScrollToBottomStable();
+                } else if (shouldPreserveScrollPosition() && canAdjustScroll) {
+                    const userMoved = scrollManager.lastUserScrollAt !== vegaBeforeUserScrollAt ||
+                        Math.abs(chatContainer.scrollTop - vegaBeforeScrollTop) > 2;
+                    if (userMoved) return;
+                    if (heightDelta !== 0 &&
+                        vegaElementTopBefore < vegaBeforeScrollTop &&
+                        vegaBeforeScrollTop < vegaBeforeHeight - chatContainer.clientHeight) {
+                        applyProgrammaticScrollTop(vegaBeforeScrollTop + heightDelta);
                     }
                 }
             });
         } else {
+            const cleanupBeforeHeight = chatContainer?.scrollHeight || 0;
             cleanupDiagrams();
+            const cleanupAfterHeight = chatContainer?.scrollHeight || cleanupBeforeHeight;
+            const cleanupHeightDelta = cleanupAfterHeight - cleanupBeforeHeight;
+            const shouldFollowAfterCleanup = shouldAutoScroll() || (scrollManager.getDistanceToBottom() <= scrollManager.bottomStrictThreshold);
+            if (!isFinalRender && chatContainer && shouldFollowAfterCleanup && cleanupHeightDelta !== 0) {
+                scrollManager.scheduleSmoothScrollToBottomStable();
+            }
         }
 
         mathRenderer.renderMath(element, { isFinalRender });
+
         if (window.hljs) {
             ensurePlaintextHighlightLanguage();
             element.querySelectorAll('pre code').forEach(block => {
@@ -9426,19 +14077,19 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
                     }
                 }
             });
-            if (isFinalRender) {
-                const candidateBlocks = Array.from(element.querySelectorAll('pre code'))
-                    .filter(block => block.dataset.mermaidPending !== 'true' &&
-                        block.dataset.mermaidProcessed !== 'true' &&
-                        block.dataset.vegaLitePending !== 'true' &&
-                        block.dataset.vegaLiteProcessed !== 'true' &&
-                        block.closest('.mermaid-render-container') === null &&
-                        block.closest('.vega-lite-render-container') === null &&
-                        !(block.className || '').includes('language-plaintext') &&
-                        !(block.className || '').includes('language-mermaid') &&
-                        !(block.className || '').includes('language-vega-lite') &&
-                        !(block.className || '').includes('language-vega'));
+            const candidateBlocks = Array.from(element.querySelectorAll('pre code'))
+                .filter(block => block.dataset.mermaidPending !== 'true' &&
+                    block.dataset.mermaidProcessed !== 'true' &&
+                    block.dataset.vegaLitePending !== 'true' &&
+                    block.dataset.vegaLiteProcessed !== 'true' &&
+                    block.closest('.mermaid-render-container') === null &&
+                    block.closest('.vega-lite-render-container') === null &&
+                    !(block.className || '').includes('language-plaintext') &&
+                    !(block.className || '').includes('language-mermaid') &&
+                    !(block.className || '').includes('language-vega-lite') &&
+                    !(block.className || '').includes('language-vega'));
 
+            if (isFinalRender) {
                 const totalCodeBlocks = candidateBlocks.length;
                 const highlightedBlocks = candidateBlocks.filter(block => block.classList.contains('hljs')).length;
 
@@ -9472,14 +14123,15 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             }
         }
 
-        // 为代码块添加复制按钮
-        element.querySelectorAll('pre code').forEach(block => {
-            const pre = block.parentElement;
-            if (pre && !pre.querySelector('.copy-btn-wrapper')) {
-                addCopyButtonToCodeBlock(pre, block);
-            }
-        });
-
+        if (isFinalRender) {
+            // 为代码块添加复制按钮
+            element.querySelectorAll('pre code').forEach(block => {
+                const pre = block.parentElement;
+                if (pre && !pre.querySelector('.copy-btn-wrapper')) {
+                    addCopyButtonToCodeBlock(pre, block);
+                }
+            });
+        }
 
         element.querySelectorAll('img:not([data-image-url])').forEach(img => {
             if (!img.closest('.image-preview-container')) {
@@ -9504,51 +14156,40 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
             wrapper.style.webkitOverflowScrolling = 'touch';
             tableContainers.push(wrapper);
         });
-        tableContainers.forEach((wrapper, index) => {
-            const previous = previousScrollState.tables[index];
-            if (previous) {
-                if (typeof previous.scrollLeft === 'number') {
-                    wrapper.scrollLeft = previous.scrollLeft;
-                }
-                if (typeof previous.scrollTop === 'number') {
-                    wrapper.scrollTop = previous.scrollTop;
-                }
-            }
-        });
-
-        const latestCodeBlocks = Array.from(element.querySelectorAll('pre'));
-        latestCodeBlocks.forEach((block, index) => {
-            const previous = previousScrollState.codeBlocks[index];
-            if (previous) {
-                if (typeof previous.scrollLeft === 'number') {
-                    block.scrollLeft = previous.scrollLeft;
-                }
-                if (typeof previous.scrollTop === 'number') {
-                    block.scrollTop = previous.scrollTop;
-                }
-            }
-        });
-
-        if (isFinalRender && hasCitationList && shouldAutoScroll() && elements?.chatContainer) {
-            const messageEl = element.closest('.message');
-            const lastMessageEl = elements.chatContainer.querySelector('.message:last-of-type');
-            if (messageEl && messageEl === lastMessageEl) {
-                const pendingDiagramPromises = [
-                    element.__mermaidRenderPromise,
-                    element.__vegaLiteRenderPromise
-                ].filter(p => p && typeof p.then === 'function');
-                const performScroll = () => {
-                    if (shouldAutoScroll()) {
-                        smoothScrollToBottom();
+        if (isFinalRender) {
+            tableContainers.forEach((wrapper, index) => {
+                const previous = previousScrollState.tables[index];
+                if (previous) {
+                    if (typeof previous.scrollLeft === 'number') {
+                        wrapper.scrollLeft = previous.scrollLeft;
                     }
-                };
-                if (pendingDiagramPromises.length > 0) {
-                    Promise.allSettled(pendingDiagramPromises).finally(() => requestAnimationFrame(performScroll));
-                } else {
-                    requestAnimationFrame(performScroll);
+                    if (typeof previous.scrollTop === 'number') {
+                        wrapper.scrollTop = previous.scrollTop;
+                    }
                 }
-            }
+            });
+
+            const latestCodeBlocks = Array.from(element.querySelectorAll('pre'));
+            latestCodeBlocks.forEach((block, index) => {
+                const previous = previousScrollState.codeBlocks[index];
+                if (previous) {
+                    if (typeof previous.scrollLeft === 'number') {
+                        block.scrollLeft = previous.scrollLeft;
+                    }
+                    if (typeof previous.scrollTop === 'number') {
+                        block.scrollTop = previous.scrollTop;
+                    }
+                }
+            });
         }
+
+        handleFinalRenderAutoFollow({
+            isFinalRender,
+            hasCitationList,
+            element,
+            scrollManager,
+            shouldAutoScroll
+        });
 
         if (renderTimeout) {
             clearTimeout(renderTimeout);
@@ -9569,8 +14210,9 @@ function renderMessageContent(element, content, citations = null, isFinalRender 
     }
 }
 
-function createMessageElement(role, messageObject) {
+function createMessageElement(role, messageObject, options = {}) {
     const content = messageObject.content;
+    const { historyRender = false } = options || {};
 
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}`;
@@ -9593,10 +14235,8 @@ function createMessageElement(role, messageObject) {
         }
     } else {
         const img = document.createElement('img');
-        img.src = '/images/favicon.ico';
+        img.src = ASSISTANT_AVATAR_SRC;
         img.alt = getToastMessage('ui.aiAssistant');
-        img.style.width = '20px';
-        img.style.height = '20px';
         avatarDiv.appendChild(img);
     }
 
@@ -9606,16 +14246,40 @@ function createMessageElement(role, messageObject) {
     const contentDiv = document.createElement('div');
     contentDiv.className = 'content';
     let renderPromise = null;
-    const renderOptions = { forcePlainText: role === 'user' };
+    const renderOptions = {
+        forcePlainText: role === 'user',
+        staticImageRender: !!historyRender && role === 'assistant'
+    };
+    const messageImageParts = streamImageRuntime.normalizeStreamImageParts(messageObject?.image_parts || messageObject?.image_urls || []);
+    const messageImageLayout = streamImageRuntime.normalizeStreamImageLayout(messageObject?.image_layout || []);
     if (renderOptions.forcePlainText) {
         try { contentDiv.dataset.plainText = 'true'; } catch (_) { }
     }
     if (content) {
+        let renderPayload = content;
         if (typeof content === 'object' && content !== null && 'content' in content) {
-            renderPromise = renderMessageContent(contentDiv, content.content, content.citations, true, renderOptions);
-        } else {
-            renderPromise = renderMessageContent(contentDiv, content, messageObject.citations || null, true, renderOptions);
+            if (messageObject.reasoning && !content.reasoning) {
+                renderPayload = { ...content, reasoning: messageObject.reasoning };
+            }
+            if (messageImageParts.length > 0) {
+                renderPayload = { ...(typeof renderPayload === 'object' ? renderPayload : {}), image_parts: messageImageParts };
+            }
+            if (messageImageLayout.length > 0) {
+                renderPayload = { ...(typeof renderPayload === 'object' ? renderPayload : {}), image_layout: messageImageLayout };
+            }
         }
+        else if (typeof content === 'string' && messageObject.reasoning) {
+            renderPayload = { content, reasoning: messageObject.reasoning };
+            if (messageImageParts.length > 0) {
+                renderPayload.image_parts = messageImageParts;
+            }
+            if (messageImageLayout.length > 0) {
+                renderPayload.image_layout = messageImageLayout;
+            }
+        } else if (typeof content === 'string' && messageImageParts.length > 0) {
+            renderPayload = { content, image_parts: messageImageParts, image_layout: messageImageLayout };
+        }
+        renderPromise = renderMessageContent(contentDiv, renderPayload, messageObject.citations || null, true, renderOptions);
     }
     messageContainerDiv.appendChild(contentDiv);
 
@@ -9756,6 +14420,58 @@ function createMessageElement(role, messageObject) {
             }
         });
         actionsDiv.appendChild(copyBtn);
+
+        if (hasPaidAccessForUi()) {
+            const exportWrap = document.createElement('div');
+            exportWrap.className = 'message-export';
+            const exportBtn = document.createElement('button');
+            exportBtn.className = 'message-action-btn message-export-btn';
+            exportBtn.setAttribute('aria-haspopup', 'true');
+            exportBtn.setAttribute('aria-expanded', 'false');
+            exportBtn.innerHTML = `
+                <svg class="export-icon" viewBox="0 0 24 24">${ICONS.DOWNLOAD}</svg>
+                <span>${getToastMessage('ui.export')}</span>
+            `;
+
+            const exportMenu = document.createElement('div');
+            exportMenu.className = 'message-export-menu';
+            const exportOptions = [
+                { key: 'ui.exportWord', format: 'word' },
+                { key: 'ui.exportPdf', format: 'pdf' },
+                { key: 'ui.exportExcel', format: 'excel' },
+                { key: 'ui.exportPpt', format: 'ppt' }
+            ];
+
+            exportOptions.forEach((option) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.dataset.format = option.format;
+                btn.textContent = getToastMessage(option.key);
+                btn.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    exportMenu.classList.remove('visible');
+                    exportBtn.setAttribute('aria-expanded', 'false');
+                    handleMessageExport(option.format, {
+                        messageElement: messageDiv,
+                        contentDiv,
+                        messageObject
+                    });
+                });
+                exportMenu.appendChild(btn);
+            });
+
+            exportBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const willOpen = !exportMenu.classList.contains('visible');
+                closeMessageExportMenus(exportMenu);
+                exportMenu.classList.toggle('visible', willOpen);
+                exportBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+            });
+
+            exportWrap.appendChild(exportBtn);
+            exportWrap.appendChild(exportMenu);
+            actionsDiv.appendChild(exportWrap);
+        }
     }
     messageContainerDiv.appendChild(actionsDiv);
 
@@ -9985,6 +14701,11 @@ function appendMessage(role, content) {
 
     elements.chatContainer.appendChild(messageElement);
 
+    if ((role === 'user' || role === 'assistant') && currentChatId) {
+        touchChatUpdatedAt(currentChatId);
+        scheduleRenderSidebar();
+    }
+
     const scrollHeight = elements.chatContainer.scrollHeight;
     const clientHeight = elements.chatContainer.clientHeight;
     const scrollTop = elements.chatContainer.scrollTop;
@@ -9993,8 +14714,6 @@ function appendMessage(role, content) {
     const deferAutoScroll = role === 'user' && shouldForceScroll;
 
     if (shouldForceScroll || isScrolledToBottom) {
-        scrollManager.isAutoScrolling = true;
-        scrollManager.lastScrollTime = Date.now();
         if (shouldForceScroll) {
             scrollManager.resetUserScrollState();
         }
@@ -10005,9 +14724,6 @@ function appendMessage(role, content) {
             scrollManager.smoothScrollToBottom();
         } else {
             scheduleAutoScrollToBottom();
-            setTimeout(() => {
-                scrollManager.isAutoScrolling = false;
-            }, 250);
         }
 
         const ensureActions = () => ensureMessageActionsVisible(messageElement);
@@ -10121,6 +14837,186 @@ function cleanupEmptyMessagePlaceholders() {
     });
 }
 
+async function upsertSlashCommand(command, editingName = '') {
+    const normalizedName = normalizeSlashCommandName(command?.name || '');
+    const payload = {
+        name: normalizedName,
+        prompt: command?.prompt || '',
+        description: command?.description || '',
+        is_enabled: command?.is_enabled !== false,
+        editingName: editingName || ''
+    };
+    if (!payload.name || !payload.prompt) {
+        throw new Error('invalid_slash_command');
+    }
+
+    if (!currentUser) {
+        const commands = loadCustomSlashCommands();
+        const nameLower = payload.name.toLowerCase();
+        const filtered = commands.filter(cmd => String(cmd?.name || '').toLowerCase() !== nameLower);
+        if (editingName && normalizeSlashCommandName(editingName).toLowerCase() !== nameLower) {
+            filtered.unshift({ name: payload.name, prompt: payload.prompt, description: payload.description });
+        } else {
+            filtered.unshift({ name: payload.name, prompt: payload.prompt, description: payload.description });
+        }
+        saveCustomSlashCommands(filtered);
+        return filtered;
+    }
+
+    if (editingName && normalizeSlashCommandName(editingName).toLowerCase() !== payload.name.toLowerCase()) {
+        await makeApiRequest('slash-commands/delete', {
+            method: 'POST',
+            body: JSON.stringify({ name: editingName })
+        });
+    }
+
+    await makeApiRequest('slash-commands', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+    });
+    return await ensureSlashCommandCache(true);
+}
+
+async function deleteSlashCommandByName(name) {
+    const normalized = normalizeSlashCommandName(name || '');
+    if (!normalized) return [];
+    if (!currentUser) {
+        const commands = loadCustomSlashCommands();
+        const nextCommands = commands.filter(cmd => normalizeSlashCommandName(cmd?.name || '') !== normalized);
+        saveCustomSlashCommands(nextCommands);
+        return nextCommands;
+    }
+    await makeApiRequest('slash-commands/delete', {
+        method: 'POST',
+        body: JSON.stringify({ name: normalized })
+    });
+    return await ensureSlashCommandCache(true);
+}
+
+function readPendingTurnState() {
+    try {
+        const raw = localStorage.getItem(PENDING_TURN_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || !parsed.chatId || !parsed.userMessageId) return null;
+        return parsed;
+    } catch (_) {
+        return null;
+    }
+}
+
+function persistPendingTurnState(chatId, userMessageId, isNewChat) {
+    if (!chatId || !userMessageId) return;
+    try {
+        localStorage.setItem(PENDING_TURN_STORAGE_KEY, JSON.stringify({
+            chatId,
+            userMessageId,
+            isNewChat: !!isNewChat,
+            timestamp: Date.now()
+        }));
+    } catch (_) { }
+}
+
+function clearPendingTurnState(chatId = null) {
+    try {
+        const pending = readPendingTurnState();
+        if (!pending) {
+            localStorage.removeItem(PENDING_TURN_STORAGE_KEY);
+            return;
+        }
+        if (!chatId || pending.chatId === chatId) {
+            localStorage.removeItem(PENDING_TURN_STORAGE_KEY);
+        }
+    } catch (_) { }
+}
+
+function messageHasClientId(message, targetId) {
+    if (!message || !targetId) return false;
+    const id = message.client_message_id || message.clientMessageId;
+    return id === targetId;
+}
+
+function isMessageContentEmpty(content) {
+    if (content == null) return true;
+    if (typeof content === 'string') return content.trim() === '';
+    if (Array.isArray(content)) {
+        if (content.length === 0) return true;
+        return content.every(part => {
+            if (!part) return true;
+            if (part.type === 'text') return !String(part.text || '').trim();
+            return false;
+        });
+    }
+    if (typeof content === 'object' && Object.prototype.hasOwnProperty.call(content, 'content')) {
+        return isMessageContentEmpty(content.content);
+    }
+    return false;
+}
+
+function isAssistantPlaceholderMessage(message) {
+    return !!message && message.role === 'assistant' && isMessageContentEmpty(message.content);
+}
+
+async function cleanupPendingTurnOnStartup() {
+    const pending = readPendingTurnState();
+    if (!pending) return;
+    const chat = chats?.[pending.chatId];
+    if (!chat || !Array.isArray(chat.messages)) {
+        clearPendingTurnState(pending.chatId);
+        return;
+    }
+
+    const messages = chat.messages;
+    let changed = false;
+
+    if (messages.length > 0) {
+        const last = messages[messages.length - 1];
+        const prev = messages[messages.length - 2];
+        if (last && last.role === 'assistant' && isAssistantPlaceholderMessage(last) && messageHasClientId(prev, pending.userMessageId)) {
+            messages.pop();
+            changed = true;
+        }
+        const currentLast = messages[messages.length - 1];
+        if (currentLast && currentLast.role === 'user' && messageHasClientId(currentLast, pending.userMessageId)) {
+            messages.pop();
+            changed = true;
+        }
+    }
+
+    const shouldDeleteChat = pending.isNewChat
+        && String(pending.chatId).startsWith('temp_')
+        && (!chat.messages || chat.messages.length === 0);
+
+    if (shouldDeleteChat) {
+        delete chats[pending.chatId];
+        localStorage.removeItem(`pending_chat_${pending.chatId}`);
+        if (currentChatId === pending.chatId) {
+            currentChatId = null;
+            showEmptyState();
+            scheduleRenderSidebar();
+            routeManager.navigateToHome({ replace: true, force: true, silent: true });
+        } else {
+            scheduleRenderSidebar();
+        }
+    } else if (changed) {
+        scheduleRenderSidebar();
+        if (currentChatId === pending.chatId) {
+            loadChat(pending.chatId).catch(err => console.warn('Failed to reload chat after pending cleanup:', err));
+        }
+    }
+
+    if (changed || shouldDeleteChat) {
+        try {
+            const userIdForDb = currentUser?.id || 'guest';
+            await saveChatsToDB(userIdForDb, chats);
+        } catch (error) {
+            console.warn('Failed to persist pending-turn cleanup:', error);
+        }
+    }
+
+    clearPendingTurnState(pending.chatId);
+}
+
 function normalizeParsedResult(result) {
     if (result && typeof result === 'object' && !Array.isArray(result)) {
         const text = typeof result.text === 'string' ? result.text : (result.text == null ? '' : String(result.text));
@@ -10146,7 +15042,7 @@ function buildImagePartsFromAttachment(attachment) {
 
 async function processAndAttachFile(file) {
     if (!currentUser) {
-        await ensureStoragePersistence();
+        await ensureStorageAccess({ strict: false });
     }
     // 生成内容哈希用于重复检测
     const contentHash = await generateFileHash(file);
@@ -10154,6 +15050,20 @@ async function processAndAttachFile(file) {
     if (isDuplicate) {
         showToast(getToastMessage('toast.fileDuplicate'), 'info');
         return;
+    }
+
+    if (isSearchModeActive) {
+        if (!canUseSearchAttachments()) {
+            showToast(getToastMessage('toast.searchAttachmentsProOnly'), 'info');
+            return;
+        }
+        if (file.type.startsWith('image/')) {
+            const hasImage = attachments.some(att => att.type === 'image');
+            if (hasImage) {
+                showToast(getToastMessage('toast.searchImageLimit'), 'info');
+                return;
+            }
+        }
     }
 
     const isGuest = !currentUser;
@@ -10172,14 +15082,19 @@ async function processAndAttachFile(file) {
         let content = '';
         let images = null;
         const extension = file.name.split('.').pop()?.toLowerCase();
+        const allowRichDocParsing = shouldAllowRichDocParsing();
+        let allowEmptyFile = false;
 
         if (file.type.startsWith('image/')) {
             content = await imageToBase64(file);
         } else if (extension === 'docx') {
-            ({ text: content, images } = normalizeParsedResult(await readDocxFile(file)));
+            const { readDocxFile } = await getFileParsers();
+            ({ text: content, images } = normalizeParsedResult(await readDocxFile(file, { includeImages: allowRichDocParsing })));
         } else if (extension === 'pdf') {
-            ({ text: content, images } = normalizeParsedResult(await readPdfFile(file)));
+            const { readPdfFile } = await getFileParsers();
+            ({ text: content, images } = normalizeParsedResult(await readPdfFile(file, { allowImageFallback: allowRichDocParsing })));
         } else if (['xlsx', 'xls', 'csv'].includes(extension)) {
+            const { readExcelFile } = await getFileParsers();
             content = await readExcelFile(file);
         } else if (['pptx'].includes(extension)) {
             try {
@@ -10196,7 +15111,8 @@ async function processAndAttachFile(file) {
                         }
                     }
                 }
-                ({ text: content, images } = normalizeParsedResult(await readPptxFile(file)));
+                const { readPptxFile } = await getFileParsers();
+                ({ text: content, images } = normalizeParsedResult(await readPptxFile(file, { includeImages: allowRichDocParsing })));
             } catch (pptxError) {
                 const errorMessage = pptxError.message || getToastMessage('errors.markdownConverterLoadFailed');
                 showToast(`${getToastMessage('console.skipFile', { filename: file.name })}: ${errorMessage}`, 'info');
@@ -10218,11 +15134,22 @@ async function processAndAttachFile(file) {
             removeAttachment(attachmentId);
             throw new Error(`Unsupported file type: .${extension}`);
         }
+
+        if (extension === 'pdf' && !allowRichDocParsing && !(content || '').trim()) {
+            allowEmptyFile = true;
+            showToast(getToastMessage('fileManagement.pdfScanVersion'), 'info');
+        }
+
+        const attachment = attachments.find(a => a.id === attachmentId);
+        if (attachment) {
+            attachment.allowEmpty = allowEmptyFile;
+        }
         completeUpload(attachmentId, content, images);
 
         const { isOverLimit } = updateCharacterCountUI();
         if (isOverLimit) {
-            showToast(getToastMessage('toast.exceedsCharacterLimit', { filename: file.name }), 'error');
+            const { toastKey } = getCharacterLimitInfo();
+            showToast(getToastMessage(toastKey), 'error');
         }
 
     } catch (error) {
@@ -10307,10 +15234,22 @@ function completeUpload(attachmentId, content, images = null) {
     if (element) {
         element.classList.remove('uploading');
         if (attachment.type === 'image') {
-            element.innerHTML = `<img src="${content}" alt="${attachment.file.name}"><button class="remove-btn">×</button>`;
+            element.innerHTML = '';
+            const img = document.createElement('img');
+            img.src = content;
+            img.alt = attachment.file?.name || '';
+            element.appendChild(img);
         } else {
-            element.innerHTML = `<span class="file-name">${attachment.file.name}</span><button class="remove-btn">×</button>`;
+            element.innerHTML = '';
+            const fileName = document.createElement('span');
+            fileName.className = 'file-name';
+            fileName.textContent = attachment.file?.name || '';
+            element.appendChild(fileName);
         }
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-btn';
+        removeBtn.textContent = '×';
+        element.appendChild(removeBtn);
         element.querySelector('.remove-btn').addEventListener('click', () => removeAttachment(attachmentId));
     }
 }
@@ -10410,8 +15349,10 @@ const DOC_ATTACHMENT_MARKER_PREFIX = '[DOC_ATTACHMENTS:';
 const DOC_ATTACHMENT_MARKER_SUFFIX = ']';
 const DOC_DATA_REMOTE_SAVE_DEBOUNCE_MS = 1200;
 const DOC_IMAGE_UPLOAD_DEBOUNCE_MS = 1500;
-const DOC_IMAGE_UPLOAD_BATCH_SIZE = 6;
-const DOC_IMAGE_UPLOAD_BATCH_BYTES = 6 * 1024 * 1024;
+const DOC_IMAGE_UPLOAD_BATCH_SIZE = SYNC_QUEUE_BATCH_SIZE;
+const DOC_IMAGE_UPLOAD_BATCH_BYTES = SYNC_QUEUE_BATCH_BYTES;
+// keepalive request body has browser-imposed size limits (commonly around 64KB).
+const KEEPALIVE_SAFE_BODY_BYTES = 60 * 1024;
 const docDataSaveTimers = new Map();
 const docDataSaveSignatures = new Map();
 const docImageUploadTimers = new Map();
@@ -10421,33 +15362,23 @@ const pendingDocImageUploads = new Set();
 const DOC_IMAGE_UPLOAD_QUEUE_KEY = 'pending_doc_image_uploads';
 let hasResumedDocImageUploads = false;
 
-function getDocImageUploadQueueKey() {
-    if (!currentUser?.id) return null;
-    return `${DOC_IMAGE_UPLOAD_QUEUE_KEY}_${currentUser.id}`;
-}
-
 function loadDocImageUploadQueue() {
-    const key = getDocImageUploadQueueKey();
-    if (!key) return {};
-    try {
-        const raw = localStorage.getItem(key);
-        return raw ? JSON.parse(raw) : {};
-    } catch (error) {
-        console.warn('Failed to read doc image upload queue:', error);
-        return {};
-    }
+    if (!currentUser?.id) return { items: {}, order: [] };
+    return loadPersistentQueue({
+        baseKey: DOC_IMAGE_UPLOAD_QUEUE_KEY,
+        userId: currentUser.id,
+        legacyKey: DOC_IMAGE_UPLOAD_QUEUE_KEY
+    });
 }
 
 function saveDocImageUploadQueue(queue) {
-    const key = getDocImageUploadQueueKey();
-    if (!key) return;
-    const entries = Object.entries(queue || {}).filter(([, value]) => Array.isArray(value?.hashes) && value.hashes.length > 0);
-    if (entries.length === 0) {
-        localStorage.removeItem(key);
-        return;
-    }
-    const compact = Object.fromEntries(entries);
-    localStorage.setItem(key, JSON.stringify(compact));
+    if (!currentUser?.id) return;
+    savePersistentQueue({
+        baseKey: DOC_IMAGE_UPLOAD_QUEUE_KEY,
+        userId: currentUser.id,
+        queue,
+        shouldKeepItem: (item) => Array.isArray(item?.hashes) && item.hashes.length > 0
+    });
 }
 
 function queueDocImageUpload(chatId, hashes = null) {
@@ -10460,17 +15391,18 @@ function queueDocImageUpload(chatId, hashes = null) {
     }
     if (hashList.length === 0) return;
     const queue = loadDocImageUploadQueue();
-    const existing = new Set(queue[chatId]?.hashes || []);
+    const existing = new Set(queue.items?.[chatId]?.hashes || []);
     hashList.forEach(hash => existing.add(hash));
-    queue[chatId] = { hashes: Array.from(existing), updatedAt: Date.now() };
+    const item = { hashes: Array.from(existing), updatedAt: Date.now() };
+    upsertQueueItem(queue, chatId, item);
     saveDocImageUploadQueue(queue);
 }
 
 function clearDocImageUploadQueueForChat(chatId) {
     if (!currentUser || !chatId) return;
     const queue = loadDocImageUploadQueue();
-    if (!queue[chatId]) return;
-    delete queue[chatId];
+    if (!queue.items?.[chatId]) return;
+    removeQueueItem(queue, chatId);
     saveDocImageUploadQueue(queue);
 }
 
@@ -10478,10 +15410,17 @@ function resumePendingDocImageUploadsOnce() {
     if (!currentUser || hasResumedDocImageUploads) return;
     hasResumedDocImageUploads = true;
     const queue = loadDocImageUploadQueue();
-    Object.entries(queue).forEach(([chatId, entry]) => {
+    Object.entries(queue.items || {}).forEach(([chatId, entry]) => {
         if (!Array.isArray(entry?.hashes) || entry.hashes.length === 0) return;
         uploadDocImagesForChat(chatId, entry.hashes);
     });
+}
+
+function resetDocImageUploadRuntimeState() {
+    pendingDocImageUploads.clear();
+    docImageUploadTimers.forEach(timer => clearTimeout(timer));
+    docImageUploadTimers.clear();
+    hasResumedDocImageUploads = false;
 }
 
 function extractDocAttachmentExtensionsFromContent(content) {
@@ -10647,7 +15586,7 @@ function transferDocDataCaches(fromChatId, toChatId) {
 async function uploadDocImagesForChat(chatId, hashes = null) {
     if (!currentUser || !chatId || !sessionId) return;
     const queue = loadDocImageUploadQueue();
-    const queuedHashes = Array.isArray(queue?.[chatId]?.hashes) ? queue[chatId].hashes : [];
+    const queuedHashes = Array.isArray(queue?.items?.[chatId]?.hashes) ? queue.items[chatId].hashes : [];
     const chat = chats?.[chatId];
     let hashList = Array.isArray(hashes) && hashes.length > 0
         ? hashes
@@ -10661,74 +15600,128 @@ async function uploadDocImagesForChat(chatId, hashes = null) {
         docImageUploadCache.set(chatId, uploadedSet);
     }
 
-    let uploadedCount = 0;
-    let batchItems = [];
-    let batchBytes = 0;
+    const queueItem = queue.items?.[chatId];
+    if (queueItem && (shouldDeferQueueItem(queueItem) || (Number(queueItem.retryCount) || 0) >= SYNC_QUEUE_MAX_RETRIES)) {
+        return;
+    }
+    let cursor = 0;
+    const skippedHashes = new Set();
+    const pickNextUnit = async () => {
+        while (cursor < hashList.length) {
+            const hash = hashList[cursor];
+            cursor += 1;
+            if (uploadedSet.has(hash)) continue;
+            if (await LocalStore.isUploadedForChat(hash, chatId)) {
+                uploadedSet.add(hash);
+                continue;
+            }
+            try {
+                const blob = await LocalStore.getImage(hash, chatId);
+                if (!blob) {
+                    skippedHashes.add(hash);
+                    continue;
+                }
+                const bytes = blob.size || 0;
+                return {
+                    id: hash,
+                    hash,
+                    blob,
+                    bytes
+                };
+            } catch (error) {
+                console.warn('Failed to prepare doc image for upload:', error);
+                skippedHashes.add(hash);
+            }
+        }
+        return null;
+    };
 
-    const flushBatch = async () => {
-        if (batchItems.length === 0) return;
+    const sendBatch = async (batch) => {
         const formData = new FormData();
         formData.append('chatId', chatId);
-        batchItems.forEach(item => {
+        batch.forEach(item => {
             formData.append('hash', item.hash);
-            formData.append('mime', item.mime || item.blob.type || 'application/octet-stream');
+            formData.append('mime', item.blob?.type || 'application/octet-stream');
             formData.append('file', item.blob, `${item.hash}.bin`);
         });
 
+        const totalBytes = batch.reduce((sum, item) => sum + (Number(item?.bytes) || 0), 0);
+        const baseRequest = {
+            method: 'POST',
+            headers: {
+                'X-Session-ID': sessionId
+            },
+            body: formData
+        };
+        const shouldUseKeepalive = totalBytes > 0 && totalBytes <= KEEPALIVE_SAFE_BODY_BYTES;
+
+        let response;
         try {
-            const response = await fetch('/api/docdata/image-save-batch', {
-                method: 'POST',
-                keepalive: true,
-                headers: {
-                    'X-Session-ID': sessionId
-                },
-                body: formData
+            response = await fetch('/api/docdata/image-save-batch', {
+                ...baseRequest,
+                keepalive: shouldUseKeepalive
             });
-            if (response.ok) {
-                const result = await response.json().catch(() => null);
-                const uploaded = Array.isArray(result?.uploaded) ? result.uploaded : [];
-                for (const hash of uploaded) {
-                    uploadedSet.add(hash);
-                    await LocalStore.markUploadedForChat(hash, chatId);
-                    uploadedCount += 1;
-                }
-            } else {
-                const errorText = await response.text();
-            }
         } catch (error) {
-            console.warn('Failed to upload doc image batch to R2:', error);
-        } finally {
-            batchItems = [];
-            batchBytes = 0;
+            // Large keepalive payload may throw TypeError in some browsers; fallback to normal request.
+            if (shouldUseKeepalive && error?.name === 'TypeError') {
+                response = await fetch('/api/docdata/image-save-batch', baseRequest);
+            } else {
+                throw error;
+            }
         }
+        if (response.status === 401) {
+            return { ok: false, stopReason: 'auth', attempted: batch.map(item => item.id) };
+        }
+        if (!response.ok) {
+            const errorText = await response.text().catch(() => '');
+            return { ok: false, error: errorText || 'upload_failed', attempted: batch.map(item => item.id) };
+        }
+        const result = await response.json().catch(() => null);
+        const uploaded = Array.isArray(result?.uploaded) ? result.uploaded : [];
+        return { ok: true, uploaded, attempted: batch.map(item => item.id) };
     };
 
-    for (const hash of hashList) {
-        if (uploadedSet.has(hash)) continue;
-        if (await LocalStore.isUploadedForChat(hash, chatId)) {
-            uploadedSet.add(hash);
-            continue;
+    await runSyncQueueWorker({
+        pickNextUnit,
+        sendBatch,
+        batchSize: DOC_IMAGE_UPLOAD_BATCH_SIZE,
+        batchBytes: DOC_IMAGE_UPLOAD_BATCH_BYTES,
+        onUnitSuccess: async (unit) => {
+            uploadedSet.add(unit.hash);
+            await LocalStore.markUploadedForChat(unit.hash, chatId);
+            if (queue.items?.[chatId]) {
+                resetQueueItemFailure(queue.items[chatId]);
+                queue.items[chatId].updatedAt = Date.now();
+            }
+        },
+        onUnitFailure: () => {
+            if (queue.items?.[chatId]) {
+                markQueueItemFailure(queue.items[chatId], {
+                    baseMs: SYNC_QUEUE_BACKOFF_BASE_MS,
+                    maxMs: SYNC_QUEUE_BACKOFF_MAX_MS,
+                    fixedDelayMs: SYNC_QUEUE_RETRY_DELAY_MS
+                });
+                queue.items[chatId].updatedAt = Date.now();
+            }
+        },
+        stopWhen: (result) => {
+            const item = queue.items?.[chatId];
+            return !!(result?.stopReason === 'auth'
+                || (item && (shouldDeferQueueItem(item) || (Number(item.retryCount) || 0) >= SYNC_QUEUE_MAX_RETRIES)));
+        },
+        onStop: (result) => {
+            if (result?.stopReason === 'auth') {
+                resetDocImageUploadRuntimeState();
+                return;
+            }
+            showSyncQueueRetryToastOnce(result);
         }
-        try {
-            const blob = await LocalStore.getImage(hash, chatId);
-            if (!blob) {
-                continue;
-            }
-            const blobSize = blob.size || 0;
-            if ((batchBytes + blobSize) > DOC_IMAGE_UPLOAD_BATCH_BYTES && batchItems.length > 0) {
-                await flushBatch();
-            }
-            batchItems.push({ hash, blob, mime: blob.type });
-            batchBytes += blobSize;
-            if (batchItems.length >= DOC_IMAGE_UPLOAD_BATCH_SIZE) {
-                await flushBatch();
-            }
-        } catch (error) {
-            console.warn('Failed to upload doc image to R2:', error);
-        }
+    });
+
+    if (queue.items?.[chatId]) {
+        saveDocImageUploadQueue(queue);
     }
-    await flushBatch();
-    const remaining = hashList.filter(hash => !uploadedSet.has(hash));
+    const remaining = hashList.filter(hash => !uploadedSet.has(hash) && !skippedHashes.has(hash));
     if (remaining.length > 0) {
         queueDocImageUpload(chatId, remaining);
     } else {
@@ -10873,6 +15866,15 @@ function hasFileContentInParts(content) {
     );
 }
 
+function hasRichDocCidInParts(content) {
+    if (!Array.isArray(content)) return false;
+    return content.some(part =>
+        part?.type === 'file' &&
+        typeof part.content === 'string' &&
+        part.content.includes('cid:')
+    );
+}
+
 const CID_HASH_REGEX = /cid:([a-f0-9]+)/ig;
 
 function collectCidHashesFromText(text, collector) {
@@ -10919,6 +15921,28 @@ function hasCidInContent(input) {
         collectCidHashesFromContent(input, hashes);
     }
     return hashes.size > 0;
+}
+
+function stripImageMarkerText(text) {
+    if (!text) return '';
+    return text
+        .replace(/<PageImage:\s*\d+>/gi, ' ')
+        .replace(/!\[[^\]]*\]\(cid:[^)]+\)/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function shouldAttachAllImagesForContent(content) {
+    if (!content || typeof content !== 'string') return false;
+    if (!content.includes('cid:')) return false;
+    const cleaned = stripImageMarkerText(content);
+    return cleaned.length < 40;
+}
+
+function collectAllCidHashesFromText(text) {
+    const hashes = new Set();
+    collectCidHashesFromText(text, hashes);
+    return hashes;
 }
 
 function hasPersistedDocContext(chatId) {
@@ -11102,7 +16126,7 @@ const TOOL_IMAGE_CALL_REGEX = /fetch_image_details/i;
 const GLOBAL_IMAGE_REQUEST_REGEX = /request_global_images/i;
 const CID_INLINE_REGEX = /cid:([a-f0-9]{10,})/ig;
 const CID_HASH_ONLY_REGEX = /\b[a-f0-9]{40}\b/ig;
-const MAX_TOOL_IMAGE_FETCH = 8;
+const MAX_TOOL_IMAGE_FETCH = 10;
 
 function extractToolCallHashes(text) {
     if (!text || typeof text !== 'string' || !TOOL_IMAGE_CALL_REGEX.test(text)) return [];
@@ -11145,6 +16169,9 @@ async function selectRelevantCidsForQuestion(userMessageText, sourceText) {
     if (!sourceText || !userMessageText) {
         return { relevantText: '', hashes: new Set() };
     }
+    if (shouldAttachAllImagesForContent(sourceText)) {
+        return { relevantText: '', hashes: collectAllCidHashesFromText(sourceText) };
+    }
     const MAX_TOOL_TEXT = 12000;
     const truncatedSource = sourceText.length > MAX_TOOL_TEXT
         ? `${sourceText.slice(0, MAX_TOOL_TEXT)}\n\n[Content truncated]`
@@ -11181,6 +16208,38 @@ ${truncatedSource}`;
     } catch (error) {
         console.warn('Global image selection failed:', error);
         return { relevantText: '', hashes: new Set() };
+    }
+}
+
+async function resolveRelevantCidSelection({
+    userMessageText,
+    sourceText,
+    chatId,
+    userContent,
+    includeUserImagesForTool = false
+}) {
+    const emptyResult = { relevantText: '', hashes: [], selectedCidImages: [], inlineImages: [] };
+    if (!userMessageText || !sourceText) return emptyResult;
+    try {
+        const { relevantText, hashes } = await selectRelevantCidsForQuestion(userMessageText, sourceText);
+        const hashList = hashes && hashes.size > 0 ? Array.from(hashes) : [];
+        const selectedCidImages = hashList.length > 0
+            ? await buildImagePartsFromCids(hashList, chatId)
+            : [];
+        const toolImageParts = [];
+        if (includeUserImagesForTool && Array.isArray(userContent)) {
+            toolImageParts.push(...userContent);
+        }
+        if (selectedCidImages.length > 0) {
+            toolImageParts.push(...selectedCidImages);
+        }
+        const inlineImages = toolImageParts.length > 0
+            ? extractInlineImagesFromContent(toolImageParts)
+            : [];
+        return { relevantText: relevantText || '', hashes: hashList, selectedCidImages, inlineImages };
+    } catch (error) {
+        console.warn('Relevant CID selection failed:', error);
+        return emptyResult;
     }
 }
 
@@ -11245,6 +16304,73 @@ async function buildImagePartsFromCids(hashes, chatId = null) {
         }
     }
     return parts;
+}
+
+function escapeForRegExp(text) {
+    return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function collectMessageTextContent(message) {
+    if (!message) return '';
+    const content = message.content;
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+        return content
+            .map((part) => {
+                if (typeof part === 'string') return part;
+                if (part?.type === 'text' && typeof part.text === 'string') return part.text;
+                return '';
+            })
+            .filter(Boolean)
+            .join(' ');
+    }
+    if (content && typeof content === 'object') {
+        if (typeof content.content === 'string') return content.content;
+        if (Array.isArray(content.content)) {
+            return content.content
+                .map((part) => (part?.type === 'text' && typeof part.text === 'string' ? part.text : ''))
+                .filter(Boolean)
+                .join(' ');
+        }
+    }
+    return '';
+}
+
+function collectAssistantImageParts(message) {
+    if (!message || typeof message !== 'object') return [];
+    const fromMessage = streamImageRuntime.normalizeStreamImageParts(message.image_parts || message.image_urls || []);
+    if (fromMessage.length > 0) return fromMessage;
+
+    const content = message.content;
+    if (Array.isArray(content)) {
+        return streamImageRuntime.normalizeStreamImageParts(content);
+    }
+    if (content && typeof content === 'object') {
+        return streamImageRuntime.normalizeStreamImageParts(content.image_parts || content.image_urls || []);
+    }
+    return [];
+}
+
+function extractAssistantImageDescription(message) {
+    if (!message || typeof message !== 'object') return '';
+    if (typeof message.image_description === 'string' && message.image_description.trim()) {
+        return message.image_description.trim();
+    }
+    const rawText = collectMessageTextContent(message);
+    if (!rawText) return '';
+
+    const label = getToastMessage('ui.imageDescription');
+    const plainText = rawText
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\*\*/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const descRe = new RegExp(`${escapeForRegExp(label)}\\s*[：:]\\s*(.+)$`, 'i');
+    const match = plainText.match(descRe);
+    if (match && match[1]) {
+        return match[1].trim();
+    }
+    return '';
 }
 
 class IntentAnalyzer {
@@ -11400,21 +16526,12 @@ class IntentAnalyzer {
         const recentHistory = conversationHistory.slice(-6).map(msg => {
             let content = '';
 
-            if (Array.isArray(msg.content)) {
-                const imageHtml = msg.content.find(p => typeof p === 'string' && p.includes('image-preview-container'));
-                if (imageHtml) {
-                    const match = imageHtml.match(new RegExp(`<strong>${getToastMessage('ui.imageDescription')}：</strong>\\s*(.*)`));
-                    content = `[${getToastMessage('ui.imageGenerated')}，${getToastMessage('ui.description')}: ${match ? match[1].trim() : getToastMessage('ui.unknown')}]`;
-                } else {
-                    content = msg.content.filter(p => p.type === 'text').map(p => p.text).join(' ');
-                }
-            } else if (typeof msg.content === 'string') {
-                if (msg.content.includes('image-preview-container')) {
-                    const match = msg.content.match(new RegExp(`<strong>${getToastMessage('ui.imageDescription')}：</strong>\\s*(.*)`));
-                    content = `[${getToastMessage('ui.imageGenerated')}，${getToastMessage('ui.description')}: ${match ? match[1].trim() : getToastMessage('ui.unknown')}]`;
-                } else {
-                    content = msg.content;
-                }
+            const imageParts = collectAssistantImageParts(msg);
+            if (msg.role === 'assistant' && imageParts.length > 0) {
+                const desc = extractAssistantImageDescription(msg) || getToastMessage('ui.unknown');
+                content = `[${getToastMessage('ui.imageGenerated')}，${getToastMessage('ui.description')}: ${desc}]`;
+            } else {
+                content = collectMessageTextContent(msg);
             }
             return `${msg.role}: ${content.substring(0, 200)}`;
         }).join('\n');
@@ -11748,7 +16865,7 @@ function extractInlineImagesFromContent(userContent) {
 async function generateCombinedImagePrompt(userMessageText, conversationHistory, intent, imageDescription = null) {
     const userPrompt = extractImagePrompt(userMessageText);
     const sourcePrompt = imageDescription
-        ? `${imageDescription}\nUser request: ${userPrompt}`
+        ? `${imageDescription}\n${userPrompt}`
         : userPrompt;
 
     if (intent === 'IMAGE_GENERATION') {
@@ -11759,14 +16876,14 @@ async function generateCombinedImagePrompt(userMessageText, conversationHistory,
             const englishPrompt = await callAISynchronously(promptForAI, 'gemini-2.5-flash-lite');
 
             return {
-                original: sourcePrompt,
+                original: userPrompt,
                 english: englishPrompt || sourcePrompt,
                 localizedDescription: null
             };
         } catch (error) {
             console.error(`${getToastMessage('console.firstPromptOptimizationFailed')}:`, error);
             return {
-                original: sourcePrompt,
+                original: userPrompt,
                 english: sourcePrompt,
                 localizedDescription: null
             };
@@ -11778,18 +16895,19 @@ async function generateCombinedImagePrompt(userMessageText, conversationHistory,
         for (let i = conversationHistory.length - 1; i >= 0; i--) {
             const msg = conversationHistory[i];
 
-            if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content.includes('image-preview-container')) {
-                const match = msg.content.match(new RegExp(`<strong>${getToastMessage('ui.imageDescription')}：</strong>\\s*(.*)`));
+            if (msg.role !== 'assistant') continue;
+            const imageParts = collectAssistantImageParts(msg);
+            if (imageParts.length === 0) continue;
 
-                if (match && match[1]) {
-                    const desc = match[1].trim();
-
-                    try {
-                        const reversePrompt = `Convert the following image description back to a detailed English prompt suitable for AI image generation. Description: ${desc}`;
-                        originalPrompt = await callAISynchronously(reversePrompt, 'gemini-2.5-flash-lite');
-                    } catch (e) { originalPrompt = desc; }
-                    break;
+            const desc = extractAssistantImageDescription(msg);
+            if (desc) {
+                try {
+                    const reversePrompt = `Convert the following image description back to a detailed English prompt suitable for AI image generation. Description: ${desc}`;
+                    originalPrompt = await callAISynchronously(reversePrompt, 'gemini-2.5-flash-lite');
+                } catch (e) {
+                    originalPrompt = desc;
                 }
+                break;
             }
         }
 
@@ -11797,10 +16915,13 @@ async function generateCombinedImagePrompt(userMessageText, conversationHistory,
         Original prompt: "${originalPrompt}"
         User's modification request: "${userMessageText}"`;
 
-        const targetLang = getCurrentLanguage() || currentUser?.language || 'zh-CN';
-        const localizedDescriptionPrompt = `Write a concise 10-20 word description in ${targetLang} for the modified image. Be direct and highlight key features. Return ONLY the description text.
-        Original image info: "${originalPrompt}"
-        User's modification request: "${userMessageText}"`;
+        const targetLang = getCurrentLanguage() || currentUser?.language || 'en';
+        const localizedDescriptionPrompt = `Write one concise 10-20 word image description in ${targetLang}. Output ONLY the final description sentence.
+        Do not include labels or metadata such as "Request:", "User request:", "Original image info:", or "English prompt:".
+        Focus on visual content only (subjects, style, lighting, setting).
+        Context:
+        - Original image info: "${originalPrompt}"
+        - User modification request: "${userMessageText}"`;
 
         try {
             const newEnglishPrompt = await callAISynchronously(promptForAI, 'gemini-2.5-flash-lite');
@@ -11833,12 +16954,14 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
     const { existingAssistantElement = null } = options;
     const englishPrompt = promptObject.english;
 
-    if (!currentChatId) await startNewChat(true);
+        if (!currentChatId) await startNewChat(true);
     const chatIdForRequest = currentChatId;
+    const imageUsageBase = Number(currentUserUsage?.imagesCount) || 0;
+    const imageUsageToken = `img_${chatIdForRequest}_${Date.now()}`;
 
     let userMessageToSave = null;
     if (!existingAssistantElement) {
-        userMessageToSave = { role: 'user', content: userContent };
+        userMessageToSave = createChatMessage('user', userContent);
         chats[chatIdForRequest].messages.push(userMessageToSave);
         appendMessage('user', userContent);
 
@@ -11869,10 +16992,12 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
                 <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle>
             </svg>
             <span>${getToastMessage('ui.generationMayTake1to2Minutes')}</span>
-        </div>
-    `;
+        </div>`;
 
-    let assistantMessage = { role: 'assistant', content: `[${getToastMessage('ui.generatingImage')}, ${getToastMessage('ui.description')}: ${englishPrompt}]` };
+    let assistantMessage = createChatMessage(
+        'assistant',
+        `[${getToastMessage('ui.generationMayTake1to2Minutes')}, ${getToastMessage('ui.description')}: ${englishPrompt}]`
+    );
 
     chats[chatIdForRequest].messages.push(assistantMessage);
 
@@ -11884,17 +17009,25 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
         }
 
         const loadImage = async () => {
-            if (contentDiv) {
-                contentDiv.innerHTML = `
-                    <div class="thinking-indicator-new">
-                        <svg class="spinner" viewBox="0 0 50 50">
-                            <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle>
-                        </svg>
-                        <span>${getToastMessage('ui.generationMayTake1to2Minutes')}</span>
-                    </div>
-                `;
+            let previewDescription = String(promptObject.localizedDescription || '').trim();
+            if (!previewDescription) {
+                previewDescription = String(
+                    await translateToUserLanguage(promptObject.original || '', { fallbackToOriginal: false }) || ''
+                ).trim();
             }
+            if (!previewDescription) {
+                previewDescription = String(promptObject.english || '').trim();
+            }
+            if (!previewDescription) {
+                previewDescription = getToastMessage('ui.imageGenerated');
+            }
+            const previewText = `${getToastMessage('ui.generatedImageForYou')}\n\n**${getToastMessage('ui.imageDescription')}：** ${previewDescription}`;
+            if (previewText.trim()) {
+                searchParams.set('previewText', previewText);
+            }
+
             const params = new URLSearchParams(searchParams);
+            params.set('stream', '1');
             const headers = {};
             let visitorId = null;
             if (!sessionId) {
@@ -11910,7 +17043,7 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
 
             const fetchWithRetry = async (attempt = 1) => {
                 const controller = new AbortController();
-                const timeoutMs = isNativeApp ? 90000 : 60000;
+                const timeoutMs = 90000;
                 const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
                 const timestamp = Date.now();
                 activeResponses.set(chatIdForRequest, { controller, timestamp });
@@ -11932,6 +17065,23 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
                         throw new Error(mappedMessage || `${getToastMessage('errors.serverError')}: ${response.status}`);
                     }
                     const contentType = response.headers.get('content-type') || '';
+                    if (contentType.includes('text/event-stream')) {
+                        const streamResult = await streamImageRuntime.processStreamedResponse(response, contentDiv, {
+                            provisionalImageLayout: [{ image_id: 'img_1', placement: 'after_paragraph:1' }],
+                            usePendingImagePlaceholder: true
+                        });
+                        const parts = streamImageRuntime.normalizeStreamImageParts(streamResult?.streamImageParts || []);
+                        const streamImageUrl = parts[0]?.image_url?.url || '';
+                        if (!streamImageUrl) {
+                            throw new Error('No image url returned from stream.');
+                        }
+                        return {
+                            imageUrl: streamImageUrl,
+                            streamedText: (streamResult?.fullResponse || '').trim(),
+                            streamedImageLayout: streamImageRuntime.normalizeStreamImageLayout(streamResult?.streamImageLayout || [])
+                        };
+                    }
+
                     let finalImageUrl = null;
                     if (contentType.includes('application/json')) {
                         const data = await response.json();
@@ -11945,7 +17095,7 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
                     } else {
                         throw new Error('Invalid content type received from server.');
                     }
-                    return finalImageUrl;
+                    return { imageUrl: finalImageUrl, streamedText: '', streamedImageLayout: [] };
                 } catch (error) {
                     clearTimeout(timeoutId);
                     activeResponses.delete(chatIdForRequest);
@@ -11960,62 +17110,76 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
 
             let finalImageUrl = null;
             try {
-                finalImageUrl = await fetchWithRetry();
+                const generated = await fetchWithRetry();
+                finalImageUrl = generated?.imageUrl || '';
                 const { displayUrl, originalUrl } = await ensureDisplayableImageUrl(finalImageUrl, headers);
 
                 let localizedDescription = promptObject.localizedDescription || null;
                 if (!localizedDescription) {
                     try {
-                        const targetLang = getCurrentLanguage() || currentUser?.language || 'zh-CN';
-                        const localizedDescriptionPrompt = `Write a concise 15-30 word description in ${targetLang} for this generated image request. Be direct and highlight key subjects, style, and setting. Return ONLY the description text.
-                        Request: "${promptObject.original}"
-                        English prompt: "${englishPrompt}"`;
+                        const targetLang = (currentUser?.language || localStorage.getItem('selectedLanguage') || getCurrentLanguage() || 'en').trim();
+                        const localizedDescriptionPrompt = `Write one concise 15-30 word image description in ${targetLang}. Output ONLY the final description sentence.
+Do not include labels or metadata such as "Request:", "User request:", or "English prompt:".
+Focus on visual content only (subjects, style, lighting, setting).
+                        Context:
+- User request: "${promptObject.original}"
+- English prompt: "${englishPrompt}"`;
                         const localizedDescriptionRaw = await callAISynchronously(localizedDescriptionPrompt, 'gemini-2.5-flash-lite');
                         localizedDescription = await translateToUserLanguage(
-                            (localizedDescriptionRaw || promptObject.original || '').toString().trim().replace(/^["']|["']$/g, '')
+                            (localizedDescriptionRaw || promptObject.original || '').toString().trim().replace(/^["']|["']$/g, ''),
+                            { fallbackToOriginal: false }
                         );
                     } catch (e) {
-                        localizedDescription = await translateToUserLanguage(promptObject.original);
+                        localizedDescription = await translateToUserLanguage(promptObject.original, { fallbackToOriginal: false });
                     }
                 }
-                localizedDescription = localizedDescription || await translateToUserLanguage(promptObject.original);
+                localizedDescription = String(localizedDescription || '').trim();
+                if (!localizedDescription) {
+                    localizedDescription = String(
+                        await translateToUserLanguage(promptObject.original, { fallbackToOriginal: false }) || ''
+                    ).trim();
+                }
+                if (!localizedDescription) {
+                    localizedDescription = String(promptObject.english || '').trim();
+                }
+                if (!localizedDescription) {
+                    localizedDescription = getToastMessage('ui.imageGenerated');
+                }
 
-                const imageContentHtml = `
-                    <div>${getToastMessage('ui.generatedImageForYou')}</div>
-                    <div class="image-preview-container">
-                        <img src="${displayUrl}" alt="${localizedDescription}" style="max-width: 250px; border-radius: 8px; cursor: pointer; display: block;" data-image-url="${displayUrl}" data-original-url="${originalUrl}">
-                        <button class="image-overlay-btn" title="${getToastMessage('ui.downloadImage')}" data-action="download-image" data-image-url="${displayUrl}" data-original-url="${originalUrl}" data-description="${localizedDescription}">
-                            <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-                        </button>
-                    </div>
-                    <p style="margin-top: 8px; line-height: 1.5;">
-                        <strong>${getToastMessage('ui.imageDescription')}：</strong> ${localizedDescription}
-                    </p>
-                `;
-                renderMessageContent(contentDiv, imageContentHtml);
-                assistantMessage.content = imageContentHtml;
+                const imageParts = streamImageRuntime.normalizeStreamImageParts([{
+                    type: 'image_url',
+                    image_url: { url: displayUrl || originalUrl }
+                }]);
+                const imageLayoutFromStream = streamImageRuntime.normalizeStreamImageLayout(generated?.streamedImageLayout || []);
+                const imageLayout = imageLayoutFromStream.length > 0
+                    ? imageLayoutFromStream
+                    : [{ image_id: 'img_1', url: imageParts[0]?.image_url?.url || '', placement: 'after_paragraph:1' }];
+                const defaultAssistantText = `${getToastMessage('ui.generatedImageForYou')}\n\n**${getToastMessage('ui.imageDescription')}：** ${localizedDescription}`;
+                const streamedTextRaw = String(generated?.streamedText || '').trim();
+                const preferredStreamedText = streamedTextRaw && streamedTextRaw.includes(getToastMessage('ui.imageDescription'))
+                    ? streamedTextRaw
+                    : '';
+                const assistantText = (preferredStreamedText || defaultAssistantText).trim() || defaultAssistantText;
+                const imagePayload = {
+                    content: assistantText,
+                    image_parts: imageParts,
+                    image_layout: imageLayout
+                };
+                renderMessageContent(contentDiv, imagePayload, null, true);
+                assistantMessage.content = assistantText;
+                assistantMessage.image_parts = imageParts;
+                assistantMessage.image_layout = imageLayout;
+                assistantMessage.image_description = localizedDescription;
+                assistantMessage.generated_image_prompt = englishPrompt;
 
                 const messages = chats[chatIdForRequest].messages;
                 if (messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
                     messages[messages.length - 1] = assistantMessage;
                 }
-                if (shouldAutoScroll()) {
-                    const renderedImg = contentDiv?.querySelector('img[data-image-url]');
-                    const scheduleScroll = () => {
-                        if (shouldAutoScroll()) {
-                            smoothScrollToBottom();
-                        }
-                    };
-                    if (renderedImg) {
-                        if (renderedImg.complete) {
-                            requestAnimationFrame(scheduleScroll);
-                        } else {
-                            renderedImg.addEventListener('load', () => requestAnimationFrame(scheduleScroll), { once: true });
-                        }
-                    } else {
-                        requestAnimationFrame(scheduleScroll);
-                    }
-                }
+                recordImageGenerationUsageSuccess(originalUrl || displayUrl, {
+                    expectedBase: imageUsageBase,
+                    token: imageUsageToken
+                });
                 activeResponses.delete(chatIdForRequest);
 
                 resolve(assistantMessage);
@@ -12023,10 +17187,11 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
                 activeResponses.delete(chatIdForRequest);
                 console.error(`${getToastMessage('console.imageLoadFailed')}:`, finalImageUrl || imageUrl, error.message);
                 const errorMessage = getToastMessage('errors.imageGenerationFailed');
-                const errorContentHtml = `<p style="color: var(--error-color, #ef4444);">${errorMessage}</p>`;
-
-                renderMessageContent(contentDiv, errorContentHtml);
-                assistantMessage.content = errorContentHtml;
+                renderMessageContent(contentDiv, errorMessage);
+                assistantMessage.content = errorMessage;
+                delete assistantMessage.image_parts;
+                delete assistantMessage.image_layout;
+                delete assistantMessage.image_description;
 
                 const messages = chats[chatIdForRequest].messages;
                 if (messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
@@ -12048,11 +17213,24 @@ async function handleImageGeneration(userContent, promptObject, options = {}) {
     });
 }
 
+let periodicSyncIntervalId = null;
+
 function startPeriodicSync() {
     if (!currentUser) return;
+    if (periodicSyncIntervalId) return;
 
-    const syncInterval = setInterval(async () => {
+    periodicSyncIntervalId = setInterval(async () => {
         try {
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+                return;
+            }
+            if (!currentUser) {
+                if (periodicSyncIntervalId) {
+                    clearInterval(periodicSyncIntervalId);
+                    periodicSyncIntervalId = null;
+                }
+                return;
+            }
             const result = await makeApiRequest('chats/conversations');
             if (result.success) {
                 const serverChatIds = new Set(result.conversations.map(conv => conv.id));
@@ -12078,15 +17256,170 @@ function startPeriodicSync() {
         }
     }, 5 * 60 * 1000);
 
-    addGlobalCleanup(() => clearInterval(syncInterval));
+    addGlobalCleanup(() => {
+        if (periodicSyncIntervalId) {
+            clearInterval(periodicSyncIntervalId);
+            periodicSyncIntervalId = null;
+        }
+    });
 }
 
-// 全局变量用于后台缓冲区管理
-let globalBackgroundBuffer = '';
-let globalDisplayBuffer = '';
-let globalContentDiv = null;
-let globalCharQueue = [];
-const STREAM_RENDER_INTERVAL_MS = 30;
+const CHAT_LIST_SYNC_COOLDOWN_MS = 4000;
+let chatListSyncInFlight = null;
+let chatListSyncLastRunAt = 0;
+
+async function syncChatListFromServer(options = {}) {
+    if (!currentUser) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+    const force = !!options.force;
+    const now = Date.now();
+    if (!force && (now - chatListSyncLastRunAt) < CHAT_LIST_SYNC_COOLDOWN_MS) {
+        return;
+    }
+    if (chatListSyncInFlight) {
+        return chatListSyncInFlight;
+    }
+
+    chatListSyncInFlight = (async () => {
+        try {
+            const result = await makeApiRequest('chats/conversations', {
+                suppressAutoLogout: true,
+                timeoutMs: CHAT_HISTORY_SYNC_TIMEOUT_MS,
+                retries: 0
+            });
+            if (!result?.success || !Array.isArray(result.conversations)) {
+                return;
+            }
+
+            const serverChats = {};
+            for (const conv of result.conversations) {
+                if (!conv || !conv.id) continue;
+                serverChats[conv.id] = {
+                    id: conv.id,
+                    title: conv.title,
+                    model_name: conv.model_name,
+                    created_at: conv.created_at,
+                    updated_at: conv.updated_at,
+                    last_device_fp: conv.last_device_fp || null,
+                    isBridge: !!conv.is_bridge,
+                    parent_chat_id: conv.parent_chat_id || null,
+                    bridge_enabled: conv.bridge_enabled ? 1 : 0,
+                    messages: []
+                };
+            }
+
+            const serverChatIds = new Set(Object.keys(serverChats));
+            const localChatIds = Object.keys(chats || {}).filter(id => !String(id).startsWith('temp_'));
+            const deletedChatIds = localChatIds.filter(chatId => !serverChatIds.has(chatId));
+            let hasChanged = false;
+            let removedCurrentChat = false;
+
+            for (const chatId of deletedChatIds) {
+                if (activeResponses.has(chatId) || (currentChatId === chatId && isProcessing)) {
+                    continue;
+                }
+                if (currentChatId === chatId) {
+                    removedCurrentChat = true;
+                    currentChatId = null;
+                }
+                delete chats[chatId];
+                try { localStorage.removeItem(`pending_chat_${chatId}`); } catch (_) { }
+                hasChanged = true;
+            }
+
+            for (const [chatId, serverChat] of Object.entries(serverChats)) {
+                const localChat = chats[chatId];
+                if (!localChat) {
+                    chats[chatId] = {
+                        ...serverChat,
+                        messages: [],
+                        docAttachments: [],
+                        bridge_settings: serverChat.isBridge
+                            ? {
+                                objective: '',
+                                systemPrompt: '',
+                                notes: '',
+                                includeParentContext: true,
+                                parentContextTurns: BRIDGE_PARENT_CONTEXT_TURNS_DEFAULT
+                            }
+                            : undefined
+                    };
+                    hasChanged = true;
+                    continue;
+                }
+
+                if ((localChat.title || '') !== (serverChat.title || '')) {
+                    localChat.title = serverChat.title;
+                    hasChanged = true;
+                }
+                if ((localChat.model_name || '') !== (serverChat.model_name || '')) {
+                    localChat.model_name = serverChat.model_name;
+                    hasChanged = true;
+                }
+                if ((localChat.created_at || '') !== (serverChat.created_at || '')) {
+                    localChat.created_at = serverChat.created_at;
+                    hasChanged = true;
+                }
+                if ((localChat.updated_at || '') !== (serverChat.updated_at || '')) {
+                    localChat.updated_at = serverChat.updated_at;
+                    hasChanged = true;
+                }
+                if ((localChat.last_device_fp || null) !== (serverChat.last_device_fp || null)) {
+                    localChat.last_device_fp = serverChat.last_device_fp || null;
+                    hasChanged = true;
+                }
+                if (!!localChat.isBridge !== !!serverChat.isBridge) {
+                    localChat.isBridge = !!serverChat.isBridge;
+                    hasChanged = true;
+                }
+                if ((localChat.parent_chat_id || null) !== (serverChat.parent_chat_id || null)) {
+                    localChat.parent_chat_id = serverChat.parent_chat_id || null;
+                    hasChanged = true;
+                }
+                if ((localChat.bridge_enabled ? 1 : 0) !== (serverChat.bridge_enabled ? 1 : 0)) {
+                    localChat.bridge_enabled = serverChat.bridge_enabled ? 1 : 0;
+                    hasChanged = true;
+                }
+                if (!Array.isArray(localChat.messages)) {
+                    localChat.messages = [];
+                    hasChanged = true;
+                }
+                if (!Array.isArray(localChat.docAttachments)) {
+                    localChat.docAttachments = [];
+                    hasChanged = true;
+                }
+            }
+
+            const deviceFingerprint = await getDeviceFingerprint().catch(() => null);
+            const triggerRemoteMessageSync = () => {
+                syncChatsFromOtherDevice(serverChats, chats, deviceFingerprint).catch(() => { });
+            };
+
+            if (!hasChanged) {
+                triggerRemoteMessageSync();
+                return;
+            }
+
+            await saveChatsToDB(currentUser.id, chats);
+            renderSidebar();
+            triggerRemoteMessageSync();
+
+            if (removedCurrentChat) {
+                welcomePageShown = false;
+                showEmptyState();
+                routeManager.navigateToHome({ replace: true });
+            }
+        } catch (error) {
+            console.warn('Foreground chat list sync failed:', error);
+        } finally {
+            chatListSyncLastRunAt = Date.now();
+            chatListSyncInFlight = null;
+        }
+    })();
+
+    return chatListSyncInFlight;
+}
 
 Object.defineProperty(window, 'userHasScrolledUp', {
     get() { return scrollManager.userHasScrolledUp; },
@@ -12105,190 +17438,7 @@ Object.defineProperty(window, 'lastScrollTime', {
     set(v) { scrollManager.lastScrollTime = v; }
 });
 
-async function processStreamedResponse(response, contentDiv) {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let fullResponse = '';
-    let finishReason = null;
-    let finalCitations = null;
-    let firstTokenAt = null;
-    let receivedDone = false;
-
-    // 初始化全局变量
-    globalBackgroundBuffer = '';
-    globalDisplayBuffer = '';
-    globalContentDiv = contentDiv;
-    globalCharQueue = [];
-    scrollManager.resetUserScrollState();
-
-    const charQueue = globalCharQueue;
-    let isTyping = false;
-    let renderSpeed = modelRenderSpeeds[currentModelId] || 2;
-    let renderSpeedAccumulator = 0;
-
-    let lastRenderTime = 0;
-
-    const startTyping = () => {
-        if (isTyping) return;
-        isTyping = true;
-        const renderLoop = () => {
-            if (charQueue.length === 0) {
-                isTyping = false;
-                renderSpeedAccumulator = 0;
-                return;
-            }
-
-            let currentRenderSpeed = renderSpeed;
-            if (charQueue.length > 100) {
-                currentRenderSpeed = Math.min(renderSpeed * 3, 6);
-            } else if (charQueue.length > 50) {
-                currentRenderSpeed = Math.min(renderSpeed * 2, 4);
-            }
-
-            renderSpeedAccumulator += currentRenderSpeed;
-            const charsToRenderCount = Math.floor(renderSpeedAccumulator);
-            renderSpeedAccumulator -= charsToRenderCount;
-
-            const charsToRender = charQueue.splice(0, charsToRenderCount).join('');
-            globalDisplayBuffer += charsToRender;
-
-
-            if (isPageVisible) {
-                const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-                const shouldRenderNow = (now - lastRenderTime) >= STREAM_RENDER_INTERVAL_MS || charQueue.length === 0;
-                if (shouldRenderNow) {
-                    try {
-                        const wasAtBottom = scrollManager.isAtBottom();
-                        const beforeHeight = wasAtBottom ? elements.chatContainer.scrollHeight : 0;
-                        const beforeScrollTop = wasAtBottom ? elements.chatContainer.scrollTop : 0;
-                        renderMessageContent(contentDiv, globalDisplayBuffer);
-                        if (wasAtBottom && shouldAutoScroll()) {
-                            const afterHeight = elements.chatContainer.scrollHeight;
-                            const heightDelta = afterHeight - beforeHeight;
-                            if (heightDelta !== 0) {
-                                const target = beforeScrollTop + heightDelta;
-                                const maxTop = scrollManager.getMaxScrollTop();
-                                elements.chatContainer.scrollTop = Math.min(target, maxTop);
-                            } else {
-                                scrollManager.scrollToBottom();
-                            }
-                        }
-                    } catch (renderError) {
-                        console.error(`${getToastMessage('console.renderMessageContentFailed')}:`, renderError);
-                        if (contentDiv) {
-                            contentDiv.textContent = globalDisplayBuffer;
-                        }
-                    }
-                    lastRenderTime = now;
-                }
-            } else {
-                globalBackgroundBuffer += charsToRender;
-            }
-
-            setTimeout(() => {
-                if (isPageVisible) {
-                    requestAnimationFrame(renderLoop);
-                } else {
-                    renderLoop();
-                }
-            }, renderSpeed === 1 ? 25 : 16);
-        };
-
-        if (isPageVisible) {
-            requestAnimationFrame(renderLoop);
-        } else {
-            setTimeout(renderLoop, 0);
-        }
-    };
-
-    const processLine = (dataStr) => {
-        if (!dataStr) return;
-        if (dataStr === '[DONE]') {
-            receivedDone = true;
-            return;
-        }
-
-        try {
-            const data = JSON.parse(dataStr);
-            if (data.type === 'metadata' && data.citations) {
-                finalCitations = data.citations;
-                return;
-            }
-
-            const delta = data.choices?.[0]?.delta?.content || '';
-            if (delta) {
-                fullResponse += delta;
-                charQueue.push(...delta.split(''));
-                if (!firstTokenAt) firstTokenAt = Date.now();
-                if (!isTyping) {
-                    const ready = charQueue.length >= 12 || (Date.now() - firstTokenAt) > 200;
-                    if (ready) startTyping();
-                }
-            }
-
-            if (data.choices?.[0]?.finish_reason) {
-                finishReason = data.choices[0].finish_reason;
-                receivedDone = true;
-            }
-        } catch (parseError) {
-            console.warn(`${getToastMessage('console.parseStreamDataFailed')}:`, parseError, getToastMessage('console.originalData'), dataStr);
-        }
-    };
-
-    while (true) {
-        const { value, done } = await reader.read();
-
-        if (done) {
-            if (buffer.trim()) {
-                const dataStr = buffer.trim().startsWith('data: ') ? buffer.trim().substring(6) : buffer.trim();
-                processLine(dataStr);
-            }
-            break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-            if (line.startsWith('data: ')) {
-                const dataStr = line.substring(6).trim();
-                if (dataStr === '[DONE]') {
-                    receivedDone = true;
-                    break;
-                }
-                processLine(dataStr);
-            }
-        }
-    }
-
-    if (!isTyping && charQueue.length > 0) startTyping();
-
-    await new Promise(resolve => {
-        const checkTyping = () => {
-            if (!isTyping && charQueue.length === 0) {
-                if (globalBackgroundBuffer && isPageVisible && globalContentDiv) {
-                    try {
-                        globalDisplayBuffer += globalBackgroundBuffer;
-                        renderMessageContent(globalContentDiv, globalDisplayBuffer);
-                        globalBackgroundBuffer = '';
-                    } catch (error) {
-                        console.error('Background buffer render error:', error);
-                    }
-                }
-                resolve();
-            } else {
-                setTimeout(checkTyping, 50);
-            }
-        };
-        checkTyping();
-    });
-    const interrupted = !receivedDone && fullResponse.length > 0;
-    return { fullResponse, finalCitations, finishReason, interrupted };
-}
-
-async function handleSearchAndChat(userMessageText) {
+async function handleSearchAndChat(userContent, userMessageText) {
     if (!userMessageText) return;
     isProcessing = true;
 
@@ -12297,9 +17447,9 @@ async function handleSearchAndChat(userMessageText) {
     }
     const chatIdForRequest = currentChatId;
 
-    const userContent = [{ type: 'text', text: userMessageText }];
     appendMessage('user', userContent);
-    chats[chatIdForRequest].messages.push({ role: 'user', content: userContent });
+    let userMessageToSave = createChatMessage('user', userContent);
+    chats[chatIdForRequest].messages.push(userMessageToSave);
     clearInputAndAttachments(true);
 
     const assistantMessageElement = appendMessage('assistant', '');
@@ -12312,14 +17462,53 @@ async function handleSearchAndChat(userMessageText) {
             <span>${getToastMessage('ui.searchingWeb')}</span>
         </div>`;
 
-    let userMessageToSave = { role: 'user', content: userContent };
     let assistantMessageToSave = null;
     let requestSuccessful = false;
 
     try {
+        const combinedContentText = buildResearchTextFromUserContent(userContent) || '';
+        let searchSourceText = combinedContentText;
+        const totalTextLength = combinedContentText.length;
+        if (totalTextLength > LARGE_TEXT_THRESHOLD) {
+            showToast(getToastMessage('toast.largeAttachmentProcessing'), 'info');
+            if (contentDiv) {
+                contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.intelligentChunking')}</div>`;
+            }
+            try {
+                const summaryText = await summarizeLargeUserContent(userContent, contentDiv);
+                searchSourceText = summaryText || combinedContentText;
+            } catch (_) {
+                searchSourceText = combinedContentText;
+            }
+        }
+
+        let selectedCidImages = [];
+        let firstRoundKeywords = '';
+        let inlineImages = [];
+        if (userMessageText) {
+            const selectionSourceText = combinedContentText || searchSourceText || userMessageText;
+            const selection = await resolveRelevantCidSelection({
+                userMessageText,
+                sourceText: selectionSourceText,
+                chatId: chatIdForRequest,
+                userContent,
+                includeUserImagesForTool: true
+            });
+            selectedCidImages = selection.selectedCidImages;
+            inlineImages = selection.inlineImages.slice(0, MAX_TOOL_IMAGE_FETCH);
+        }
+
+        if (inlineImages.length > 0) {
+            const imageQueryText = searchSourceText || userMessageText;
+            firstRoundKeywords = await buildSearchQueryFromImagesAndText(userMessageText, imageQueryText, inlineImages);
+        }
+
+        const secondRoundSource = [firstRoundKeywords, userMessageText].filter(Boolean).join('\n');
+        const finalQuery = await buildSearchQueryFromText(secondRoundSource || userMessageText);
+
         const searchResults = await makeApiRequest('search', {
             method: 'POST',
-            body: JSON.stringify({ query: userMessageText })
+            body: JSON.stringify({ query: finalQuery || userMessageText })
         });
 
         if (!searchResults.success || !searchResults.results) {
@@ -12338,6 +17527,16 @@ async function handleSearchAndChat(userMessageText) {
         searchResults.results.forEach((result, index) => {
             searchContext += `[${index + 1}] ${getToastMessage('ui.title')}: ${result.title}\n${getToastMessage('ui.url')}: ${result.url}\n${getToastMessage('ui.summary')}: ${result.content}\n\n`;
         });
+        if (firstRoundKeywords) {
+            searchContext += `${getToastMessage('ui.searchKeywords') || 'Extracted keywords'}: ${firstRoundKeywords}\n\n`;
+        }
+        if (searchSourceText) {
+            const MAX_CONTEXT_LEN = 6000;
+            const truncated = searchSourceText.length > MAX_CONTEXT_LEN
+                ? (searchSourceText.slice(0, MAX_CONTEXT_LEN) + '\n\n[Content truncated for context]')
+                : searchSourceText;
+            searchContext += `${getToastMessage('ui.userAttachment') || 'User attachments'}:\n${truncated}\n\n`;
+        }
         searchContext += `${getToastMessage('ui.userOriginalQuestion')}: "${userMessageText}"`;
 
         const conversationHistory = chats[chatIdForRequest]?.messages || [];
@@ -12345,7 +17544,11 @@ async function handleSearchAndChat(userMessageText) {
 
         const messagesForAI = historyToSend.map((msg, index) => {
             if (index === historyToSend.length - 1 && msg.role === 'user') {
-                return { role: 'user', content: searchContext };
+                const baseContent = Array.isArray(msg.content)
+                    ? cloneMessageParts(msg.content)
+                    : (typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : []);
+                baseContent.push({ type: 'text', text: searchContext });
+                return { role: 'user', content: baseContent };
             }
             return msg;
         });
@@ -12358,17 +17561,22 @@ async function handleSearchAndChat(userMessageText) {
         }
 
         const hasImageCids = hasImageCidInMessages(messagesForAI);
+        const bridgePromptResult = await dispatchBridge(BRIDGE_DISPATCH.BUILD_SYSTEM_PROMPT, {
+            baseSystemPrompt: aiParameters.systemPrompt,
+            chatId: chatIdForRequest
+        });
+        const bridgeAdjustedSystemPrompt = bridgePromptResult?.prompt || aiParameters.systemPrompt;
         const body = {
             messages: messagesForAI,
             model: currentModelId,
             temperature: aiParameters.temperature,
             top_p: aiParameters.topP,
             top_k: aiParameters.topK,
-            system_prompt: composeSystemPromptWithImageHint(aiParameters.systemPrompt, hasImageCids),
+            system_prompt: composeSystemPromptWithImageHint(bridgeAdjustedSystemPrompt, hasImageCids),
             context_mode: 'search'
         };
 
-        if (currentModelId === 'gemini-3-pro-preview' && currentThinkingLevel) {
+        if (currentModelId === 'gemini-3.1-pro-preview' && currentThinkingLevel) {
             body.thinking_level = currentThinkingLevel;
         }
 
@@ -12379,11 +17587,15 @@ async function handleSearchAndChat(userMessageText) {
         }
 
         const controller = new AbortController();
-        const response = await fetch('/', {
+        const response = await fetchWithRetry('/', {
             method: 'POST',
             headers,
-            body: JSON.stringify(body),
+            body: JSON.stringify(body)
+        }, {
             signal: controller.signal,
+            timeoutMs: 90000,
+            retries: 1,
+            retryDelayMs: 800
         });
 
         if (!response.ok) {
@@ -12402,23 +17614,29 @@ async function handleSearchAndChat(userMessageText) {
             }
         } catch (_) { }
 
-        const { fullResponse, finalCitations } = await processStreamedResponse(response, contentDiv);
+        const { fullResponse, finalCitations, finalReasoning, streamImageParts, streamImageLayout } = await streamImageRuntime.processStreamedResponse(response, contentDiv);
 
         const searchCitations = finalCitations || (searchResults.success
             ? searchResults.results.map(r => ({ uri: r.url, title: r.title }))
             : null);
 
-        assistantMessageToSave = {
-            role: 'assistant',
-            content: fullResponse,
-            citations: searchCitations
-        };
+        assistantMessageToSave = createChatMessage('assistant', fullResponse, {
+            citations: searchCitations,
+            reasoning: finalReasoning,
+            image_parts: streamImageRuntime.normalizeStreamImageParts(streamImageParts),
+            image_layout: streamImageRuntime.normalizeStreamImageLayout(streamImageLayout)
+        });
 
         if (contentDiv) {
             if (contentDiv.__renderState) {
                 delete contentDiv.__renderState;
             }
-            renderMessageContent(contentDiv, assistantMessageToSave, assistantMessageToSave.citations || null, true);
+            const renderPromise = renderMessageContent(contentDiv, assistantMessageToSave, assistantMessageToSave.citations || null, true);
+            if (renderPromise && typeof renderPromise.finally === 'function') {
+                renderPromise.finally(() => notifyMindmapRenderRequest(chatIdForRequest));
+            } else {
+                notifyMindmapRenderRequest(chatIdForRequest);
+            }
         }
 
         chats[chatIdForRequest].messages.push(assistantMessageToSave);
@@ -12454,7 +17672,7 @@ async function handleSearchAndChat(userMessageText) {
             if (hasConfiguredKey) {
                 const content = getToastMessage('errors.searchFeatureDailyLimitReached');
                 const assistantEl = appendMessage('assistant', content);
-                assistantMessageToSave = { role: 'assistant', content };
+                assistantMessageToSave = createChatMessage('assistant', content);
                 chats[chatIdForRequest] && chats[chatIdForRequest].messages.push(assistantMessageToSave);
                 requestSuccessful = true;
                 scheduleRenderSidebar();
@@ -12465,7 +17683,7 @@ async function handleSearchAndChat(userMessageText) {
         }
 
         renderMessageContent(contentDiv, `${getToastMessage('ui.searchProcessError')}: ${errorMessage}`);
-        assistantMessageToSave = { role: 'assistant', content: `${getToastMessage('ui.searchProcessError')}: ${errorMessage}` };
+        assistantMessageToSave = createChatMessage('assistant', `${getToastMessage('ui.searchProcessError')}: ${errorMessage}`);
         chats[chatIdForRequest].messages.push(assistantMessageToSave);
         const userIdForDb = currentUser?.id || 'guest';
         saveChatsToDB(userIdForDb, chats).catch(err => console.error('Failed to save chats to cache:', err));
@@ -12474,6 +17692,12 @@ async function handleSearchAndChat(userMessageText) {
     }
 
     if (requestSuccessful) {
+        recordUsageAfterSuccessfulChat({
+            userMessage: userMessageToSave,
+            assistantMessage: assistantMessageToSave,
+            userContent: userContent,
+            countChatUsage: false
+        });
         const taskId = `save_chat_${chatIdForRequest}_${Date.now()}`;
         addBackgroundTask(taskId, async () => {
             try {
@@ -12517,8 +17741,11 @@ async function handleResearchAndChat(userContent, userMessageText) {
     const chatIdForRequest = currentChatId;
     const userMessage = userContent && userContent.length ? userContent : [{ type: 'text', text: queryText }];
 
+    const isNewChat = chats[chatIdForRequest]?.messages?.length === 0;
     appendMessage('user', userMessage);
-    chats[chatIdForRequest].messages.push({ role: 'user', content: cloneMessageParts(userMessage) || userMessage });
+    let userMessageToSave = createChatMessage('user', cloneMessageParts(userMessage) || userMessage);
+    chats[chatIdForRequest].messages.push(userMessageToSave);
+    persistPendingTurnState(chatIdForRequest, userMessageToSave.client_message_id, isNewChat);
     clearInputAndAttachments(true);
 
     const assistantMessageElement = appendMessage('assistant', '');
@@ -12537,7 +17764,6 @@ async function handleResearchAndChat(userContent, userMessageText) {
     renderPlaceholder(getToastMessage('ui.thinking'));
 
     let researchSourceText = queryText;
-    let userMessageToSave = { role: 'user', content: cloneMessageParts(userMessage) || userMessage };
     let assistantMessageToSave = null;
     let requestSuccessful = false;
 
@@ -12549,70 +17775,8 @@ async function handleResearchAndChat(userContent, userMessageText) {
             showToast(getToastMessage('toast.largeAttachmentProcessing'), 'info');
             renderPlaceholder(getToastMessage('aiProcessing.intelligentChunking'));
 
-            const summarizeLargeContent = async () => {
-                let allChunks = [];
-                userContent.forEach(part => {
-                    let partChunks = [];
-                    if (part.type === 'text' && part.text) {
-                        partChunks = smartChunkingByParagraphs(part.text, CHUNK_CONFIG.summarize.size);
-                        if (partChunks.length === 0) {
-                            partChunks = smartChunking(part.text, CHUNK_CONFIG.summarize.size, CHUNK_CONFIG.summarize.overlap);
-                        }
-                    } else if (part.type === 'file' && typeof part.content === 'string') {
-                        const filename = part.filename || 'attachment';
-                        const fileType = detectFileType(filename, part.content);
-                        const fileLabel = getToastMessage('ui.file') || 'File';
-                        const fileEndLabel = getToastMessage('ui.fileEnd') || 'End of file';
-                        let fileContent = `--- ${fileLabel}: ${filename} ---\n${part.content}\n--- ${fileEndLabel} ---`;
-                        switch (fileType) {
-                            case 'code': partChunks = chunkCode(fileContent, CHUNK_CONFIG.summarize.size); break;
-                            case 'markdown': partChunks = chunkMarkdown(fileContent, CHUNK_CONFIG.summarize.size); break;
-                            case 'table': partChunks = chunkTable(fileContent, CHUNK_CONFIG.analyze.size); break;
-                            default:
-                                partChunks = smartChunkingByParagraphs(fileContent, CHUNK_CONFIG.summarize.size);
-                                if (partChunks.length === 0) {
-                                    partChunks = smartChunking(fileContent, CHUNK_CONFIG.summarize.size, CHUNK_CONFIG.summarize.overlap);
-                                }
-                                break;
-                        }
-                    }
-                    allChunks.push(...partChunks);
-                });
-
-                let cumulativeSummary = '';
-                for (let i = 0; i < allChunks.length; i++) {
-                    const chunk = allChunks[i];
-                    if (contentDiv) {
-                        contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.analyzingPart', { current: i + 1, total: allChunks.length })}</div>`;
-                    }
-
-                    const MAX_PROMPT_LENGTH = 30000;
-                    let prompt = i === 0
-                        ? `Summarize this text part (${i + 1}/${allChunks.length}):\n${chunk}`
-                        : `Update summary with new content. Previous: ${cumulativeSummary}\n\nNew part (${i + 1}/${allChunks.length}):\n${chunk}`;
-
-                    if (prompt.length > MAX_PROMPT_LENGTH) {
-                        prompt = prompt.substring(0, MAX_PROMPT_LENGTH) + '\n\n[Content truncated due to length limit]';
-                    }
-
-                    await applyChunkProcessingCooldown(false);
-                    const chunkSummary = await callAISynchronously(prompt);
-                    cumulativeSummary = chunkSummary;
-
-                    if (i < allChunks.length - 1) {
-                        await sleep(1500);
-                    }
-                }
-
-                if (contentDiv) {
-                    contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.allPartsAnalyzed')}</div>`;
-                }
-
-                return cumulativeSummary;
-            };
-
             try {
-                const summaryText = await summarizeLargeContent();
+                const summaryText = await summarizeLargeUserContent(userContent, contentDiv);
                 const mergedText = [summaryText, queryText].filter(Boolean).join('\n\n');
                 researchSourceText = mergedText || queryText;
             } catch (e) {
@@ -12625,9 +17789,28 @@ async function handleResearchAndChat(userContent, userMessageText) {
             renderPlaceholder(getToastMessage('ui.collectingLiterature'));
         }
 
-        const inlineImages = extractInlineImagesFromContent(userContent);
-        const semanticScholarQuery = await buildSemanticScholarQuery(researchSourceText, inlineImages);
-        const finalResearchQuery = semanticScholarQuery || researchSourceText;
+        let keywordSourceText = researchSourceText;
+        let selectedCidImages = [];
+        let inlineImages = [];
+        if (queryText) {
+            const selectionSourceText = combinedContentText || researchSourceText || queryText;
+            const selection = await resolveRelevantCidSelection({
+                userMessageText: queryText,
+                sourceText: selectionSourceText,
+                chatId: chatIdForRequest,
+                userContent,
+                includeUserImagesForTool: true
+            });
+            if (selection.relevantText) {
+                keywordSourceText = `${selection.relevantText}\n\n${queryText}`;
+            }
+            selectedCidImages = selection.selectedCidImages;
+            inlineImages = selection.inlineImages;
+        } else if (Array.isArray(userContent)) {
+            inlineImages = extractInlineImagesFromContent(userContent);
+        }
+        const semanticScholarQuery = await buildSemanticScholarQuery(keywordSourceText, inlineImages);
+        const finalResearchQuery = semanticScholarQuery || keywordSourceText || researchSourceText;
         await sleep(1000);
 
         const researchResults = await makeApiRequest('research-search', {
@@ -12682,7 +17865,14 @@ async function handleResearchAndChat(userContent, userMessageText) {
 
         const messagesForAI = historyToSend.map((msg, index) => {
             if (index === historyToSend.length - 1 && msg.role === 'user') {
-                return { role: 'user', content: researchContext };
+                const baseContent = Array.isArray(msg.content)
+                    ? cloneMessageParts(msg.content)
+                    : (typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : []);
+                if (selectedCidImages.length > 0) {
+                    baseContent.push(...selectedCidImages);
+                }
+                baseContent.push({ type: 'text', text: researchContext });
+                return { role: 'user', content: baseContent };
             }
             return msg;
         });
@@ -12695,17 +17885,22 @@ async function handleResearchAndChat(userContent, userMessageText) {
         }
 
         const hasImageCids = hasImageCidInMessages(messagesForAI);
+        const bridgePromptResult = await dispatchBridge(BRIDGE_DISPATCH.BUILD_SYSTEM_PROMPT, {
+            baseSystemPrompt: aiParameters.systemPrompt,
+            chatId: chatIdForRequest
+        });
+        const bridgeAdjustedSystemPrompt = bridgePromptResult?.prompt || aiParameters.systemPrompt;
         const body = {
             messages: messagesForAI,
             model: currentModelId,
             temperature: aiParameters.temperature,
             top_p: aiParameters.topP,
             top_k: aiParameters.topK,
-            system_prompt: composeSystemPromptWithImageHint(aiParameters.systemPrompt, hasImageCids),
+            system_prompt: composeSystemPromptWithImageHint(bridgeAdjustedSystemPrompt, hasImageCids),
             context_mode: 'research'
         };
 
-        if (currentModelId === 'gemini-3-pro-preview' && currentThinkingLevel) {
+        if (currentModelId === 'gemini-3.1-pro-preview' && currentThinkingLevel) {
             body.thinking_level = currentThinkingLevel;
         }
 
@@ -12715,11 +17910,15 @@ async function handleResearchAndChat(userContent, userMessageText) {
         }
 
         const controller = new AbortController();
-        const response = await fetch('/', {
+        const response = await fetchWithRetry('/', {
             method: 'POST',
             headers,
-            body: JSON.stringify(body),
-            signal: controller.signal
+            body: JSON.stringify(body)
+        }, {
+            signal: controller.signal,
+            timeoutMs: 90000,
+            retries: 1,
+            retryDelayMs: 800
         });
 
         if (!response.ok) {
@@ -12738,7 +17937,7 @@ async function handleResearchAndChat(userContent, userMessageText) {
             }
         } catch (_) { }
 
-        const { fullResponse, finalCitations } = await processStreamedResponse(response, contentDiv);
+        const { fullResponse, finalCitations, finalReasoning, streamImageParts, streamImageLayout } = await streamImageRuntime.processStreamedResponse(response, contentDiv);
 
         const researchCitations = finalCitations || ((!noPapersFound && Array.isArray(researchResults.results))
             ? researchResults.results
@@ -12754,17 +17953,23 @@ async function handleResearchAndChat(userContent, userMessageText) {
                 .filter(Boolean)
             : null);
 
-        assistantMessageToSave = {
-            role: 'assistant',
-            content: fullResponse,
-            citations: researchCitations
-        };
+        assistantMessageToSave = createChatMessage('assistant', fullResponse, {
+            citations: researchCitations,
+            reasoning: finalReasoning,
+            image_parts: streamImageRuntime.normalizeStreamImageParts(streamImageParts),
+            image_layout: streamImageRuntime.normalizeStreamImageLayout(streamImageLayout)
+        });
 
         if (contentDiv) {
             if (contentDiv.__renderState) {
                 delete contentDiv.__renderState;
             }
-            renderMessageContent(contentDiv, assistantMessageToSave, assistantMessageToSave.citations || null, true);
+            const renderPromise = renderMessageContent(contentDiv, assistantMessageToSave, assistantMessageToSave.citations || null, true);
+            if (renderPromise && typeof renderPromise.finally === 'function') {
+                renderPromise.finally(() => notifyMindmapRenderRequest(chatIdForRequest));
+            } else {
+                notifyMindmapRenderRequest(chatIdForRequest);
+            }
         }
 
         chats[chatIdForRequest].messages.push(assistantMessageToSave);
@@ -12776,15 +17981,22 @@ async function handleResearchAndChat(userContent, userMessageText) {
         console.error('Research mode failed:', error);
         const errorMessage = error.message || getToastMessage('ui.unknownError');
         renderMessageContent(contentDiv, `${getToastMessage('ui.searchProcessError')}: ${errorMessage}`);
-        assistantMessageToSave = { role: 'assistant', content: `${getToastMessage('ui.searchProcessError')}: ${errorMessage}` };
+        assistantMessageToSave = createChatMessage('assistant', `${getToastMessage('ui.searchProcessError')}: ${errorMessage}`);
         chats[chatIdForRequest].messages.push(assistantMessageToSave);
         const userIdForDb = currentUser?.id || 'guest';
         saveChatsToDB(userIdForDb, chats).catch(err => console.error('Failed to save chats to cache:', err));
     } finally {
+        clearPendingTurnState(chatIdForRequest);
         resetSendButtonState();
     }
 
     if (requestSuccessful) {
+        recordUsageAfterSuccessfulChat({
+            userMessage: userMessageToSave,
+            assistantMessage: assistantMessageToSave,
+            userContent: userContent,
+            countChatUsage: false
+        });
         const taskId = `save_chat_${chatIdForRequest}_${Date.now()}`;
         addBackgroundTask(taskId, async () => {
             try {
@@ -12817,28 +18029,44 @@ async function handleResearchAndChat(userContent, userMessageText) {
     }
 }
 
-function showUsageLimitModal() {
+function showUsageLimitModal(options = {}) {
+    const {
+        titleKey = null,
+        textKey = null,
+        limit = null,
+        hideAction = false
+    } = options;
     const isLoggedIn = !!currentUser;
-    const usageLimit = isLoggedIn ? LOGGED_IN_LIMIT : GUEST_LIMIT;
+    const usageLimit = isLoggedIn
+        ? (Number.isFinite(limit) ? limit : (Number.isFinite(currentUserUsage?.limit) ? currentUserUsage.limit : LOGGED_IN_LIMIT))
+        : (Number.isFinite(guestUsageStats?.limit) ? guestUsageStats.limit : GUEST_LIMIT);
 
-    elements.limitModalTitle.textContent = isLoggedIn ? getToastMessage('status.dailyLimitReached') : getToastMessage('status.trialLimitReached');
+    const resolvedTitleKey = titleKey || (isLoggedIn ? 'status.dailyLimitReached' : 'status.trialLimitReached');
+    const resolvedTextKey = textKey || (isLoggedIn ? 'status.dailyLimitReachedMessage' : 'status.trialLimitReachedMessage');
+    elements.limitModalTitle.textContent = getToastMessage(resolvedTitleKey);
     elements.limitModalText.textContent = isLoggedIn
-        ? getToastMessage('status.dailyLimitReachedMessage', { limit: usageLimit })
-        : getToastMessage('status.trialLimitReachedMessage');
-    elements.limitLoginBtn.textContent = isLoggedIn ? getToastMessage('status.goToSettings') : getToastMessage('status.loginNow');
-    elements.limitLoginBtn.onclick = () => {
-        elements.limitModalOverlay.classList.remove('visible');
-        if (isLoggedIn) {
-            document.getElementById('settings-modal-overlay').classList.add('visible');
+        ? getToastMessage(resolvedTextKey, { limit: usageLimit })
+        : getToastMessage(resolvedTextKey);
+    if (hideAction) {
+        elements.limitLoginBtn.style.display = 'none';
+        elements.limitLoginBtn.onclick = null;
+    } else {
+        elements.limitLoginBtn.style.display = '';
+        elements.limitLoginBtn.textContent = isLoggedIn ? getToastMessage('status.goToSettings') : getToastMessage('status.loginNow');
+        elements.limitLoginBtn.onclick = () => {
+            elements.limitModalOverlay.classList.remove('visible');
+            if (isLoggedIn) {
+                document.getElementById('settings-modal-overlay').classList.add('visible');
 
-            const apiNavItem = document.querySelector('.settings-nav-item[data-page="api"]');
-            if (apiNavItem) {
-                apiNavItem.click();
+                const apiNavItem = document.querySelector('.settings-nav-item[data-page="api"]');
+                if (apiNavItem) {
+                    apiNavItem.click();
+                }
+            } else {
+                openAuthOverlay('user', { mode: 'login' }, { syncRoute: true });
             }
-        } else {
-            openAuthOverlay('user', { mode: 'login' }, { syncRoute: true });
-        }
-    };
+        };
+    }
     elements.limitModalOverlay.classList.add('visible');
 }
 
@@ -12850,6 +18078,10 @@ async function handleChatMessage(userContent, options = {}) {
     } = options;
     let progressTimer = null;
     let resolvedCitations = null;
+    let resolvedReasoning = '';
+    let resolvedImageParts = [];
+    let resolvedImageLayout = [];
+    let hasStreamOutput = false;
 
     if (!currentChatId) await startNewChat(true);
     const chatIdForRequest = currentChatId;
@@ -12890,39 +18122,46 @@ async function handleChatMessage(userContent, options = {}) {
             const cachedDocText = cachedDocContext || getDocAttachmentContextForChat(chatIdForRequest);
             const sourceText = inlineDocText || cachedDocText || extractTextFromUserContent(userContent);
             if (sourceText) {
+                let candidateText = '';
+                let hashes = new Set();
+                const attachAllImages = shouldAttachAllImagesForContent(sourceText);
+                if (attachAllImages) {
+                    hashes = collectAllCidHashesFromText(sourceText);
+                }
                 const MAX_TOOL_TEXT = 12000;
-                const truncatedSource = sourceText.length > MAX_TOOL_TEXT
-                    ? `${sourceText.slice(0, MAX_TOOL_TEXT)}\n\n[Content truncated]`
-                    : sourceText;
-                const toolPrompt = `You are selecting relevant document passages and image references for a user's detail question. Return JSON only.
-                {"relevant_text":"...","cids":["cid:hash1","cid:hash2"]} 
-                Rules:
-                - relevant_text must be quotes from the provided content (no invention).
-                - Do NOT include markdown image syntax or backticks in relevant_text.
-                - Escape newlines as \\n and quotes as \\" inside relevant_text.
-                - cids should include only those mentioned in relevant_text, prefer up to ${MAX_TOOL_IMAGE_FETCH}.
-                - If no image is needed, return an empty cids array.
+                if (!attachAllImages) {
+                    const truncatedSource = sourceText.length > MAX_TOOL_TEXT
+                        ? `${sourceText.slice(0, MAX_TOOL_TEXT)}\n\n[Content truncated]`
+                        : sourceText;
+                    const toolPrompt = `You are selecting relevant document passages and image references for a user's detail question. Return JSON only.
+                    {"relevant_text":"...","cids":["cid:hash1","cid:hash2"]} 
+                    Rules:
+                    - relevant_text must be quotes from the provided content (no invention).
+                    - Do NOT include markdown image syntax or backticks in relevant_text.
+                    - Escape newlines as \\n and quotes as \\" inside relevant_text.
+                    - cids should include only those mentioned in relevant_text, prefer up to ${MAX_TOOL_IMAGE_FETCH}.
+                    - If no image is needed, return an empty cids array.
 
-                User question: "${userMessageText}"
+                    User question: "${userMessageText}"
 
-                Content:
-                ${truncatedSource}`;
-                const toolResult = await callAISynchronously(toolPrompt, 'gemini-2.5-flash-lite', false);
-                const { relevantText, cidList: parsedCids } = parseDetailQueryToolResult(toolResult);
-                const candidateText = relevantText;
-                const cidList = parsedCids.length > 0
-                    ? parsedCids
-                    : extractToolCallHashes(toolResult);
-                const hashes = new Set();
-                cidList.forEach((cid) => {
-                    if (typeof cid !== 'string') return;
-                    const match = cid.match(/cid:([a-f0-9]{10,})/i);
-                    if (match && match[1]) hashes.add(match[1].toLowerCase());
-                    if (!match) {
-                        const raw = cid.trim();
-                        if (/^[a-f0-9]{40}$/i.test(raw)) hashes.add(raw.toLowerCase());
-                    }
-                });
+                    Content:
+                    ${truncatedSource}`;
+                    const toolResult = await callAISynchronously(toolPrompt, 'gemini-2.5-flash-lite', false);
+                    const { relevantText, cidList: parsedCids } = parseDetailQueryToolResult(toolResult);
+                    candidateText = relevantText;
+                    const cidList = parsedCids.length > 0
+                        ? parsedCids
+                        : extractToolCallHashes(toolResult);
+                    cidList.forEach((cid) => {
+                        if (typeof cid !== 'string') return;
+                        const match = cid.match(/cid:([a-f0-9]{10,})/i);
+                        if (match && match[1]) hashes.add(match[1].toLowerCase());
+                        if (!match) {
+                            const raw = cid.trim();
+                            if (/^[a-f0-9]{40}$/i.test(raw)) hashes.add(raw.toLowerCase());
+                        }
+                    });
+                }
                 const detailText = candidateText
                     ? appendDocAttachmentMarker(
                         `User question: "${userMessageText}"\n\nRelevant content:\n${candidateText}`,
@@ -12945,8 +18184,38 @@ async function handleChatMessage(userContent, options = {}) {
         }
     }
 
+    if (!shouldSelectDetailImages && !shouldSuppressImageRecallHint) {
+        try {
+            const lastUserMessage = getLastUserMessage(chatIdForRequest);
+            const hasOptimizedContent = !!getAiOptimizedContentForMessage(lastUserMessage);
+            if (chatHasCid && userMessageText && !hasOptimizedContent) {
+                const inlineDocText = hasFileContentInParts(userContent)
+                    ? buildResearchTextFromUserContent(userContent)
+                    : '';
+                const cachedDocText = cachedDocContext || getDocAttachmentContextForChat(chatIdForRequest);
+                const sourceText = inlineDocText || cachedDocText || extractTextFromUserContent(userContent);
+                if (sourceText) {
+                    const selection = await resolveRelevantCidSelection({
+                        userMessageText,
+                        sourceText,
+                        chatId: chatIdForRequest,
+                        userContent,
+                        includeUserImagesForTool: false
+                    });
+                    if (selection.selectedCidImages.length > 0) {
+                        const optimizedParts = cloneUserPartsWithNewText(userContent, userMessageText);
+                        optimizedParts.push(...selection.selectedCidImages);
+                        setAiOptimizedContentForLastUserMessage(chatIdForRequest, optimizedParts);
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Auto CID selection failed:', error);
+        }
+    }
+
     const previousHistory = chats[chatIdForRequest]?.messages || [];
-    const WARNING_CHAR_LIMIT = 60000;
+    const WARNING_CHAR_LIMIT = 90000;
     const previousTotalLength = previousHistory.reduce((acc, msg) => acc + JSON.stringify(msg.content).length, 0);
 
     if (previousTotalLength > WARNING_CHAR_LIMIT && !chats[chatIdForRequest].hasShownLengthWarning) {
@@ -13077,7 +18346,12 @@ async function handleChatMessage(userContent, options = {}) {
         }
 
         const hasImageCids = !shouldSuppressImageRecallHint && hasImageCidInMessages(messagesForAI);
-        let finalSystemPrompt = composeSystemPromptWithImageHint(aiParameters.systemPrompt, hasImageCids);
+        const bridgePromptResult = await dispatchBridge(BRIDGE_DISPATCH.BUILD_SYSTEM_PROMPT, {
+            baseSystemPrompt: aiParameters.systemPrompt,
+            chatId: chatIdForRequest
+        });
+        const bridgeAdjustedSystemPrompt = bridgePromptResult?.prompt || aiParameters.systemPrompt;
+        let finalSystemPrompt = composeSystemPromptWithImageHint(bridgeAdjustedSystemPrompt, hasImageCids);
 
         const body = {
             messages: messagesForAI,
@@ -13086,10 +18360,14 @@ async function handleChatMessage(userContent, options = {}) {
             top_p: aiParameters.topP,
             top_k: aiParameters.topK,
             system_prompt: finalSystemPrompt,
-            intent_analysis: intentAnalysis.intentResult
+            intent_analysis: intentAnalysis.intentResult,
         };
 
-        if (currentModelId === 'gemini-3-pro-preview' && currentThinkingLevel) {
+        if (isMindmapModeActive) {
+            body.context_mode = 'mindmap';
+        }
+
+        if (currentModelId === 'gemini-3.1-pro-preview' && currentThinkingLevel) {
             body.thinking_level = currentThinkingLevel;
         }
 
@@ -13104,11 +18382,15 @@ async function handleChatMessage(userContent, options = {}) {
         let response;
 
         for (let rateLimitAttempt = 0; rateLimitAttempt < maxRateLimitRetries; rateLimitAttempt++) {
-            response = await fetch('/', {
+            response = await fetchWithRetry('/', {
                 method: 'POST',
                 headers,
-                body: JSON.stringify(body),
+                body: JSON.stringify(body)
+            }, {
                 signal: controller.signal,
+                timeoutMs: 90000,
+                retries: 1,
+                retryDelayMs: 800
             });
 
             // 检查是否是 DO 速率限制响应
@@ -13133,7 +18415,8 @@ async function handleChatMessage(userContent, options = {}) {
                 const errorData = JSON.parse(errorText);
                 const rawErrorMessage = errorData.error || `${getToastMessage('errors.requestFailed')}: ${response.status}`;
                 const mappedMessage = getModelErrorMessage(response.status);
-                const displayErrorMessage = mappedMessage || rawErrorMessage;
+                const preferRawErrorMessage = errorData?.type === 'api_failover_error';
+                const displayErrorMessage = preferRawErrorMessage ? rawErrorMessage : (mappedMessage || rawErrorMessage);
 
                 const cleanUpFailedRequest = () => {
                     if (typeof progressTimer === 'number') {
@@ -13186,11 +18469,25 @@ async function handleChatMessage(userContent, options = {}) {
                             console.warn(`${getToastMessage('console.refreshUsageStatsFailed')}:`, err);
                         });
                     }
+                    if (currentUser && hasConfiguredApiKeyForUi()) {
+                        checkKeyValidationStatus();
+                    }
                 }
 
                 if (errorData.fallbackLimitReached) {
                     cleanUpFailedRequest();
                     showToast(getToastMessage('toast.fallbackLimitReached'), 'error');
+                    return;
+                }
+
+                if (errorData?.code === 'relay_limit_reached') {
+                    cleanUpFailedRequest();
+                    showUsageLimitModal({
+                        titleKey: 'status.relayLimitReached',
+                        textKey: 'status.relayLimitReachedMessage',
+                        limit: typeof errorData.limit === 'number' ? errorData.limit : null,
+                        hideAction: true
+                    });
                     return;
                 }
 
@@ -13234,20 +18531,26 @@ async function handleChatMessage(userContent, options = {}) {
         const {
             fullResponse: responseText,
             finalCitations,
+            finalReasoning,
+            streamImageParts,
+            streamImageLayout,
             finishReason: initialFinishReason,
             interrupted: initialInterrupted
-        } = await processStreamedResponse(response, contentDiv);
+        } = await streamImageRuntime.processStreamedResponse(response, contentDiv);
         fullResponse = responseText.trim();
         resolvedCitations = Array.isArray(finalCitations) && finalCitations.length > 0
             ? finalCitations
             : null;
-
+        resolvedReasoning = finalReasoning || '';
+        resolvedImageParts = streamImageRuntime.normalizeStreamImageParts(streamImageParts);
+        resolvedImageLayout = streamImageRuntime.normalizeStreamImageLayout(streamImageLayout);
+        hasStreamOutput = !!fullResponse || resolvedImageParts.length > 0;
         let finishReason = initialFinishReason;
         let interrupted = initialInterrupted;
 
         if (!fullResponse && finishReason === 'MALFORMED_FUNCTION_CALL') {
             try {
-                const retryPromptBase = aiParameters.systemPrompt || '';
+                const retryPromptBase = bridgeAdjustedSystemPrompt || '';
                 const retryPrompt = retryPromptBase
                     ? `${retryPromptBase}\nDo not call tools.`
                     : 'Do not call tools.';
@@ -13256,19 +18559,30 @@ async function handleChatMessage(userContent, options = {}) {
                     system_prompt: retryPrompt
                 };
 
-                const retryResponse = await fetch('/', {
+                const retryResponse = await fetchWithRetry('/', {
                     method: 'POST',
                     headers,
-                    body: JSON.stringify(retryBody),
+                    body: JSON.stringify(retryBody)
+                }, {
                     signal: controller.signal,
+                    timeoutMs: 90000,
+                    retries: 1,
+                    retryDelayMs: 800
                 });
 
                 if (retryResponse.ok) {
-                    const retryResult = await processStreamedResponse(retryResponse, contentDiv);
+                    const retryResult = await streamImageRuntime.processStreamedResponse(retryResponse, contentDiv);
                     fullResponse = retryResult.fullResponse.trim();
                     resolvedCitations = Array.isArray(retryResult.finalCitations) && retryResult.finalCitations.length > 0
                         ? retryResult.finalCitations
                         : null;
+                    resolvedReasoning = retryResult.finalReasoning || resolvedReasoning;
+                    if (Array.isArray(retryResult.streamImageParts) && retryResult.streamImageParts.length > 0) {
+                        resolvedImageParts = streamImageRuntime.normalizeStreamImageParts(retryResult.streamImageParts);
+                    }
+                    if (Array.isArray(retryResult.streamImageLayout) && retryResult.streamImageLayout.length > 0) {
+                        resolvedImageLayout = streamImageRuntime.normalizeStreamImageLayout(retryResult.streamImageLayout);
+                    }
                     finishReason = retryResult.finishReason || finishReason;
                     interrupted = retryResult.interrupted || interrupted;
                 }
@@ -13313,11 +18627,11 @@ async function handleChatMessage(userContent, options = {}) {
                             temperature: aiParameters.temperature,
                             top_p: aiParameters.topP,
                             top_k: aiParameters.topK,
-                            system_prompt: composeSystemPromptWithImageHint(aiParameters.systemPrompt, false),
+                            system_prompt: composeSystemPromptWithImageHint(bridgeAdjustedSystemPrompt, false),
                             intent_analysis: intentAnalysis.intentResult
                         };
 
-                        if (currentModelId === 'gemini-3-pro-preview' && currentThinkingLevel) {
+                        if (currentModelId === 'gemini-3.1-pro-preview' && currentThinkingLevel) {
                             toolBody.thinking_level = currentThinkingLevel;
                         }
 
@@ -13330,19 +18644,30 @@ async function handleChatMessage(userContent, options = {}) {
                         activeResponses.set(chatIdForRequest, { controller: toolController, timestamp: Date.now() });
 
                         try {
-                            const toolResponse = await fetch('/', {
+                            const toolResponse = await fetchWithRetry('/', {
                                 method: 'POST',
                                 headers,
-                                body: JSON.stringify(toolBody),
-                                signal: toolController.signal
+                                body: JSON.stringify(toolBody)
+                            }, {
+                                signal: toolController.signal,
+                                timeoutMs: 90000,
+                                retries: 1,
+                                retryDelayMs: 800
                             });
 
                             if (toolResponse.ok) {
-                                const toolResult = await processStreamedResponse(toolResponse, contentDiv);
+                                const toolResult = await streamImageRuntime.processStreamedResponse(toolResponse, contentDiv);
                                 fullResponse = (toolResult.fullResponse || '').trim();
                                 resolvedCitations = Array.isArray(toolResult.finalCitations) && toolResult.finalCitations.length > 0
                                     ? toolResult.finalCitations
                                     : null;
+                                resolvedReasoning = toolResult.finalReasoning || resolvedReasoning;
+                                if (Array.isArray(toolResult.streamImageParts) && toolResult.streamImageParts.length > 0) {
+                                    resolvedImageParts = streamImageRuntime.normalizeStreamImageParts(toolResult.streamImageParts);
+                                }
+                                if (Array.isArray(toolResult.streamImageLayout) && toolResult.streamImageLayout.length > 0) {
+                                    resolvedImageLayout = streamImageRuntime.normalizeStreamImageLayout(toolResult.streamImageLayout);
+                                }
                             }
                         } catch (toolError) {
                             console.warn('Global image follow-up failed:', toolError);
@@ -13380,11 +18705,11 @@ async function handleChatMessage(userContent, options = {}) {
                         temperature: aiParameters.temperature,
                         top_p: aiParameters.topP,
                         top_k: aiParameters.topK,
-                        system_prompt: composeSystemPromptWithImageHint(aiParameters.systemPrompt, false),
+                        system_prompt: composeSystemPromptWithImageHint(bridgeAdjustedSystemPrompt, false),
                         intent_analysis: intentAnalysis.intentResult
                     };
 
-                    if (currentModelId === 'gemini-3-pro-preview' && currentThinkingLevel) {
+                    if (currentModelId === 'gemini-3.1-pro-preview' && currentThinkingLevel) {
                         toolBody.thinking_level = currentThinkingLevel;
                     }
 
@@ -13397,19 +18722,30 @@ async function handleChatMessage(userContent, options = {}) {
                     activeResponses.set(chatIdForRequest, { controller: toolController, timestamp: Date.now() });
 
                     try {
-                        const toolResponse = await fetch('/', {
+                        const toolResponse = await fetchWithRetry('/', {
                             method: 'POST',
                             headers,
-                            body: JSON.stringify(toolBody),
-                            signal: toolController.signal
+                            body: JSON.stringify(toolBody)
+                        }, {
+                            signal: toolController.signal,
+                            timeoutMs: 90000,
+                            retries: 1,
+                            retryDelayMs: 800
                         });
 
                         if (toolResponse.ok) {
-                            const toolResult = await processStreamedResponse(toolResponse, contentDiv);
+                            const toolResult = await streamImageRuntime.processStreamedResponse(toolResponse, contentDiv);
                             fullResponse = (toolResult.fullResponse || '').trim();
                             resolvedCitations = Array.isArray(toolResult.finalCitations) && toolResult.finalCitations.length > 0
                                 ? toolResult.finalCitations
                                 : null;
+                            resolvedReasoning = toolResult.finalReasoning || resolvedReasoning;
+                            if (Array.isArray(toolResult.streamImageParts) && toolResult.streamImageParts.length > 0) {
+                                resolvedImageParts = streamImageRuntime.normalizeStreamImageParts(toolResult.streamImageParts);
+                            }
+                            if (Array.isArray(toolResult.streamImageLayout) && toolResult.streamImageLayout.length > 0) {
+                                resolvedImageLayout = streamImageRuntime.normalizeStreamImageLayout(toolResult.streamImageLayout);
+                            }
                             finishReason = toolResult.finishReason;
                             interrupted = toolResult.interrupted;
                         }
@@ -13435,7 +18771,7 @@ async function handleChatMessage(userContent, options = {}) {
             }
         }
 
-        if (!fullResponse) {
+        if (!fullResponse && resolvedImageParts.length === 0) {
             throw new Error(getToastMessage('errors.aiReturnedEmptyContent'));
         }
 
@@ -13448,41 +18784,52 @@ async function handleChatMessage(userContent, options = {}) {
             }
         }
 
-        cleanupEmptyMessagePlaceholders();
-        const container = elements.chatContainer;
-        if (container) {
-            const messages = Array.from(container.querySelectorAll('.message')).reverse();
+        const renderedText = (contentDiv?.dataset?.rawText || contentDiv?.textContent || '').trim();
+        const shouldPreserveStreamResult = hasStreamOutput
+            || !!renderedText
+            || resolvedImageParts.length > 0;
 
-            const lastAssistant = messages.find(msg => msg.classList.contains('assistant'));
-            if (lastAssistant) {
-                const contentDiv = lastAssistant.querySelector('.content');
-                const hasSpinner = contentDiv?.querySelector('.thinking-indicator-new');
-                const isEmpty = !contentDiv || !(contentDiv.textContent || '').trim();
-                if (hasSpinner || isEmpty) {
-                    lastAssistant.remove();
+        if (shouldPreserveStreamResult) {
+            if (!fullResponse && renderedText) {
+                fullResponse = renderedText;
+            }
+        } else {
+            cleanupEmptyMessagePlaceholders();
+            const container = elements.chatContainer;
+            if (container) {
+                const messages = Array.from(container.querySelectorAll('.message')).reverse();
+
+                const lastAssistant = messages.find(msg => msg.classList.contains('assistant'));
+                if (lastAssistant) {
+                    const contentDiv = lastAssistant.querySelector('.content');
+                    const hasSpinner = contentDiv?.querySelector('.thinking-indicator-new');
+                    const isEmpty = !contentDiv || !(contentDiv.textContent || '').trim();
+                    if (hasSpinner || isEmpty) {
+                        lastAssistant.remove();
+                    }
+                }
+
+                const lastUserMessage = messages.find(msg => msg.classList.contains('user'));
+                if (lastUserMessage) {
+                    lastUserMessage.remove();
                 }
             }
 
-            const lastUserMessage = messages.find(msg => msg.classList.contains('user'));
-            if (lastUserMessage) {
-                lastUserMessage.remove();
+            if (chats[chatIdForRequest] && chats[chatIdForRequest].messages.length > 0) {
+                const lastMsg = chats[chatIdForRequest].messages[chats[chatIdForRequest].messages.length - 1];
+                if (lastMsg && lastMsg.role === 'user') {
+                    chats[chatIdForRequest].messages.pop();
+                }
             }
-        }
 
-        if (chats[chatIdForRequest] && chats[chatIdForRequest].messages.length > 0) {
-            const lastMsg = chats[chatIdForRequest].messages[chats[chatIdForRequest].messages.length - 1];
-            if (lastMsg && lastMsg.role === 'user') {
-                chats[chatIdForRequest].messages.pop();
+            if (userMessageText && elements.messageInput) {
+                elements.messageInput.value = userMessageText;
+                elements.messageInput.dispatchEvent(new Event('input'));
+                updateSendButton();
             }
-        }
 
-        if (userMessageText && elements.messageInput) {
-            elements.messageInput.value = userMessageText;
-            elements.messageInput.dispatchEvent(new Event('input'));
-            updateSendButton();
+            fullResponse = '';
         }
-
-        fullResponse = '';
     } finally {
         if (typeof progressTimer === 'number') {
             clearTimeout(progressTimer);
@@ -13495,7 +18842,12 @@ async function handleChatMessage(userContent, options = {}) {
         resetSendButtonState();
 
         try {
-            const processedResponse = fullResponse;
+            const processedResponse = {
+                content: fullResponse,
+                reasoning: resolvedReasoning,
+                image_parts: resolvedImageParts,
+                image_layout: resolvedImageLayout
+            };
             const scrollHeight = elements.chatContainer.scrollHeight;
             const clientHeight = elements.chatContainer.clientHeight;
             const scrollTop = elements.chatContainer.scrollTop;
@@ -13512,6 +18864,11 @@ async function handleChatMessage(userContent, options = {}) {
                 }
 
                 const renderPromise = renderMessageContent(contentDiv, processedResponse, resolvedCitations, true);
+                if (renderPromise && typeof renderPromise.finally === 'function') {
+                    renderPromise.finally(() => notifyMindmapRenderRequest(chatIdForRequest));
+                } else {
+                    notifyMindmapRenderRequest(chatIdForRequest);
+                }
 
                 if (isScrolledToBottom) {
                     const ensureBottom = () => requestAnimationFrame(() => {
@@ -13560,19 +18917,30 @@ async function handleChatMessage(userContent, options = {}) {
         }
     }
 
-    const assistantMessage = { role: 'assistant', content: fullResponse };
+    const assistantMessageExtras = {};
     if (resolvedCitations) {
-        assistantMessage.citations = resolvedCitations;
+        assistantMessageExtras.citations = resolvedCitations;
     }
+    if (resolvedReasoning) {
+        assistantMessageExtras.reasoning = resolvedReasoning;
+    }
+    if (resolvedImageParts.length > 0) {
+        assistantMessageExtras.image_parts = resolvedImageParts;
+    }
+    if (resolvedImageLayout.length > 0) {
+        assistantMessageExtras.image_layout = resolvedImageLayout;
+    }
+    const assistantMessage = createChatMessage('assistant', fullResponse, assistantMessageExtras);
     chats[chatIdForRequest].messages.push(assistantMessage);
     const userIdForDb = currentUser?.id || 'guest';
     saveChatsToDB(userIdForDb, chats).catch(err => console.error('Failed to save chats to cache:', err));
     return assistantMessage;
 }
 
-async function _processAndSendMessage(userContent, userMessageText) {
+async function _processAndSendMessage(userContent, userMessageText, options = {}) {
     // 重置当前消息的意图分析结果
     intentAnalyzer.reset();
+    const { appliedCommand = null } = options;
 
     const hasLargeAttachment = userContent.some(part =>
         part.type === 'file' &&
@@ -13592,8 +18960,20 @@ async function _processAndSendMessage(userContent, userMessageText) {
     const originalUserContent = cloneMessageParts(userContent) || userContent;
     cacheDocAttachmentsForChat(chatIdForRequest, originalUserContent);
 
+    const isNewChat = chats[chatIdForRequest]?.messages?.length === 0;
     appendMessage('user', userContent);
-    chats[chatIdForRequest].messages.push({ role: 'user', content: cloneMessageParts(originalUserContent) || originalUserContent });
+    let userMessageToSave = createChatMessage('user', cloneMessageParts(originalUserContent) || originalUserContent);
+    if (appliedCommand) {
+        userMessageToSave.applied_command = {
+            id: appliedCommand.id || appliedCommand.command_id || null,
+            name: appliedCommand.name || appliedCommand.command_name || null,
+            prompt: appliedCommand.prompt || appliedCommand.command_snapshot || null,
+            params: appliedCommand.params || null,
+            raw: appliedCommand.raw || null
+        };
+    }
+    chats[chatIdForRequest].messages.push(userMessageToSave);
+    persistPendingTurnState(chatIdForRequest, userMessageToSave.client_message_id, isNewChat);
 
     const assistantPlaceholderElement = appendMessage('assistant', '');
     const assistantPlaceholderContentDiv = assistantPlaceholderElement.querySelector('.content');
@@ -13608,7 +18988,6 @@ async function _processAndSendMessage(userContent, userMessageText) {
         `;
     }
 
-    let userMessageToSave = { role: 'user', content: cloneMessageParts(originalUserContent) || originalUserContent };
     let assistantMessageToSave = null;
     let requestSuccessful = false;
 
@@ -13645,24 +19024,24 @@ async function _processAndSendMessage(userContent, userMessageText) {
             if (gtAnalysisResult && gtAnalysisResult.intent === 'DETAIL_QUERY') {
                 assistantMessageToSave = await handleChunkedDetailQuery(userContent, userMessageText, assistantPlaceholderElement);
             } else {
-            switch (intent) {
-                case 'CONTINUATION':
-                    assistantMessageToSave = await handleContinuationTask(userContent, assistantPlaceholderElement);
-                    break;
-                case 'ANALYSIS_QA': {
-                    assistantMessageToSave = await handleDeepAnalysis(userContent, userMessageText, assistantPlaceholderElement, {
-                        suppressImageRecallHint: suppressGtImageRecallHint
-                    });
-                    break;
-                }
-                case 'SUMMARIZATION':
-                default: {
-                    assistantMessageToSave = await handleLargeTextAnalysis(userContent, userMessageText, assistantPlaceholderElement);
-                    break;
+                switch (intent) {
+                    case 'CONTINUATION':
+                        assistantMessageToSave = await handleContinuationTask(userContent, assistantPlaceholderElement);
+                        break;
+                    case 'ANALYSIS_QA': {
+                        assistantMessageToSave = await handleDeepAnalysis(userContent, userMessageText, assistantPlaceholderElement, {
+                            suppressImageRecallHint: suppressGtImageRecallHint
+                        });
+                        break;
+                    }
+                    case 'SUMMARIZATION':
+                    default: {
+                        assistantMessageToSave = await handleLargeTextAnalysis(userContent, userMessageText, assistantPlaceholderElement);
+                        break;
+                    }
                 }
             }
-            }
-        } else if (historyLength > 60000 && !isImageModeActive) {
+        } else if (historyLength > 90000 && !isImageModeActive) {
             let combinedStory = "";
 
             conversationHistory.forEach(msg => {
@@ -13691,10 +19070,7 @@ async function _processAndSendMessage(userContent, userMessageText) {
                 text: userMessageText
             }, ...imageAndOtherAttachments];
 
-            userMessageToSave = {
-                role: 'user',
-                content: cloneMessageParts(originalUserContent) || originalUserContent
-            };
+            userMessageToSave.content = cloneMessageParts(originalUserContent) || originalUserContent;
             assistantMessageToSave = await handleContinuationTask(continuationContentForAI, assistantPlaceholderElement);
         } else {
             const contentDiv = assistantPlaceholderElement.querySelector('.content');
@@ -13720,7 +19096,7 @@ async function _processAndSendMessage(userContent, userMessageText) {
                 }
                 if (intentAnalysis.shouldGenerateImage) {
                     if (contentDiv) {
-                        contentDiv.querySelector('span').textContent = getToastMessage('status.generatingImageForYou');
+                        contentDiv.querySelector('span').textContent = getToastMessage('ui.generationMayTake1to2Minutes');
                     }
                     const newImagePromptObject = await generateCombinedImagePrompt(
                         combinedUserMessageText,
@@ -13746,10 +19122,10 @@ async function _processAndSendMessage(userContent, userMessageText) {
                         if (contentDiv) {
                             renderMessageContent(contentDiv, `<p style="color: var(--error-color, #ef4444);">${errorMessage}</p>`);
                         }
-                        assistantMessageToSave = {
-                            role: 'assistant',
-                            content: `<p style="color: var(--error-color, #ef4444);">${errorMessage}</p>`
-                        };
+                        assistantMessageToSave = createChatMessage(
+                            'assistant',
+                            `<p style="color: var(--error-color, #ef4444);">${errorMessage}</p>`
+                        );
                     }
                 } else {
                     assistantMessageToSave = await handleChatMessage(userContent, {
@@ -13767,14 +19143,54 @@ async function _processAndSendMessage(userContent, userMessageText) {
             }
         }
 
-        if (assistantMessageToSave && assistantMessageToSave.content && !assistantMessageToSave.content.startsWith(getToastMessage('ui.error') + ':')) {
+        const assistantContentText = typeof assistantMessageToSave?.content === 'string'
+            ? assistantMessageToSave.content
+            : '';
+        const hasAssistantImages = Array.isArray(assistantMessageToSave?.image_parts) && assistantMessageToSave.image_parts.length > 0;
+        if (assistantMessageToSave && ((assistantContentText && !assistantContentText.startsWith(getToastMessage('ui.error') + ':')) || hasAssistantImages)) {
             requestSuccessful = true;
         } else {
             throw new Error(assistantMessageToSave?.content || 'AI response failed or was empty.');
         }
 
+        if (requestSuccessful) {
+            recordUsageAfterSuccessfulChat({
+                userMessage: userMessageToSave,
+                assistantMessage: assistantMessageToSave,
+                userContent: userContent,
+                countChatUsage: true
+            });
+        }
+
     } catch (error) {
         console.error(`${getToastMessage('console.sendMessageTopLevelError')}:`, error);
+
+        if (!requestSuccessful && userMessageToSave) {
+            const chat = chats[chatIdForRequest];
+            if (chat && Array.isArray(chat.messages)) {
+                const last = chat.messages[chat.messages.length - 1];
+                if (isAssistantPlaceholderMessage(last)) {
+                    chat.messages.pop();
+                }
+                const newLast = chat.messages[chat.messages.length - 1];
+                if (newLast && newLast.role === 'user' && messageHasClientId(newLast, userMessageToSave.client_message_id)) {
+                    chat.messages.pop();
+                }
+                const shouldDeleteChat = (isNewChat || String(chatIdForRequest).startsWith('temp_'))
+                    && (!chat.messages || chat.messages.length === 0);
+                if (shouldDeleteChat) {
+                    delete chats[chatIdForRequest];
+                    if (currentChatId === chatIdForRequest) {
+                        currentChatId = null;
+                        showEmptyState();
+                        routeManager.navigateToHome({ replace: true, force: true });
+                    }
+                }
+                scheduleRenderSidebar();
+                const userIdForDb = currentUser?.id || 'guest';
+                saveChatsToDB(userIdForDb, chats).catch(err => console.error('Failed to save chats after cleanup:', err));
+            }
+        }
 
         if (!requestSuccessful && userMessageText) {
             elements.messageInput.value = userMessageText;
@@ -13782,13 +19198,16 @@ async function _processAndSendMessage(userContent, userMessageText) {
             updateSendButton();
         }
     } finally {
+        clearPendingTurnState(chatIdForRequest);
         if (pendingMessage) {
             const nextMessage = pendingMessage;
             pendingMessage = null;
             setTimeout(() => {
                 isProcessing = true;
                 setSendButtonLoading();
-                _processAndSendMessage(nextMessage.userContent, nextMessage.userMessageText);
+                _processAndSendMessage(nextMessage.userContent, nextMessage.userMessageText, {
+                    appliedCommand: nextMessage.appliedCommand
+                });
             }, 100);
         } else {
             isProcessing = false;
@@ -13835,6 +19254,31 @@ async function _processAndSendMessage(userContent, userMessageText) {
     intentAnalyzer.reset();
 }
 
+async function resolveSlashCommandApplication(rawText) {
+    const trimmed = String(rawText || '').trim();
+    if (!canUseSlashCommands()) return null;
+    if (!trimmed.startsWith('/')) return null;
+    const match = trimmed.match(/^\/([\p{L}\p{N}_-]+)(?:\s+([\s\S]*))?$/u);
+    if (!match) return null;
+    const name = normalizeSlashMatchName(match[1]);
+    if (!name) return null;
+    const params = (match[2] || '').trim();
+    const commands = await getSlashCommandsForInput();
+    const command = commands.find(cmd => {
+        const cmdName = normalizeSlashMatchName(cmd?.name || '');
+        const baseName = normalizeSlashMatchName(cmd?.base_name || '');
+        return cmdName === name || baseName === name;
+    });
+    if (!command || !command.prompt) return null;
+    const prompt = String(command.prompt || '').trim();
+    const transformedText = params ? `${prompt}\n${params}` : prompt;
+    return {
+        command,
+        params,
+        transformedText
+    };
+}
+
 async function sendMessage() {
     if (isSendingMessage) {
         return;
@@ -13853,9 +19297,50 @@ async function sendMessage() {
         exitMultiSelectMode();
     }
 
-    const userMessageText = elements.messageInput.value.trim();
-    const attachmentsToProcess = [...attachments];
+    const rawUserMessageText = elements.messageInput.value.trim();
+    let userMessageText = rawUserMessageText;
+    let appliedCommand = null;
+    if (rawUserMessageText.startsWith('/')) {
+        try {
+            const resolved = await resolveSlashCommandApplication(rawUserMessageText);
+            if (resolved) {
+                userMessageText = resolved.transformedText;
+                appliedCommand = {
+                    id: resolved.command.id || null,
+                    name: resolved.command.name || null,
+                    prompt: resolved.command.prompt || null,
+                    params: resolved.params || null,
+                    raw: rawUserMessageText
+                };
+            }
+        } catch (_) { }
+    }
+    let attachmentsToProcess = [...attachments];
     const quoteToProcess = currentQuote;
+
+    if (isSearchModeActive && !userMessageText) {
+        showToast(getToastMessage('toast.searchTextRequired'), 'info');
+        return;
+    }
+
+    if (isSearchModeActive && attachmentsToProcess.length > 0) {
+        const allowSearchAttachments = canUseSearchAttachments();
+        if (!allowSearchAttachments) {
+            attachmentsToProcess.forEach(att => removeAttachment(att.id));
+            attachmentsToProcess = [];
+            showToast(getToastMessage('toast.searchAttachmentsProOnly'), 'info');
+        }
+    }
+
+    if (isSearchModeActive) {
+        const imageAttachments = attachmentsToProcess.filter(att => att.type === 'image');
+        if (imageAttachments.length > 1) {
+            const keepId = imageAttachments[0].id;
+            imageAttachments.slice(1).forEach(att => removeAttachment(att.id));
+            attachmentsToProcess = attachmentsToProcess.filter(att => att.type !== 'image' || att.id === keepId);
+            showToast(getToastMessage('toast.searchImageLimit'), 'info');
+        }
+    }
 
     let userContent = [];
     if (quoteToProcess) {
@@ -13866,28 +19351,44 @@ async function sendMessage() {
             type: 'text', text: userMessageText
         });
     }
-    attachmentsToProcess.forEach(attachment => {
+    for (const attachment of attachmentsToProcess) {
         if (attachment.type === 'image' && typeof attachment.content === 'string') {
             userContent.push({ type: 'image_url', image_url: { url: attachment.content } });
-            return;
+            continue;
         }
 
         if (attachment.type === 'file') {
-            const imageParts = buildImagePartsFromAttachment(attachment);
+            let imageParts = buildImagePartsFromAttachment(attachment);
+            if (isSearchModeActive) {
+                imageParts = [];
+            }
             const fileContent = typeof attachment.content === 'string' ? attachment.content : '';
             const hasText = fileContent.trim().length > 0;
-            if (!hasText && imageParts.length === 0) {
-                return;
+            const allowEmpty = attachment.allowEmpty === true;
+            if (!hasText && imageParts.length === 0 && !allowEmpty) {
+                continue;
             }
             userContent.push({
                 type: 'file',
                 filename: attachment.file.name,
                 content: fileContent,
-                contentHash: attachment.contentHash || null
+                contentHash: attachment.contentHash || null,
+                allowEmpty: attachment.allowEmpty === true
             });
+
+            if (imageParts.length === 0 && shouldAttachAllImagesForContent(fileContent)) {
+                const hashes = collectAllCidHashesFromText(fileContent);
+                if (hashes.size > 0) {
+                    const cidImages = await buildImagePartsFromCids(Array.from(hashes), currentChatId);
+                    if (cidImages.length > 0) {
+                        imageParts = cidImages.map(part => ({ ...part, _hidden: true }));
+                    }
+                }
+            }
+
             if (imageParts.length) userContent.push(...imageParts);
         }
-    });
+    }
 
     const hasImageAttachments = userContent.some(p => p.type === 'image_url');
     const hasContentToSend = userContent.some(p => p.type !== 'quote' && (p.type !== 'text' || p.text.trim() !== ''));
@@ -13897,7 +19398,7 @@ async function sendMessage() {
     }
 
     if (isProcessing) {
-        pendingMessage = { userContent, userMessageText };
+        pendingMessage = { userContent, userMessageText, appliedCommand };
         clearInputAndAttachments(true);
         cancelQuote();
         dismissKeyboard();
@@ -13916,9 +19417,9 @@ async function sendMessage() {
         wasImageGenerated = false;
 
         if (isImageModeActive) {
-            await _processAndSendMessage(userContent, userMessageText);
+            await _processAndSendMessage(userContent, userMessageText, { appliedCommand });
         } else if (isSearchModeActive) {
-            await handleSearchAndChat(userMessageText);
+            await handleSearchAndChat(userContent, userMessageText);
             if (pendingMessage) {
                 const nextMessage = pendingMessage;
                 pendingMessage = null;
@@ -13926,7 +19427,7 @@ async function sendMessage() {
                     isProcessing = true;
                     setSendButtonLoading();
                     isSendingMessage = true;
-                    _processAndSendMessage(nextMessage.userContent, nextMessage.userMessageText)
+                    _processAndSendMessage(nextMessage.userContent, nextMessage.userMessageText, { appliedCommand: nextMessage.appliedCommand })
                         .finally(() => { isSendingMessage = false; });
                 }, 100);
             }
@@ -13939,12 +19440,12 @@ async function sendMessage() {
                     isProcessing = true;
                     setSendButtonLoading();
                     isSendingMessage = true;
-                    _processAndSendMessage(nextMessage.userContent, nextMessage.userMessageText)
+                    _processAndSendMessage(nextMessage.userContent, nextMessage.userMessageText, { appliedCommand: nextMessage.appliedCommand })
                         .finally(() => { isSendingMessage = false; });
                 }, 100);
             }
         } else {
-            await _processAndSendMessage(userContent, userMessageText);
+            await _processAndSendMessage(userContent, userMessageText, { appliedCommand });
         }
     } finally {
         isSendingMessage = false;
@@ -14024,6 +19525,79 @@ function chunkTable(markdownTable, maxChunkSize) {
         chunks.push(currentChunk);
     }
     return chunks;
+}
+
+async function summarizeLargeUserContent(userContent, contentDiv) {
+    if (!Array.isArray(userContent) || userContent.length === 0) return '';
+
+    let allChunks = [];
+    userContent.forEach(part => {
+        let partChunks = [];
+        if (part.type === 'text' && part.text) {
+            partChunks = smartChunkingByParagraphs(part.text, CHUNK_CONFIG.summarize.size);
+            if (partChunks.length === 0) {
+                partChunks = smartChunking(part.text, CHUNK_CONFIG.summarize.size, CHUNK_CONFIG.summarize.overlap);
+            }
+        } else if (part.type === 'file' && typeof part.content === 'string') {
+            const fileType = detectFileType(part.filename, part.content);
+            let fileContent = `--- ${getToastMessage('ui.file')}: ${part.filename} ---\n${part.content}\n--- ${getToastMessage('ui.fileEnd')} ---`;
+            switch (fileType) {
+                case 'code': partChunks = chunkCode(fileContent, CHUNK_CONFIG.summarize.size); break;
+                case 'markdown': partChunks = chunkMarkdown(fileContent, CHUNK_CONFIG.summarize.size); break;
+                case 'table': partChunks = chunkTable(fileContent, CHUNK_CONFIG.analyze.size); break;
+                default:
+                    partChunks = smartChunkingByParagraphs(fileContent, CHUNK_CONFIG.summarize.size);
+                    if (partChunks.length === 0) {
+                        partChunks = smartChunking(fileContent, CHUNK_CONFIG.summarize.size, CHUNK_CONFIG.summarize.overlap);
+                    }
+                    break;
+            }
+        }
+        allChunks.push(...partChunks);
+    });
+    const chunks = allChunks;
+
+    if (chunks.length === 0) return '';
+
+    const WARNING_THRESHOLD = 10;
+    if (chunks.length > WARNING_THRESHOLD) {
+        showToast(
+            getToastMessage('toast.manyChunksWarning', { count: chunks.length, threshold: WARNING_THRESHOLD }) ||
+            `Processing ${chunks.length} chunks (recommended: ${WARNING_THRESHOLD}). This may take longer.`,
+            'info'
+        );
+    }
+
+    let cumulativeSummary = '';
+
+    for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        if (contentDiv) {
+            contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.analyzingPart', { current: i + 1, total: chunks.length })}</div>`;
+        }
+
+        const MAX_PROMPT_LENGTH = 30000;
+        let prompt = i === 0
+            ? `Summarize this text part (${i + 1}/${chunks.length}) from the provided content only. Preserve key facts, definitions, claims, and citations. If the chunk includes a filename header, keep the filename in the summary.\n\nText:\n${chunk}`
+            : `Update the summary with NEW information from the next part only. Keep prior facts unless contradicted. Preserve filenames if present.\n\nPrevious summary:\n${cumulativeSummary}\n\nNew part (${i + 1}/${chunks.length}):\n${chunk}`;
+
+        if (prompt.length > MAX_PROMPT_LENGTH) {
+            prompt = prompt.substring(0, MAX_PROMPT_LENGTH) + '\n\n[Content truncated due to length limit]';
+        }
+
+        await applyChunkProcessingCooldown(false);
+        cumulativeSummary = await callAISynchronously(prompt);
+
+        if (i < chunks.length - 1) {
+            await sleep(1500);
+        }
+    }
+
+    if (contentDiv) {
+        contentDiv.innerHTML = `<div class="thinking-indicator-new">... ${getToastMessage('aiProcessing.allPartsAnalyzed')}</div>`;
+    }
+
+    return cumulativeSummary;
 }
 
 async function processInBatches(items, processFn, batchSize, delay) {
@@ -14380,7 +19954,7 @@ ${truncatedSource}`;
         }
         const finalAnswerText = `${getToastMessage('ui.sorryErrorInDeepAnalysis')}: ${error.message}`;
         renderMessageContent(contentDiv, finalAnswerText);
-        const assistantMessage = { role: 'assistant', content: finalAnswerText };
+        const assistantMessage = createChatMessage('assistant', finalAnswerText);
         chats[chatIdForRequest].messages.push(assistantMessage);
         return assistantMessage;
     }
@@ -14487,7 +20061,7 @@ async function handleLargeTextAnalysis(userContent, originalQuery, existingAssis
         }
         const finalAnswerText = `${getToastMessage('ui.analysisError')}：${error.message}`;
         renderMessageContent(contentDiv, finalAnswerText);
-        const assistantMessage = { role: 'assistant', content: finalAnswerText };
+        const assistantMessage = createChatMessage('assistant', finalAnswerText);
         chats[chatIdForRequest].messages.push(assistantMessage);
         return assistantMessage;
     }
@@ -14664,7 +20238,7 @@ async function handleDeepAnalysis(userContent, originalQuery, existingAssistantE
         }
         const finalAnswerText = `${getToastMessage('ui.sorryErrorInDeepAnalysis')}: ${error.message}`;
         renderMessageContent(contentDiv, finalAnswerText);
-        const assistantMessage = { role: 'assistant', content: finalAnswerText };
+        const assistantMessage = createChatMessage('assistant', finalAnswerText);
         chats[chatIdForRequest].messages.push(assistantMessage);
         return assistantMessage;
     }
@@ -14865,19 +20439,91 @@ async function buildSemanticScholarQuery(text, images = null) {
     return base;
 }
 
-async function translateToUserLanguage(text) {
+async function buildSearchQueryFromImagesAndText(userMessageText, baseText, images = null) {
+    const hasImages = Array.isArray(images) && images.length > 0;
+    const prompt = [
+        'Generate a concise web search query (6-12 key terms, include acronyms) based on the user question and visual cues.',
+        'If images are provided, extract key visual/text cues and include them as keywords.',
+        'Keep it keyword-style, no full sentences, no fillers.',
+        'Return ONLY the query string.',
+        '',
+        `User question:\n"""${userMessageText || ''}"""`,
+        '',
+        `Context:\n"""${baseText || ''}"""`
+    ].join('\n');
+
+    if (!hasImages) {
+        return buildSearchQueryFromText([userMessageText, baseText].filter(Boolean).join('\n'));
+    }
+
+    try {
+        const res = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false, images);
+        if (res && typeof res === 'string') {
+            const cleaned = res.replace(/[`"]/g, '').trim();
+            if (cleaned) {
+                const normalized = await normalizeEnglishKeywords(cleaned);
+                if (normalized) return normalized;
+                return cleaned;
+            }
+        }
+    } catch (e) {
+        console.warn('buildSearchQueryFromImagesAndText failed.', e);
+    }
+    return buildSearchQueryFromText([userMessageText, baseText].filter(Boolean).join('\n'));
+}
+
+async function buildSearchQueryFromText(text) {
+    if (!text || !text.trim()) return '';
+    const prompt = [
+        'Generate a concise web search query (6-12 key terms, include acronyms) based on the user question.',
+        'Keep it keyword-style, no full sentences, no fillers.',
+        'Return ONLY the query string.',
+        '',
+        `User text:\n"""${text.trim()}"""`
+    ].join('\n');
+
+    try {
+        const res = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false);
+        if (res && typeof res === 'string') {
+            const cleaned = res.replace(/[`"]/g, '').trim();
+            if (cleaned) {
+                const normalized = await normalizeEnglishKeywords(cleaned);
+                if (normalized) return normalized;
+                return cleaned;
+            }
+        }
+    } catch (e) {
+        console.warn('buildSearchQueryFromText failed.', e);
+    }
+    return text.trim();
+}
+
+async function translateToUserLanguage(text, options = {}) {
     if (!text || !text.trim()) return text;
-    const targetLang = getCurrentLanguage() || currentUser?.language || 'zh-CN';
-    const prompt = `Translate the following text into ${targetLang}. Preserve meaning and tone. Return ONLY the translated text.\n\n"""${text.trim()}"""`;
+    const fallbackToOriginal = options?.fallbackToOriginal !== false;
+    const pageLang = getCurrentLanguage();
+    const targetLang = (pageLang || currentUser?.language || localStorage.getItem('selectedLanguage') || 'en').trim();
+    const source = text.trim();
+    const prompt = `Translate the following text into the target language code "${targetLang}" (match the current UI language). Preserve meaning and tone. Return ONLY the translated text.\n\n"""${source}"""`;
     try {
         const translated = await callAISynchronously(prompt, 'gemini-2.5-flash-lite', false);
         if (translated && typeof translated === 'string' && translated.trim()) {
-            return translated.trim();
+            const cleaned = translated.trim();
+            const unchanged = cleaned.toLowerCase() === source.toLowerCase();
+            const needsRetry = targetLang.toLowerCase() !== 'en' && unchanged;
+            if (needsRetry) {
+                const retryPrompt = `Re-translate strictly into target language code "${targetLang}". Do not keep source language unless it is already the target language. Return ONLY translated text.\n\n"""${source}"""`;
+                const retried = await callAISynchronously(retryPrompt, 'gemini-2.5-flash-lite', false);
+                if (retried && typeof retried === 'string' && retried.trim()) {
+                    return retried.trim();
+                }
+            }
+            return cleaned;
         }
     } catch (e) {
         console.warn('translateToUserLanguage failed.', e);
     }
-    return text;
+    return fallbackToOriginal ? text : '';
 }
 
 async function translateToEnglish(text) {
@@ -14928,10 +20574,14 @@ async function callAISynchronously(prompt, model = 'gemini-2.5-flash-lite', incr
         if (Array.isArray(images) && images.length > 0) {
             payload.images = images;
         }
-        const response = await fetch('/api/tool-use', {
+        const response = await fetchWithRetry('/api/tool-use', {
             method: 'POST',
             headers,
-            body: JSON.stringify(payload),
+            body: JSON.stringify(payload)
+        }, {
+            timeoutMs: 30000,
+            retries: 1,
+            retryDelayMs: 600
         });
 
         try {
@@ -14979,6 +20629,9 @@ async function callAISynchronously(prompt, model = 'gemini-2.5-flash-lite', incr
 function updateSearchModeUI() {
     if (isSearchModeActive) {
         elements.toolSearchOption.classList.add('active');
+        if (isMindmapModeActive) {
+            requestMindmapMode(false);
+        }
         if (isImageModeActive) {
             isImageModeActive = false;
             elements.toolImageOption.classList.remove('active');
@@ -14999,6 +20652,9 @@ function updateSearchModeUI() {
 function updateImageModeUI() {
     if (isImageModeActive) {
         elements.toolImageOption.classList.add('active');
+        if (isMindmapModeActive) {
+            requestMindmapMode(false);
+        }
         if (isSearchModeActive) {
             isSearchModeActive = false;
             elements.toolSearchOption.classList.remove('active');
@@ -15017,25 +20673,57 @@ function updateImageModeUI() {
 }
 
 function updateToolsButtonState() {
-    if (isSearchModeActive || isImageModeActive || isResearchModeActive) {
+    const hasActiveToolMode = isSearchModeActive || isImageModeActive || isResearchModeActive || isMindmapModeActive;
+    if (hasActiveToolMode) {
         elements.toolsMenuBtn.classList.add('active');
     } else {
         elements.toolsMenuBtn.classList.remove('active');
+    }
+    syncInputMenuButtonState();
+}
+
+function syncInputMenuButtonState() {
+    const addFileBtn = document.getElementById('add-file-btn');
+    const uploadMenu = document.getElementById('upload-menu');
+    const isUploadMenuOpen = !!uploadMenu?.classList.contains('visible');
+    if (addFileBtn) {
+        addFileBtn.classList.toggle('menu-open', isUploadMenuOpen);
+    }
+    const isToolsMenuOpen = !!elements.toolsMenu?.classList.contains('visible');
+    const hasActiveToolMode = isSearchModeActive || isImageModeActive || isResearchModeActive || isMindmapModeActive;
+    if (elements.toolsMenuBtn) {
+        elements.toolsMenuBtn.classList.toggle('menu-open', isToolsMenuOpen || hasActiveToolMode);
     }
 }
 
 function updateAttachmentButtonState() {
     const addFileBtn = document.getElementById('add-file-btn');
+    const uploadImageBtn = document.getElementById('upload-image-btn');
+    const uploadFileBtn = document.getElementById('upload-file-btn');
+    const allowSearchAttachments = !isSearchModeActive || canUseSearchAttachments();
+    const searchImageLimitReached = isSearchModeActive && attachments.some(att => att.type === 'image');
     if (addFileBtn) {
-        addFileBtn.disabled = isSearchModeActive;
-        addFileBtn.classList.toggle('disabled', isSearchModeActive);
+        addFileBtn.disabled = !allowSearchAttachments;
+        addFileBtn.classList.toggle('disabled', !allowSearchAttachments);
         addFileBtn.removeAttribute('title');
+    }
+    if (uploadFileBtn) {
+        uploadFileBtn.disabled = !allowSearchAttachments;
+        uploadFileBtn.classList.toggle('disabled', !allowSearchAttachments);
+    }
+    if (uploadImageBtn) {
+        const disableImageUpload = !allowSearchAttachments || searchImageLimitReached;
+        uploadImageBtn.disabled = disableImageUpload;
+        uploadImageBtn.classList.toggle('disabled', disableImageUpload);
     }
 }
 
 function updateResearchModeUI() {
     if (isResearchModeActive) {
         elements.toolResearchOption.classList.add('active');
+        if (isMindmapModeActive) {
+            requestMindmapMode(false);
+        }
         if (isSearchModeActive) {
             isSearchModeActive = false;
             elements.toolSearchOption.classList.remove('active');
@@ -15051,6 +20739,64 @@ function updateResearchModeUI() {
     updateAttachmentButtonState();
     updateToolsButtonState();
     updateActiveModel();
+}
+
+function handleMindmapModeChange(active, detail = {}) {
+    const nextActive = !!active;
+    isMindmapModeActive = nextActive;
+    if (nextActive) {
+        if (isSearchModeActive) {
+            isSearchModeActive = false;
+            elements.toolSearchOption?.classList?.remove('active');
+        }
+        if (isImageModeActive) {
+            isImageModeActive = false;
+            elements.toolImageOption?.classList?.remove('active');
+        }
+        if (isResearchModeActive) {
+            isResearchModeActive = false;
+            elements.toolResearchOption?.classList?.remove('active');
+        }
+    }
+    updateAttachmentButtonState();
+    updateToolsButtonState();
+    updateActiveModel();
+
+    if (detail?.showToast) {
+        showToast(
+            getToastMessage(nextActive ? 'toast.mindmapModeOn' : 'toast.mindmapModeOff'),
+            'info'
+        );
+    }
+
+}
+
+function notifyMindmapRenderRequest(chatId) {
+    if (!isMindmapModeActive) return;
+    try {
+        window.dispatchEvent(new CustomEvent('mindmap-render-request', { detail: { chatId } }));
+    } catch (_) { }
+}
+
+function requestMindmapMode(active, detail = {}) {
+    try {
+        window.dispatchEvent(new CustomEvent('mindmap-mode-request', { detail: { active: !!active, ...detail } }));
+    } catch (_) { }
+}
+
+function setupMindmapModeBridge() {
+    try {
+        const initialActive = document.body?.dataset?.mindmapMode === 'on';
+        if (initialActive) {
+            handleMindmapModeChange(true);
+        }
+    } catch (_) { }
+
+    window.addEventListener('mindmap-mode-change', (event) => {
+        const detail = event?.detail || {};
+        const active = !!detail.active;
+        handleMindmapModeChange(active, detail);
+    });
 }
 
 // 模型选择相关函数
@@ -15082,7 +20828,8 @@ function updateActiveModel() {
     }
 
     if (isSearchModeActive) {
-        currentModelId = 'gemini-2.5-flash-lite';
+        const hasPaidAccess = hasPaidAccessForUi();
+        currentModelId = hasPaidAccess ? userSelectedModelId : 'gemini-2.5-flash-lite';
     } else if (isImageModeActive) {
         currentModelId = 'gemini-2.5-flash';
     } else {
@@ -15091,9 +20838,9 @@ function updateActiveModel() {
 
     updateSelectedModelDisplay();
 
-    const isSpecialMode = isSearchModeActive || isImageModeActive;
+    const isSpecialMode = isImageModeActive || (isSearchModeActive && !hasPaidAccessForUi());
     elements.modelSelectBtn.disabled = isSpecialMode;
-    if (!isSpecialMode) {
+    if (!isSpecialMode && !isRenderingRelayModelMenu) {
         renderModelMenu();
     }
 }
@@ -15108,10 +20855,171 @@ function resetToDefaultModel() {
     updateActiveModel();
 }
 
+const RELAY_MENU_PROVIDERS = [
+    { id: 'gpt', label: 'GPT', icon: '/ai_icons/chatgpt.svg' },
+    { id: 'claude', label: 'Claude', icon: '/ai_icons/claude.svg' },
+    { id: 'gemini', label: 'Gemini', icon: '/ai_icons/gemini.svg' },
+    { id: 'grok', label: 'Grok', icon: '/ai_icons/grok.svg' },
+    { id: 'deepseek', label: 'DeepSeek', icon: '/ai_icons/deepseek.svg' }
+];
+
+let relayMenuActiveProvider = 'gpt';
+let isRenderingRelayModelMenu = false;
+
+function getRelayMenuModels(provider) {
+    const models = loadRelayModels(provider)
+        .map(item => String(item).replace(/^models\//i, ''));
+    const selected = loadRelaySelectedModels(provider);
+    const normalizedSelected = selected.filter(item => models.includes(item));
+    const list = normalizedSelected.length > 0 ? normalizedSelected : models;
+    return { models, list };
+}
+
+function renderRelayModelSelectMenu() {
+    const menu = elements.relayModelSelectMenu;
+    if (!menu) return;
+    isRenderingRelayModelMenu = true;
+    try {
+        menu.innerHTML = '';
+        const stack = document.createElement('div');
+        stack.className = 'relay-model-select-stack';
+
+        const currentLang = currentUser ? (currentUser.language || getCurrentLanguage()) : getCurrentLanguage();
+        const rootCard = document.createElement('div');
+        rootCard.className = 'relay-model-select-card relay-model-select-root-card';
+        const rootTitle = document.createElement('strong');
+        rootTitle.textContent = t(currentLang, 'ui.subscriptionRelayModelsTitle');
+        const rootList = document.createElement('div');
+        rootList.className = 'relay-model-select-root-list';
+        rootCard.appendChild(rootTitle);
+        rootCard.appendChild(rootList);
+
+        const cardsByProvider = new Map();
+        const setActiveCard = (providerId) => {
+            cardsByProvider.forEach((card, key) => {
+                card.classList.toggle('is-open', key === providerId);
+            });
+        };
+
+        RELAY_MENU_PROVIDERS.forEach((provider) => {
+            const card = document.createElement('div');
+            card.className = 'relay-model-select-card relay-model-select-drawer';
+            const header = document.createElement('div');
+            header.className = 'relay-model-select-header';
+            const backBtn = document.createElement('button');
+            backBtn.type = 'button';
+            backBtn.className = 'relay-model-select-back';
+            backBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+            backBtn.addEventListener('click', () => setActiveCard(null));
+            const title = document.createElement('strong');
+            title.textContent = provider.label;
+            header.appendChild(backBtn);
+            header.appendChild(title);
+
+            const divider = document.createElement('div');
+            divider.className = 'relay-model-select-divider';
+
+            const empty = document.createElement('div');
+            empty.className = 'relay-model-select-empty';
+            empty.textContent = t(currentLang, 'ui.subscriptionRelayModelsEmpty');
+
+            const listEl = document.createElement('div');
+            listEl.className = 'relay-model-select-list';
+
+            const renderList = () => {
+                const { models, list } = getRelayMenuModels(provider.id);
+                listEl.innerHTML = '';
+                if (!list.length) {
+                    empty.style.display = 'block';
+                    listEl.style.display = 'none';
+                    return;
+                }
+                empty.style.display = 'none';
+                listEl.style.display = '';
+                list.forEach((modelId) => {
+                    const item = document.createElement('div');
+                    item.className = 'model-select-item';
+                    if (modelId === currentModelId) {
+                        item.classList.add('selected');
+                    }
+                    item.innerHTML = `
+                        <div class="model-main-row">
+                            <div class="model-info">
+                                <span class="model-name">${formatRelayModelLabel(modelId)}</span>
+                            </div>
+                            <svg class="checkmark-icon" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                        </div>
+                    `;
+                    item.addEventListener('click', () => {
+                        userSelectedModelId = modelId;
+                        updateActiveModel();
+                        menu.classList.remove('visible');
+                    });
+                    listEl.appendChild(item);
+                });
+            };
+
+            renderList();
+
+            const content = document.createElement('div');
+            content.className = 'relay-model-select-drawer-content';
+            content.appendChild(header);
+            content.appendChild(divider);
+            content.appendChild(empty);
+            content.appendChild(listEl);
+            card.appendChild(content);
+            cardsByProvider.set(provider.id, card);
+            stack.appendChild(card);
+
+            const entry = document.createElement('div');
+            entry.className = 'relay-model-select-root-item';
+            const icon = document.createElement('img');
+            icon.src = provider.icon;
+            icon.alt = '';
+            entry.appendChild(icon);
+            const label = document.createElement('span');
+            label.textContent = provider.label;
+            entry.appendChild(label);
+            entry.addEventListener('click', () => {
+                relayMenuActiveProvider = provider.id;
+                renderList();
+                setActiveCard(provider.id);
+            });
+            rootList.appendChild(entry);
+        });
+
+        stack.appendChild(rootCard);
+        menu.appendChild(stack);
+
+        setActiveCard(null);
+    } finally {
+        isRenderingRelayModelMenu = false;
+    }
+}
+
 function renderModelMenu() {
+    if (relayIsEnabled) {
+        if (elements.modelSelectMenu) {
+            elements.modelSelectMenu.classList.remove('visible');
+        }
+        renderRelayModelSelectMenu();
+        return;
+    }
+    if (elements.relayModelSelectMenu) {
+        elements.relayModelSelectMenu.classList.remove('visible');
+        elements.relayModelSelectMenu.innerHTML = '';
+    }
     elements.modelSelectMenu.innerHTML = '';
     const availableModels = getAvailableModels();
     const currentLang = currentUser ? (currentUser.language || getCurrentLanguage()) : getCurrentLanguage();
+
+    if (!Array.isArray(availableModels) || availableModels.length === 0) {
+        return;
+    }
+    if (!availableModels.some(model => model.id === currentModelId)) {
+        currentModelId = availableModels[0].id;
+        userSelectedModelId = currentModelId;
+    }
 
     availableModels.forEach(model => {
         const item = document.createElement('div');
@@ -15125,7 +21033,7 @@ function renderModelMenu() {
             item.classList.add('selected');
         }
 
-        const modelDesc = t(currentLang, model.descKey);
+        const modelDesc = model.descKey ? t(currentLang, model.descKey) : '';
 
         if (model.hasThinkingLevel) {
             const thinkingLevelLowText = t(currentLang, 'models.thinkingLevelLow');
@@ -15135,7 +21043,7 @@ function renderModelMenu() {
                 <div class="model-main-row">
                     <div class="model-info">
                         <span class="model-name">${model.name}</span>
-                        <span class="model-desc">${modelDesc}</span>
+                        ${modelDesc ? `<span class="model-desc">${modelDesc}</span>` : ''}
                     </div>
                     <svg class="accordion-arrow" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
                 </div>
@@ -15185,7 +21093,7 @@ function renderModelMenu() {
                 <div class="model-main-row">
                     <div class="model-info">
                         <span class="model-name">${model.name}</span>
-                        <span class="model-desc">${modelDesc}</span>
+                        ${modelDesc ? `<span class="model-desc">${modelDesc}</span>` : ''}
                     </div>
                     <svg class="checkmark-icon" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
                 </div>
@@ -15323,7 +21231,9 @@ function registerFileViewerLinkHandler(container) {
     removeFileViewerLinkHandler = () => container.removeEventListener('click', handler);
 }
 
-function showFileViewer(filename, content) {
+function showFileViewer(filename, content, meta = null) {
+    const viewerModal = document.getElementById('file-viewer');
+    const viewerModalContent = viewerModal?.querySelector('.modal-content') || null;
     const codeContainer = document.getElementById('file-viewer-code-container');
     const textContainer = document.getElementById('file-viewer-text-container');
     const codeElement = document.getElementById('file-viewer-code');
@@ -15333,8 +21243,28 @@ function showFileViewer(filename, content) {
     textContainer.style.display = 'none';
     textContainer.innerHTML = '';
     codeElement.textContent = '';
+    
+    textContainer.scrollTop = 0;
+    textContainer.scrollLeft = 0;
+    codeContainer.scrollTop = 0;
+    codeContainer.scrollLeft = 0;
+    if (viewerModalContent) {
+        viewerModalContent.scrollTop = 0;
+        viewerModalContent.scrollLeft = 0;
+    }
+    if (viewerModal) {
+        viewerModal.scrollTop = 0;
+        viewerModal.scrollLeft = 0;
+    }
     elements.fileViewerFilename.textContent = filename;
     unregisterFileViewerLinkHandler();
+
+    const extension = filename?.split('.').pop()?.toLowerCase();
+    const isPdf = extension === 'pdf';
+    const isEmptyContent = !(content || '').trim();
+    if (isPdf && meta?.allowEmpty === true && isEmptyContent) {
+        content = getToastMessage('fileManagement.pdfScanVersion');
+    }
 
     const viewerType = detectViewerType(filename, content);
 
@@ -15431,6 +21361,27 @@ function hideFileViewerUI() {
     }
     unregisterFileViewerLinkHandler();
 
+    const viewerModal = document.getElementById('file-viewer');
+    const viewerModalContent = viewerModal?.querySelector('.modal-content') || null;
+    const textContainer = document.getElementById('file-viewer-text-container');
+    const codeContainer = document.getElementById('file-viewer-code-container');
+    if (viewerModalContent) {
+        viewerModalContent.scrollTop = 0;
+        viewerModalContent.scrollLeft = 0;
+    }
+    if (viewerModal) {
+        viewerModal.scrollTop = 0;
+        viewerModal.scrollLeft = 0;
+    }
+    if (textContainer) {
+        textContainer.scrollTop = 0;
+        textContainer.scrollLeft = 0;
+    }
+    if (codeContainer) {
+        codeContainer.scrollTop = 0;
+        codeContainer.scrollLeft = 0;
+    }
+
     const preElement = elements.fileViewerCode.parentNode;
     if (preElement) {
         preElement.removeChild(elements.fileViewerCode);
@@ -15513,19 +21464,12 @@ function setupInputPanelObserver() {
         for (const update of updates) {
             chatContainer.style.scrollPaddingBottom = needsPadding ? `${update.panelHeight}px` : '0px';
             if (update.isScrolledToBottom) {
-                scrollManager.isAutoScrolling = true;
-                scrollManager.lastScrollTime = Date.now();
-                chatContainer.scrollTo({
-                    top: update.scrollHeight,
-                    behavior: 'smooth'
-                });
-                setTimeout(() => {
-                    scrollManager.isAutoScrolling = false;
+                scrollManager.smoothScrollToBottom(() => {
                     const lastMessage = chatContainer.querySelector('.message:last-of-type');
                     if (lastMessage) {
                         ensureMessageActionsVisible(lastMessage);
                     }
-                }, 300);
+                });
             }
         }
     });
@@ -15544,8 +21488,9 @@ function updateCharacterCountUI() {
         }
     });
 
-    counterElement.textContent = `${totalChars.toLocaleString()} / ${CHARACTER_LIMIT.toLocaleString()}`;
-    const isOverLimit = totalChars > CHARACTER_LIMIT;
+    const { limit } = getCharacterLimitInfo();
+    counterElement.textContent = `${totalChars.toLocaleString()} / ${limit.toLocaleString()}`;
+    const isOverLimit = totalChars > limit;
 
     if (isOverLimit) {
         counterElement.classList.add('over-limit');
@@ -15658,6 +21603,7 @@ async function forceClearCacheAndReload() {
 
         await Promise.all([
             clearCachesAndSettings(['cdn-fonts-cache']),
+            (sessionId ? clearChatsStore().catch(() => { }) : Promise.resolve()),
             (async () => { try { await clearTranslationCache(); } catch (_) { } })()
         ]);
 
@@ -15668,7 +21614,8 @@ async function forceClearCacheAndReload() {
             'userThemeSettings',
             'userThemeSettingsUpdatedAt',
             'guestThemeSettings',
-            'selectedLanguage'
+            'selectedLanguage',
+            DEVICE_FP_STORAGE_KEY
         ];
 
         Object.keys(localStorage).forEach(key => {
@@ -15683,13 +21630,6 @@ async function forceClearCacheAndReload() {
         const currentLang = localStorage.getItem('selectedLanguage');
         if (currentLang) {
             localStorage.setItem('forceReloadLanguage', 'true');
-        }
-
-        // 登录用户：保留本地聊天与文档缓存
-        if (currentUser?.id) {
-            try {
-                localStorage.setItem('forceServerChatsReload', '1');
-            } catch (_) { }
         }
 
         try {
@@ -15895,23 +21835,13 @@ function setupEventListeners() {
                 isPageVisible = true;
                 backgroundNotificationShown = false;
 
-                if (isProcessing && globalContentDiv) {
+                if (isProcessing) {
                     try {
-                        if (globalBackgroundBuffer) {
-                            globalDisplayBuffer += globalBackgroundBuffer;
-                            globalBackgroundBuffer = '';
-                        }
-
-                        if (globalCharQueue.length > 0) {
-                            const remainingChars = globalCharQueue.splice(0, globalCharQueue.length).join('');
-                            globalDisplayBuffer += remainingChars;
-                        }
-
-                        renderMessageContent(globalContentDiv, globalDisplayBuffer);
+                        streamImageRuntime.flushBufferedContent();
 
                         if (shouldAutoScroll()) {
                             setTimeout(() => {
-                                elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+                                scrollManager.setAutoScrollTop(elements.chatContainer.scrollHeight);
                             }, 10);
                         }
                     } catch (error) {
@@ -15922,13 +21852,12 @@ function setupEventListeners() {
         });
 
         LocalNotifications.addListener('localNotificationActionPerformed', (notification) => {
-            if (notification.notification.extra?.apkVersion) {
-                Browser.open({ url: 'https://littleaibox.com/download-app' });
-            }
+            getApkUpdateManager().handleLocalNotificationAction(notification);
         });
     }
 
     scrollManager.init();
+    setupSlashCommandInput();
 
     document.querySelectorAll('.auth-tab').forEach(tab => {
         tab.addEventListener('click', function () {
@@ -16019,7 +21948,7 @@ function setupEventListeners() {
                 submitBtn.disabled = false;
                 showToast(getToastMessage('toast.registrationTimeout'), 'error');
             }
-        }, 60000);
+        }, 90000);
         try {
             const result = await makeAuthRequest('register', { email, password, username });
             clearTimeout(timeoutId);
@@ -16057,7 +21986,7 @@ function setupEventListeners() {
             const isNearBottom = scrollHeight - clientHeight - scrollTop < 100;
 
             if (isNearBottom) {
-                chatContainer.scrollTo({ top: scrollHeight, behavior: 'smooth' });
+                scrollManager.smoothScrollToBottom();
             }
 
         }, 250);
@@ -16187,6 +22116,11 @@ function setupEventListeners() {
             }
         });
     }
+    if (elements.sidebar) {
+        elements.sidebar.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+    }
 
     sidebarToggleBtn.addEventListener('click', (e) => {
         if (elements.settingsModal && elements.settingsModal.classList.contains('visible')) {
@@ -16205,6 +22139,12 @@ function setupEventListeners() {
             }
         } else {
             const isOpening = !document.body.classList.contains('sidebar-collapsed');
+            applyTemporaryWillChange([
+                { element: elements.sidebar, value: 'transform' },
+                { element: document.body, value: 'padding-left' },
+                { element: document.querySelector('.chat-area'), value: 'margin-left, margin-right' },
+                { element: sidebarToggleBtn.querySelector('svg'), value: 'transform' }
+            ]);
             document.body.classList.toggle('sidebar-collapsed');
             sidebarToggleBtn.setAttribute('aria-expanded', String(isOpening));
         }
@@ -16217,6 +22157,11 @@ function setupEventListeners() {
                 exitMultiSelectMode(false);
             }
             const isOpening = !document.body.classList.contains('right-sidebar-open');
+            applyTemporaryWillChange([
+                { element: elements.rightSidebar, value: 'transform' },
+                { element: elements.rightSidebarToggleBtn, value: 'right' },
+                { element: document.querySelector('.chat-area'), value: 'margin-right' }
+            ]);
 
             if (isOpening) {
                 requestAnimationFrame(() => {
@@ -16332,6 +22277,7 @@ function setupEventListeners() {
             if (currentChatWasDeleted) {
                 currentChatId = null;
                 welcomePageShown = false;
+                streamImageRuntime.clearPendingImagePlaceholdersInChatContainer();
                 showEmptyState();
                 routeManager.navigateToHome({ replace: true });
             }
@@ -16417,6 +22363,7 @@ function setupEventListeners() {
 
                     chats = {};
                     currentChatId = null;
+                    streamImageRuntime.clearPendingImagePlaceholdersInChatContainer();
                     showEmptyState();
                     scheduleRenderSidebar();
                     closeSidebarOnInteraction();
@@ -16452,6 +22399,7 @@ function setupEventListeners() {
 
                 chats = {};
                 currentChatId = null;
+                streamImageRuntime.clearPendingImagePlaceholdersInChatContainer();
                 showEmptyState();
                 scheduleRenderSidebar();
                 closeSidebarOnInteraction();
@@ -16507,6 +22455,7 @@ function setupEventListeners() {
 
     const inputWrapper = document.querySelector('.input-wrapper');
     const modelSelectMenu = document.getElementById('model-select-menu');
+    const relayModelSelectMenu = document.getElementById('relay-model-select-menu');
     const uploadMenu = document.getElementById('upload-menu');
     const messageInput = document.getElementById('message-input');
 
@@ -16536,6 +22485,9 @@ function setupEventListeners() {
     if (modelSelectMenu) {
         modelSelectMenu.addEventListener('mousedown', preventKeyboardClose);
     }
+    if (relayModelSelectMenu) {
+        relayModelSelectMenu.addEventListener('mousedown', preventKeyboardClose);
+    }
     if (uploadMenu) {
         uploadMenu.addEventListener('mousedown', preventKeyboardClose);
     }
@@ -16546,11 +22498,14 @@ function setupEventListeners() {
     elements.toolsMenuBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const modelSelectMenu = document.getElementById('model-select-menu');
+        const relayModelSelectMenu = document.getElementById('relay-model-select-menu');
         const uploadMenu = document.getElementById('upload-menu');
         if (modelSelectMenu) modelSelectMenu.classList.remove('visible');
+        if (relayModelSelectMenu) relayModelSelectMenu.classList.remove('visible');
         if (uploadMenu) uploadMenu.classList.remove('visible');
 
         elements.toolsMenu.classList.toggle('visible');
+        syncInputMenuButtonState();
     });
 
     elements.toolSearchOption.addEventListener('click', (e) => {
@@ -16563,6 +22518,7 @@ function setupEventListeners() {
         showToast(isSearchModeActive ? getToastMessage('toast.searchModeOn') : getToastMessage('toast.searchModeOff'), 'info');
 
         elements.toolsMenu.classList.remove('visible');
+        syncInputMenuButtonState();
 
         const isKeyboardOpen = document.body.classList.contains('keyboard-is-open')
             || document.activeElement === elements.messageInput;
@@ -16582,6 +22538,7 @@ function setupEventListeners() {
         showToast(isImageModeActive ? getToastMessage('toast.imageModeOn') : getToastMessage('toast.imageModeOff'), 'info');
 
         elements.toolsMenu.classList.remove('visible');
+        syncInputMenuButtonState();
 
         const isKeyboardOpen = document.body.classList.contains('keyboard-is-open')
             || document.activeElement === elements.messageInput;
@@ -16601,6 +22558,7 @@ function setupEventListeners() {
         showToast(isResearchModeActive ? getToastMessage('toast.researchModeOn') : getToastMessage('toast.researchModeOff'), 'info');
 
         elements.toolsMenu.classList.remove('visible');
+        syncInputMenuButtonState();
 
         const isKeyboardOpen = document.body.classList.contains('keyboard-is-open')
             || document.activeElement === elements.messageInput;
@@ -16622,6 +22580,7 @@ function setupEventListeners() {
         const { isOverLimit } = updateCharacterCountUI();
 
         if (isOverLimit) {
+            const { limit, toastKey } = getCharacterLimitInfo();
             let charsFromFiles = 0;
             attachments.forEach(att => {
                 if (att.type === 'file' && typeof att.content === 'string') {
@@ -16629,12 +22588,12 @@ function setupEventListeners() {
                 }
             });
 
-            const allowedTextLength = Math.max(0, CHARACTER_LIMIT - charsFromFiles);
+            const allowedTextLength = Math.max(0, limit - charsFromFiles);
             if (elements.messageInput.value.length > allowedTextLength) {
                 elements.messageInput.value = elements.messageInput.value.substring(0, allowedTextLength);
                 // 触发input事件以调整输入框高度
                 elements.messageInput.dispatchEvent(new Event('input'));
-                showToast(getToastMessage('toast.characterLimitReached'), 'warning');
+                showToast(getToastMessage(toastKey), 'warning');
                 updateCharacterCountUI();
             }
         }
@@ -16842,14 +22801,14 @@ function setupEventListeners() {
     document.getElementById('add-file-btn').addEventListener('click', (e) => {
         e.stopPropagation();
         const uploadMenu = document.getElementById('upload-menu');
-        const willOpen = !uploadMenu.classList.contains('visible');
-
         uploadMenu.classList.toggle('visible');
+        syncInputMenuButtonState();
     });
 
     document.getElementById('upload-image-btn').addEventListener('click', async () => {
         dismissKeyboard();
         document.getElementById('upload-menu').classList.remove('visible');
+        syncInputMenuButtonState();
 
         if (isNativeApp) {
             const choice = await showImageSourceChoice();
@@ -16911,6 +22870,7 @@ function setupEventListeners() {
     });
     document.getElementById('upload-code-btn').addEventListener('click', async () => {
         document.getElementById('upload-menu').classList.remove('visible');
+        syncInputMenuButtonState();
 
         if (isNativeApp) {
             try {
@@ -16933,6 +22893,7 @@ function setupEventListeners() {
 
     document.getElementById('upload-file-btn').addEventListener('click', async () => {
         document.getElementById('upload-menu').classList.remove('visible');
+        syncInputMenuButtonState();
 
         if (isNativeApp) {
             try {
@@ -16960,12 +22921,31 @@ function setupEventListeners() {
 
     elements.chatHistoryList.addEventListener('click', async (e) => {
         // 设置模态打开时，不响应侧边栏的聊天项点击
-        if (elements.settingsModal && elements.settingsModal.classList.contains('visible')) {
+        if ((elements.settingsModal && elements.settingsModal.classList.contains('visible'))
+            || (elements.bridgeSettingsModal && elements.bridgeSettingsModal.classList.contains('visible'))) {
             e.preventDefault();
             e.stopPropagation();
             return;
         }
         const target = e.target;
+        const bridgeToggleBtn = target.closest('.bridge-toggle-btn');
+        if (bridgeToggleBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+            const parentChatId = bridgeToggleBtn.dataset.parentChatId;
+            await dispatchBridge(BRIDGE_DISPATCH.SIDEBAR_TOGGLE, { parentChatId });
+            return;
+        }
+
+        const bridgeNewBtn = target.closest('.bridge-new-btn');
+        if (bridgeNewBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+            const parentChatId = bridgeNewBtn.dataset.parentChatId;
+            await dispatchBridge(BRIDGE_DISPATCH.SIDEBAR_NEW, { parentChatId });
+            return;
+        }
+
         const historyItem = target.closest('.history-item');
         if (!historyItem) return;
 
@@ -16994,66 +22974,8 @@ function setupEventListeners() {
         if (menuBtn) {
             e.stopPropagation();
             const contextMenu = historyItem.querySelector('.context-menu');
-            const willOpen = contextMenu.style.display !== 'block';
-            document.querySelectorAll('.context-menu').forEach(m => {
-                m.style.display = 'none';
-            });
-
-            if (willOpen) {
-                contextMenu.style.display = 'block';
-                if (window.innerWidth > 640) {
-                    contextMenu.onmouseleave = () => {
-                        contextMenu.style.display = 'none';
-                    };
-                    const onMove = (ev) => {
-                        if (!contextMenu.contains(ev.target) && !historyItem.contains(ev.target)) {
-                            contextMenu.style.display = 'none';
-                            document.removeEventListener('mousemove', onMove);
-                        }
-                    };
-                    document.addEventListener('mousemove', onMove);
-                }
-
-                safeNavigationCall('pushUiState', {
-                    name: `contextMenu-${chatId}`,
-                    close: () => {
-                        contextMenu.style.display = 'none';
-                    }
-                });
-            }
-            return;
-        }
-
-        const contextMenuItem = target.closest('.context-menu button');
-        if (contextMenuItem) {
-            e.stopPropagation();
-            const action = contextMenuItem.dataset.action;
-
-            if (action === 'rename') {
-                safeNavigationCall('popUiState');
-                renameChat(chatId);
-            } else if (action === 'copy-title') {
-                safeNavigationCall('popUiState');
-                const titleNode = historyItem.querySelector('.title');
-                const titleToCopy = buildCopyTextFromContent(titleNode);
-                navigator.clipboard.writeText(titleToCopy).then(() => {
-                    showToast(getToastMessage('toast.titleCopied'), 'success');
-                }).catch(err => {
-                    showToast(getToastMessage('toast.copyFailed'), 'error');
-                });
-            } else if (action === 'share') {
-                safeNavigationCall('popUiState');
-                shareChat(chatId);
-            } else if (action === 'multi-select') {
-                const contextMenu = historyItem.querySelector('.context-menu');
-                if (contextMenu) contextMenu.style.display = 'none';
-                safeNavigationCall('removeUiStateByName', `contextMenu-${chatId}`);
-                enterMultiSelectMode();
-            } else if (action === 'delete') {
-                const contextMenu = historyItem.querySelector('.context-menu');
-                if (contextMenu) contextMenu.style.display = 'none';
-                safeNavigationCall('removeUiStateByName', `contextMenu-${chatId}`);
-                deleteChat(chatId, true);
+            if (contextMenu) {
+                openContextMenu(contextMenu, menuBtn);
             }
             return;
         }
@@ -17087,10 +23009,14 @@ function setupEventListeners() {
 
     elements.modelSelectBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const willOpen = !elements.modelSelectMenu.classList.contains('visible');
-
         renderModelMenu();
-        elements.modelSelectMenu.classList.toggle('visible');
+        const menu = relayIsEnabled ? elements.relayModelSelectMenu : elements.modelSelectMenu;
+        const otherMenu = relayIsEnabled ? elements.modelSelectMenu : elements.relayModelSelectMenu;
+        if (otherMenu) otherMenu.classList.remove('visible');
+        if (menu) {
+            const willOpen = !menu.classList.contains('visible');
+            menu.classList.toggle('visible', willOpen);
+        }
 
 
     });
@@ -17120,6 +23046,8 @@ function setupEventListeners() {
         if (isMultiSelectMode) {
             exitMultiSelectMode();
         }
+
+        hideSubscriptionModal(false, { skipHandleBack: true });
 
         try {
             const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
@@ -17158,6 +23086,7 @@ function setupEventListeners() {
             elements.chatContainer.style.display = 'flex';
             updateLoginButtonVisibility();
             setupSettingsModalUI();
+            refreshSubscriptionSettingsUi();
             if (!routeManager.isSettingsSyncSuppressed()) {
                 setTimeout(() => {
                     routeManager.syncSettingsRoute(routeManager.getActiveSettingsSection());
@@ -17165,6 +23094,12 @@ function setupEventListeners() {
             }
         }
     });
+
+    if (elements.subscriptionBtn) {
+        elements.subscriptionBtn.addEventListener('click', () => {
+            openSettingsToPage('subscription');
+        });
+    }
 
     const guestLoginBtn = document.getElementById('guest-login-prompt-btn');
     if (guestLoginBtn) {
@@ -17178,6 +23113,12 @@ function setupEventListeners() {
     if (settingsCloseBtn) {
         settingsCloseBtn.addEventListener('click', () => {
             handleCloseSettingsModalByPage();
+        });
+    }
+
+    if (elements.subscriptionCloseBtn) {
+        elements.subscriptionCloseBtn.addEventListener('click', () => {
+            hideSubscriptionModal(true);
         });
     }
 
@@ -17407,6 +23348,7 @@ function setupEventListeners() {
                     currentModelId = availableModels[0].id;
                 }
                 try { updateActiveModel(); renderModelMenu(); } catch (_) { }
+                updateSubscriptionIcon();
             } else {
                 const updateResult = await updateApiKey(combinedApiKey, selectedMode, { keyTier: overallKeyTier });
                 if (currentUser) {
@@ -17423,6 +23365,7 @@ function setupEventListeners() {
                         currentModelId = availableModels[0].id;
                     }
                     try { updateActiveModel(); renderModelMenu(); } catch (_) { }
+                    updateSubscriptionIcon();
                 }
             }
             hideSettingsModal();
@@ -17471,11 +23414,6 @@ function setupEventListeners() {
         item.addEventListener('click', (e) => {
             e.preventDefault();
             const pageId = item.dataset.page;
-
-            // 处理隐私协议页面
-            if (pageId === 'privacy-policy') {
-                handlePrivacyPolicyClick(); // Mark as seen when viewed in settings
-            }
 
             settingsNavItems.forEach(i => i.classList.remove('active'));
             settingsPages.forEach(p => p.classList.remove('active'));
@@ -17534,17 +23472,6 @@ function setupEventListeners() {
         }
     });
 
-    const donationPageEl = document.getElementById('donation-settings-page');
-    if (donationPageEl) {
-        donationPageEl.querySelectorAll('img').forEach(img => {
-            img.addEventListener('load', () => {
-                if (elements.settingsModal && elements.settingsModal.classList.contains('visible')) {
-                    updateSettingsScrollVisibility();
-                }
-            });
-        });
-    }
-
     // 语言选择按钮事件处理
     let isLanguageSwitching = false;
     document.addEventListener('click', async (e) => {
@@ -17582,6 +23509,11 @@ function setupEventListeners() {
                     try { localStorage.setItem('selectedLanguage', selectedLang); } catch (_) { }
                 }
                 refreshSettingsI18nTexts();
+                slashCommandCacheReady = false;
+                slashCommandCache = [];
+                if (currentUser) {
+                    refreshSlashLibraryUi().catch(() => { });
+                }
 
                 // 立即更新欢迎页面和侧边栏
                 if (currentChatId === null) {
@@ -17768,9 +23700,19 @@ function setupEventListeners() {
         }
     });
 
+    if (elements.subscriptionModal) {
+        elements.subscriptionModal.addEventListener('click', (e) => {
+            if (e.target === elements.subscriptionModal) {
+                hideSubscriptionModal(true);
+            }
+        });
+    }
+
     elements.limitModalOverlay.addEventListener('click', (e) => {
         if (e.target === elements.limitModalOverlay) elements.limitModalOverlay.classList.remove('visible');
     });
+
+    bridgeSettingsUi.bindEvents();
 
     const chatHeader = document.querySelector('.chat-header');
     chatHeader.addEventListener('click', (e) => {
@@ -17794,21 +23736,36 @@ function setupEventListeners() {
             return;
         }
 
+        const activeExportMenu = document.querySelector('.message-export-menu.visible');
+        if (activeExportMenu) {
+            const exportWrap = activeExportMenu.closest('.message-export');
+            if (exportWrap && !exportWrap.contains(e.target)) {
+                closeMessageExportMenus(null);
+            }
+        }
+
         const uploadMenu = document.getElementById('upload-menu');
         const addFileBtn = document.getElementById('add-file-btn');
 
         if (uploadMenu.classList.contains('visible') && !uploadMenu.contains(e.target) && !addFileBtn.contains(e.target)) {
             uploadMenu.classList.remove('visible');
+            syncInputMenuButtonState();
             return;
         }
         if (elements.modelSelectMenu.classList.contains('visible') && !elements.modelSelectMenu.contains(e.target) && !elements.modelSelectBtn.contains(e.target)) {
             elements.modelSelectMenu.classList.remove('visible');
             return;
         }
+        if (elements.relayModelSelectMenu && elements.relayModelSelectMenu.classList.contains('visible')
+            && !elements.relayModelSelectMenu.contains(e.target) && !elements.modelSelectBtn.contains(e.target)) {
+            elements.relayModelSelectMenu.classList.remove('visible');
+            return;
+        }
         if (elements.toolsMenu && elements.toolsMenu.classList.contains('visible') &&
             !elements.toolsMenu.contains(e.target) &&
             !elements.toolsMenuBtn.contains(e.target)) {
             elements.toolsMenu.classList.remove('visible');
+            syncInputMenuButtonState();
             return;
         }
         if (elements.userInfoPopover.classList.contains('visible') && !chatHeader.contains(e.target)) {
@@ -18216,27 +24173,73 @@ function setupEventListeners() {
         });
     });
 
+    const termsHelpDropdown = document.getElementById('terms-help-dropdown');
+    const termsHelpToggle = document.getElementById('terms-help-toggle');
+    const termsHelpMenu = document.getElementById('terms-help-menu');
+    const setTermsHelpOpen = (isOpen) => {
+        if (!termsHelpDropdown) return;
+        termsHelpDropdown.classList.toggle('open', isOpen);
+        if (termsHelpToggle) {
+            termsHelpToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        }
+        if (termsHelpMenu) {
+            termsHelpMenu.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+        }
+    };
+
+    if (termsHelpToggle && termsHelpDropdown) {
+        termsHelpToggle.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const isOpen = termsHelpDropdown.classList.contains('open');
+            setTermsHelpOpen(!isOpen);
+        });
+
+        document.addEventListener('click', (event) => {
+            if (!termsHelpDropdown.contains(event.target)) {
+                setTermsHelpOpen(false);
+            }
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                setTermsHelpOpen(false);
+            }
+        });
+    }
+
     const downloadGuideLink = document.getElementById('download-guide-link');
     if (downloadGuideLink) {
         downloadGuideLink.addEventListener('click', async (e) => {
             e.preventDefault();
+            setTermsHelpOpen(false);
             // 获取当前语言和主题并传递给下载页面
-            const currentLang = currentUser?.language || getCurrentLanguage() || 'zh-CN';
+            const currentLang = currentUser?.language || getCurrentLanguage() || 'en';
             const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
             const downloadUrl = isNativeApp
                 ? `https://littleaibox.com/download-app?lang=${currentLang}&theme=${currentTheme}`
                 : `/download-app?lang=${currentLang}&theme=${currentTheme}`;
 
-            if (isNativeApp) {
+            await openExternalUrl(downloadUrl);
+        });
+    }
+
+    if (termsHelpMenu) {
+        const termsHelpLinks = termsHelpMenu.querySelectorAll('a.terms-help-item');
+        termsHelpLinks.forEach((link) => {
+            if (link.id === 'download-guide-link') return;
+            link.addEventListener('click', async (e) => {
+                e.preventDefault();
+                setTermsHelpOpen(false);
+                const href = link.getAttribute('href');
+                if (!href) return;
+                const base = API_BASE_URL || 'https://littleaibox.com';
+                let absoluteUrl = href;
                 try {
-                    await Browser.open({ url: downloadUrl });
-                } catch (error) {
-                    console.error(getToastMessage('console.cannotOpenBrowser'), error);
-                    window.open(downloadUrl, '_blank');
-                }
-            } else {
-                try { location.href = downloadUrl; } catch (_) { }
-            }
+                    absoluteUrl = new URL(href, base).href;
+                } catch (_) { }
+                await openExternalUrl(absoluteUrl);
+            });
         });
     }
 
@@ -18367,8 +24370,14 @@ function setupEventListeners() {
 
     if (Capacitor.isNativePlatform()) {
         try {
-            Keyboard.setScroll({ isDisabled: true });
-            Keyboard.setResizeMode({ mode: 'native' });
+            if (Capacitor.getPlatform() === 'ios') {
+                Keyboard.setScroll({ isDisabled: true }).catch((err) => {
+                    console.error('Failed to configure keyboard:', err);
+                });
+                Keyboard.setResizeMode({ mode: 'native' }).catch((err) => {
+                    console.error('Failed to configure keyboard:', err);
+                });
+            }
         } catch (e) {
             console.error('Failed to configure keyboard:', e);
         }
@@ -18554,27 +24563,10 @@ function setupEventListeners() {
         const historyItem = e.target.closest('.history-item');
         if (!historyItem) return;
 
-        document.querySelectorAll('.context-menu').forEach(m => {
-            if (m.parentElement.parentElement !== historyItem) {
-                m.style.display = 'none';
-            }
-        });
-
+        const menuBtn = historyItem.querySelector('.action-menu-btn');
         const contextMenu = historyItem.querySelector('.context-menu');
         if (contextMenu) {
-            contextMenu.style.display = 'block';
-            if (window.innerWidth > 640) {
-                contextMenu.onmouseleave = () => {
-                    contextMenu.style.display = 'none';
-                };
-                const onMove = (ev) => {
-                    if (!contextMenu.contains(ev.target) && !historyItem.contains(ev.target)) {
-                        contextMenu.style.display = 'none';
-                        document.removeEventListener('mousemove', onMove);
-                    }
-                };
-                document.addEventListener('mousemove', onMove);
-            }
+            openContextMenu(contextMenu, menuBtn || historyItem, null);
         }
     });
 
@@ -18784,24 +24776,44 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
     try {
         if (isTempChat) {
             if (currentUser) {
-                const result = await makeApiRequest('chats/new', { method: 'POST' });
+                const tempChat = chats[chatId];
+                const result = await makeApiRequest('chats/new', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        title: tempChat?.title || getToastMessage('ui.newChat'),
+                        modelName: tempChat?.model_name || currentModelId,
+                        parent_chat_id: tempChat?.parent_chat_id || null,
+                        is_bridge: tempChat?.isBridge ? 1 : 0,
+                        bridge_enabled: tempChat?.bridge_enabled ? 1 : 0
+                    })
+                });
                 if (result.success && result.conversation) {
                     finalChatId = result.conversation.id;
 
-                    const tempMessages = chats[chatId]?.messages || [];
-                    const tempDocAttachments = chats[chatId]?.docAttachments || [];
+                    const tempMessages = tempChat?.messages || [];
+                    const tempDocAttachments = tempChat?.docAttachments || [];
                     const tempDocText = docAttachmentTextCache.get(chatId);
                     delete chats[chatId];
+
+                    const fallbackCreatedAt = tempChat?.created_at || new Date().toISOString();
+                    const createdAt = result.conversation.created_at || fallbackCreatedAt;
+                    const updatedAt = result.conversation.updated_at || createdAt;
 
                     chats[finalChatId] = {
                         id: finalChatId,
                         title: clampGeneratedTitleWords(result.conversation.title),
-                        model_name: result.conversation.model_name,
-                        created_at: result.conversation.created_at,
-                        updated_at: result.conversation.updated_at,
+                        model_name: result.conversation.model_name || tempChat?.model_name || currentModelId,
+                        created_at: createdAt,
+                        updated_at: updatedAt,
                         messages: tempMessages,
                         docAttachments: tempDocAttachments,
-                        isNewlyCreated: true
+                        isNewlyCreated: true,
+                        isBridge: !!tempChat?.isBridge,
+                        parent_chat_id: tempChat?.parent_chat_id || null,
+                        bridge_enabled: tempChat?.bridge_enabled ? 1 : 0,
+                        bridge_settings: tempChat?.bridge_settings && typeof tempChat.bridge_settings === 'object'
+                            ? { ...tempChat.bridge_settings }
+                            : undefined
                     };
                     if (tempDocText) {
                         docAttachmentTextCache.set(finalChatId, tempDocText);
@@ -18843,6 +24855,13 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
             }
             if (finalChatId !== chatId) {
                 routeManager.navigateToChat(finalChatId, { replace: true, silent: true });
+                if (currentUser && chats[finalChatId]?.isBridge) {
+                    try {
+                        await dispatchBridge(BRIDGE_DISPATCH.SAVE_SETTINGS, { chatId: finalChatId });
+                    } catch (bridgeSyncError) {
+                        console.warn('Failed to sync bridge settings after temp chat promotion:', bridgeSyncError);
+                    }
+                }
             }
         }
 
@@ -18850,14 +24869,37 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
         const title = chats[finalChatId]?.title || (pendingChatData ? pendingChatData.title : getToastMessage('ui.restoredChat'));
         const modelName = chats[finalChatId]?.model_name || (pendingChatData ? pendingChatData.modelName : currentModelId);
 
-        cleanUserMessage = userMessage ? { role: userMessage.role || 'user', content: userMessage.content } : null;
-        cleanAssistantMessage = assistantMessage;
+        if (userMessage) {
+            const clientMessageId = ensureClientMessageId(userMessage);
+            cleanUserMessage = {
+                role: userMessage.role || 'user',
+                content: userMessage.content,
+                client_message_id: clientMessageId || null
+            };
+            if (userMessage.applied_command) {
+                cleanUserMessage.applied_command = userMessage.applied_command;
+            }
+        } else {
+            cleanUserMessage = null;
+        }
+        if (assistantMessage) {
+            const assistantClientId = ensureClientMessageId(assistantMessage);
+            cleanAssistantMessage = {
+                ...assistantMessage,
+                client_message_id: assistantClientId || null
+            };
+        } else {
+            cleanAssistantMessage = null;
+        }
 
         const payload = {
             userId: userIdForRequest,
             conversationId: finalChatId,
             title: title,
             modelName: modelName,
+            parent_chat_id: chats[finalChatId]?.parent_chat_id || null,
+            is_bridge: chats[finalChatId]?.isBridge ? 1 : 0,
+            bridge_enabled: chats[finalChatId]?.bridge_enabled ? 1 : 0,
             userMessage: cleanUserMessage,
             assistantMessage: cleanAssistantMessage
         };
@@ -18872,8 +24914,23 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
         });
 
         if (saveResult.success) {
+            let shouldRefreshExportRecords = false;
             if (saveResult.title && chats[finalChatId]) {
                 chats[finalChatId].title = clampGeneratedTitleWords(saveResult.title);
+                shouldRefreshExportRecords = true;
+            }
+            if (chats[finalChatId]?.isNewlyCreated) {
+                chats[finalChatId].isNewlyCreated = false;
+                shouldRefreshExportRecords = true;
+            }
+            if (saveResult.cloud_sync?.should_warn) {
+                showToast(
+                    getToastMessage('toast.cloudSyncNearLimit', {
+                        count: saveResult.cloud_sync.count,
+                        limit: saveResult.cloud_sync.limit
+                    }),
+                    'warning'
+                );
             }
 
             // 保存到 localStorage
@@ -18889,18 +24946,42 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
             }
 
             scheduleRenderSidebar();
+            if (currentUser && isTempChat) {
+                refreshExportRecordsUi();
+            }
+            if (elements.subscriptionModal?.classList.contains('visible')) {
+                refreshExportRecordsUi();
+            }
+            if (shouldRefreshExportRecords) {
+                refreshExportRecordsUi();
+            }
 
             if (pendingChatData) {
                 showToast(getToastMessage('toast.messageSendErrorRecovered'), 'success');
             }
             notifyBackendCacheInvalidation('chat_saved', { chatId: finalChatId, isNewChat: isTempChat });
 
+            if (currentUser) {
+                refreshUsageStats(true).catch(err => console.error(`${getToastMessage('console.usageStatsFailed')}:`, err));
+            }
             return { finalChatId, newTitle: saveResult.title };
         } else {
             throw new Error(saveResult.error || getToastMessage('errors.saveFailed'));
         }
 
     } catch (error) {
+        if (error?.message === 'cloud_sync_limit_reached') {
+            markCloudSyncLocalOnly(finalChatId, userMessage, assistantMessage);
+            try {
+                if (currentUser) {
+                    await saveChatsToDB(currentUser.id, chats);
+                } else {
+                    await saveChatsToDB('guest', chats);
+                }
+            } catch (_) { }
+            showToast(getToastMessage('toast.cloudSyncLocalOnlyFromNow'), 'warning');
+            return { finalChatId, newTitle: null };
+        }
         console.error(`${getToastMessage('console.saveFailed')}:`, error);
 
         const isNetworkError = error.message && (error.message.includes('fetch') || error.message.includes('network'));
@@ -18932,6 +25013,673 @@ async function saveChatToServer(chatId, userMessage, assistantMessage, pendingCh
     }
 }
 
+const CLOUD_SYNC_QUEUE_KEY = 'cloud_sync_queue';
+const CLOUD_SYNC_DEBOUNCE_MS = 1500;
+let cloudSyncQueueSyncing = false;
+let hasResumedCloudSyncQueue = false;
+const cloudSyncQueueTimers = new Map();
+const pendingCloudSyncUploads = new Set();
+let syncQueueRetryToastAt = 0;
+const SYNC_QUEUE_RETRY_TOAST_COOLDOWN_MS = 2 * 60 * 1000;
+
+function isSyncNetworkError(error) {
+    if (!error || typeof error !== 'object') return false;
+    if (error.isNetworkError) return true;
+    if (error.name === 'TypeError' && typeof error.message === 'string' && error.message.toLowerCase().includes('fetch')) {
+        return true;
+    }
+    return false;
+}
+
+function shouldShowSyncQueueRetryToast(result) {
+    if (!result) return false;
+    if (result.stopReason === 'auth' || result.stopReason === 'limit_reached') return false;
+    if (!isSyncNetworkError(result.error)) return false;
+    if (result.stopReason === 'error') return true;
+    return result.ok === false;
+}
+
+function showSyncQueueRetryToastOnce(result) {
+    if (!shouldShowSyncQueueRetryToast(result)) return;
+    const now = Date.now();
+    if (now - syncQueueRetryToastAt < SYNC_QUEUE_RETRY_TOAST_COOLDOWN_MS) return;
+    syncQueueRetryToastAt = now;
+    showToast(getToastMessage('toast.syncQueueRetryScheduled'), 'warning');
+}
+
+function loadCloudSyncQueue() {
+    return loadPersistentQueue({
+        baseKey: CLOUD_SYNC_QUEUE_KEY,
+        userId: currentUser?.id || null,
+        legacyKey: CLOUD_SYNC_QUEUE_KEY
+    });
+}
+
+function persistCloudSyncQueue(queue) {
+    savePersistentQueue({
+        baseKey: CLOUD_SYNC_QUEUE_KEY,
+        userId: currentUser?.id || null,
+        queue,
+        shouldKeepItem: (item) => item && typeof item.unsyncedFrom === 'number'
+    });
+}
+
+function getMessageTimestampMs(message) {
+    if (!message || typeof message !== 'object') return null;
+    const raw = message.created_at || message.createdAt || message.timestamp || null;
+    if (!raw) return null;
+    const ms = typeof raw === 'number' ? raw : Date.parse(raw);
+    return Number.isNaN(ms) ? null : ms;
+}
+
+function ensureMessageTimestamp(message, fallbackMs) {
+    if (!message || typeof message !== 'object') return null;
+    const existing = getMessageTimestampMs(message);
+    const now = Date.now();
+    if (existing != null) {
+        if (existing > now) {
+            const iso = new Date(now).toISOString();
+            message.created_at = iso;
+            return now;
+        }
+        return existing;
+    }
+    const safeMs = Number.isFinite(fallbackMs) ? fallbackMs : now;
+    const iso = new Date(safeMs).toISOString();
+    message.created_at = iso;
+    return safeMs;
+}
+
+function ensureClientMessageId(message) {
+    if (!message || typeof message !== 'object') return null;
+    const existing = message.client_message_id || message.clientMessageId;
+    if (existing) {
+        message.client_message_id = existing;
+        return existing;
+    }
+    let id = null;
+    try {
+        id = safeRandomUUID();
+    } catch (_) {
+        id = `cm_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+    }
+    message.client_message_id = id;
+    return id;
+}
+
+function createChatMessage(role, content, extras = null) {
+    const message = { role, content };
+    if (extras && typeof extras === 'object') {
+        Object.assign(message, extras);
+    }
+    ensureClientMessageId(message);
+    return message;
+}
+
+function backfillClientMessageIds(chatsObj) {
+    if (!chatsObj || typeof chatsObj !== 'object') return false;
+    let changed = false;
+    Object.values(chatsObj).forEach(chat => {
+        const messages = chat?.messages;
+        if (!Array.isArray(messages)) return;
+        for (const msg of messages) {
+            if (!msg || typeof msg !== 'object') continue;
+            if (msg.client_message_id || msg.clientMessageId) continue;
+            ensureClientMessageId(msg);
+            changed = true;
+        }
+    });
+    return changed;
+}
+
+let clientMessageIdMigrationRunning = false;
+const clientMessageIdBackfillScheduled = new Set();
+
+function getClientMessageIdBackfillKey(userId) {
+    if (!userId) return 'client_message_id_backfill_done';
+    return `client_message_id_backfill_done_${userId}`;
+}
+
+function getClientMessageIdMigrationKey(userId) {
+    if (!userId) return 'migrated_client_message_ids';
+    return `migrated_client_message_ids_${userId}`;
+}
+
+function scheduleClientMessageIdBackfill(userId, chatsObj) {
+    if (!chatsObj || typeof chatsObj !== 'object') return;
+    const backfillKey = getClientMessageIdBackfillKey(userId);
+    if (localStorage.getItem(backfillKey) === '1') return;
+    const scheduleKey = userId || 'guest';
+    if (clientMessageIdBackfillScheduled.has(scheduleKey)) return;
+    clientMessageIdBackfillScheduled.add(scheduleKey);
+
+    const run = async () => {
+        clientMessageIdBackfillScheduled.delete(scheduleKey);
+        const changed = backfillClientMessageIds(chatsObj);
+        if (changed) {
+            try {
+                await saveChatsToDB(userId || 'guest', chatsObj);
+            } catch (_) { }
+        }
+        localStorage.setItem(backfillKey, '1');
+    };
+
+    if (window.requestIdleCallback) {
+        requestIdleCallback(() => {
+            run();
+        }, { timeout: 1000 });
+    } else {
+        setTimeout(run, 0);
+    }
+}
+
+async function runClientMessageIdMigrationOnce() {
+    if (!currentUser || clientMessageIdMigrationRunning) return;
+    const userId = currentUser.id;
+    if (Number(currentUser.client_message_id_migrated) === 1) {
+        localStorage.setItem(getClientMessageIdMigrationKey(userId), '1');
+        return;
+    }
+    const migrationKey = getClientMessageIdMigrationKey(userId);
+    if (localStorage.getItem(migrationKey) === '1') return;
+    clientMessageIdMigrationRunning = true;
+    try {
+        for (let i = 0; i < 10; i += 1) {
+            const result = await makeApiRequest('chats/migrate-client-message-ids', {
+                method: 'POST',
+                body: JSON.stringify({ limit: 1000 }),
+                suppressAutoLogout: true
+            });
+            if (!result?.success) break;
+            if ((Number(result.remaining) || 0) <= 0) {
+                localStorage.setItem(migrationKey, '1');
+                if (currentUser) {
+                    currentUser.client_message_id_migrated = 1;
+                }
+                break;
+            }
+            if ((Number(result.updated) || 0) <= 0) break;
+            await new Promise(resolve => setTimeout(resolve, 200));
+        }
+    } catch (_) {
+        // ignore migration errors; will retry next login if needed
+    } finally {
+        clientMessageIdMigrationRunning = false;
+    }
+}
+
+function scheduleClientMessageIdMigration() {
+    if (!currentUser) return;
+    setTimeout(() => {
+        runClientMessageIdMigrationOnce();
+    }, 0);
+}
+
+function stampUnsyncedMessages(chatId, fromIndex) {
+    if (!chatId || !chats[chatId]) return;
+    const messages = chats[chatId]?.messages || [];
+    let baseMs = Date.now();
+    for (let i = Math.min(messages.length - 1, Math.max(0, fromIndex - 1)); i >= 0; i -= 1) {
+        const prevTs = getMessageTimestampMs(messages[i]);
+        if (prevTs != null) {
+            baseMs = prevTs + 1;
+            break;
+        }
+    }
+    let offset = 0;
+    for (let i = Math.max(0, fromIndex); i < messages.length; i += 1) {
+        ensureClientMessageId(messages[i]);
+        if (getMessageTimestampMs(messages[i]) == null) {
+            ensureMessageTimestamp(messages[i], baseMs + offset);
+        }
+        offset += 1;
+    }
+}
+
+function markCloudSyncLocalOnly(chatId, userMessage, assistantMessage) {
+    if (!chatId || !chats[chatId]) return;
+    const messageCountToAdd = (userMessage ? 1 : 0) + (assistantMessage ? 1 : 0);
+    const totalMessages = chats[chatId]?.messages?.length || 0;
+    const unsyncedFrom = Math.max(0, totalMessages - messageCountToAdd);
+    const queue = loadCloudSyncQueue();
+    const existing = queue.items[chatId];
+    if (!existing) {
+        upsertQueueItem(queue, chatId, { unsyncedFrom, firstBlockedAt: Date.now(), updatedAt: Date.now() });
+    } else {
+        if (typeof existing.unsyncedFrom !== 'number' || existing.unsyncedFrom > unsyncedFrom) {
+            existing.unsyncedFrom = unsyncedFrom;
+        }
+        existing.updatedAt = Date.now();
+    }
+    stampUnsyncedMessages(chatId, unsyncedFrom);
+    persistCloudSyncQueue(queue);
+    scheduleCloudSyncUpload(chatId, unsyncedFrom);
+}
+
+function updateCloudSyncQueueChatId(oldId, newId) {
+    if (!oldId || !newId || oldId === newId) return;
+    const queue = loadCloudSyncQueue();
+    if (!queue.items[oldId]) return;
+    const item = queue.items[oldId];
+    removeQueueItem(queue, oldId);
+    upsertQueueItem(queue, newId, item);
+    persistCloudSyncQueue(queue);
+}
+
+function clearCloudSyncQueueChat(chatId) {
+    const queue = loadCloudSyncQueue();
+    if (!queue.items[chatId]) return;
+    removeQueueItem(queue, chatId);
+    persistCloudSyncQueue(queue);
+}
+
+function resumePendingCloudSyncOnce() {
+    if (!currentUser || hasResumedCloudSyncQueue) return;
+    hasResumedCloudSyncQueue = true;
+    syncCloudSyncQueueIfEligible('resume');
+}
+
+function flushPendingCloudSyncUploads() {
+    if (!currentUser) return;
+    const queued = Array.from(pendingCloudSyncUploads);
+    queued.forEach((chatId) => {
+        const queue = loadCloudSyncQueue();
+        if (queue.items?.[chatId]) {
+            queue.items[chatId].updatedAt = Date.now();
+            persistCloudSyncQueue(queue);
+        }
+    });
+    syncCloudSyncQueueIfEligible('background');
+}
+
+function resetCloudSyncRuntimeState() {
+    pendingCloudSyncUploads.clear();
+    cloudSyncQueueTimers.forEach(timer => clearTimeout(timer));
+    cloudSyncQueueTimers.clear();
+    cloudSyncQueueSyncing = false;
+    hasResumedCloudSyncQueue = false;
+}
+
+function queueCloudSyncUpload(chatId, unsyncedFrom = null) {
+    if (!currentUser || !chatId) return;
+    const queue = loadCloudSyncQueue();
+    const existing = queue.items?.[chatId];
+    const item = {
+        ...(existing || {}),
+        unsyncedFrom: typeof unsyncedFrom === 'number'
+            ? unsyncedFrom
+            : (existing?.unsyncedFrom ?? 0),
+        updatedAt: Date.now()
+    };
+    upsertQueueItem(queue, chatId, item);
+    persistCloudSyncQueue(queue);
+}
+
+function scheduleCloudSyncUpload(chatId, unsyncedFrom = null) {
+    if (!currentUser || !chatId) return;
+    pendingCloudSyncUploads.add(chatId);
+    queueCloudSyncUpload(chatId, unsyncedFrom);
+    if (cloudSyncQueueTimers.has(chatId)) {
+        clearTimeout(cloudSyncQueueTimers.get(chatId));
+    }
+    const timer = setTimeout(() => {
+        cloudSyncQueueTimers.delete(chatId);
+        pendingCloudSyncUploads.delete(chatId);
+        syncCloudSyncQueueIfEligible('auto');
+    }, CLOUD_SYNC_DEBOUNCE_MS);
+    cloudSyncQueueTimers.set(chatId, timer);
+}
+
+function isCloudSyncEligible() {
+    if (!currentUser) return false;
+    const state = resolveSubscriptionState();
+    if (state.hasPaidKey) return true;
+    if (state.status === 'active') return true;
+    const redeemState = resolveRedeemState();
+    const now = Date.now();
+    const redeemStartAt = redeemState.redeemStartAt ? new Date(redeemState.redeemStartAt).getTime() : null;
+    const redeemExpiresAt = redeemState.redeemExpiresAt ? new Date(redeemState.redeemExpiresAt).getTime() : null;
+    return !!(redeemStartAt && redeemExpiresAt && redeemStartAt <= now && redeemExpiresAt > now);
+}
+
+async function ensureServerConversationForLocalChat(chatId) {
+    if (!chatId || !chats[chatId]) return chatId;
+    if (!chatId.startsWith('temp_')) return chatId;
+    const tempChat = chats[chatId];
+    const result = await makeApiRequest('chats/new', {
+        method: 'POST',
+        body: JSON.stringify({
+            title: tempChat?.title || getToastMessage('ui.newChat'),
+            modelName: tempChat?.model_name || currentModelId,
+            parent_chat_id: tempChat?.parent_chat_id || null,
+            is_bridge: tempChat?.isBridge ? 1 : 0,
+            bridge_enabled: tempChat?.bridge_enabled ? 1 : 0
+        })
+    });
+    if (!result.success || !result.conversation) {
+        throw new Error(result.error || getToastMessage('errors.cannotCreateNewConversationOnServer'));
+    }
+    const finalChatId = result.conversation.id;
+    const tempMessages = tempChat?.messages || [];
+    const tempDocAttachments = tempChat?.docAttachments || [];
+    const tempDocText = docAttachmentTextCache.get(chatId);
+    delete chats[chatId];
+
+    const fallbackCreatedAt = tempChat?.created_at || new Date().toISOString();
+    const createdAt = result.conversation.created_at || fallbackCreatedAt;
+    const updatedAt = result.conversation.updated_at || createdAt;
+
+    chats[finalChatId] = {
+        id: finalChatId,
+        title: clampGeneratedTitleWords(tempChat?.title || result.conversation.title),
+        model_name: tempChat?.model_name || result.conversation.model_name,
+        created_at: createdAt,
+        updated_at: updatedAt,
+        messages: tempMessages,
+        docAttachments: tempDocAttachments,
+        isNewlyCreated: true,
+        isBridge: !!tempChat?.isBridge,
+        parent_chat_id: tempChat?.parent_chat_id || null,
+        bridge_enabled: tempChat?.bridge_enabled ? 1 : 0,
+        bridge_settings: tempChat?.bridge_settings && typeof tempChat.bridge_settings === 'object'
+            ? { ...tempChat.bridge_settings }
+            : undefined
+    };
+    if (tempDocText) {
+        docAttachmentTextCache.set(finalChatId, tempDocText);
+    }
+    docAttachmentTextCache.delete(chatId);
+    transferDocDataCaches(chatId, finalChatId);
+    moveDocDataRemote(chatId, finalChatId);
+
+    updateSidebarChatId(chatId, finalChatId);
+    if (currentChatId === chatId) {
+        currentChatId = finalChatId;
+        setActiveChat(finalChatId);
+        routeManager.navigateToChat(finalChatId, { replace: true, silent: true });
+    }
+    updateCloudSyncQueueChatId(chatId, finalChatId);
+
+    const localTitle = chats[finalChatId]?.title || result.conversation.title;
+    if (localTitle && localTitle !== result.conversation.title) {
+        try {
+            await makeApiRequest('chats', {
+                method: 'PUT',
+                body: JSON.stringify({ conversationId: finalChatId, title: localTitle })
+            });
+        } catch (_) { }
+    }
+    if (currentUser) {
+        scheduleDocDataSave(finalChatId);
+        scheduleDocImageUpload(finalChatId);
+    }
+
+    return finalChatId;
+}
+
+async function syncCloudSyncQueueIfEligible(trigger = 'auto') {
+    if (cloudSyncQueueSyncing) return;
+    if (!isCloudSyncEligible()) return;
+    let queue = loadCloudSyncQueue();
+    const staleIds = queue.order.filter(id => queue.items[id] && !chats[id]);
+    if (staleIds.length > 0) {
+        staleIds.forEach(id => removeQueueItem(queue, id));
+        persistCloudSyncQueue(queue);
+    }
+    const queueIds = queue.order.filter(id => queue.items[id] && chats[id]);
+    if (!queueIds.length) return;
+
+    cloudSyncQueueSyncing = true;
+    try {
+        const removeQueueChat = (chatId) => {
+            if (!chatId || !queue.items[chatId]) return;
+            removeQueueItem(queue, chatId);
+        };
+
+        const status = await makeApiRequest('chats/cloud-sync-status');
+        if (!status?.success) {
+            console.warn('Failed to fetch cloud sync status:', status?.error || 'unknown_error');
+            return;
+        }
+        const limit = status?.cloud_sync?.limit;
+        let remaining = Infinity;
+        if (Number.isFinite(limit)) {
+            remaining = Math.max(0, limit - (status.cloud_sync.count || 0));
+        }
+
+        const chatStates = [];
+        let totalUnsynced = 0;
+        for (const originalId of queueIds) {
+            if (!chats[originalId] && !(queue.items[originalId])) {
+                removeQueueChat(originalId);
+                continue;
+            }
+            const queueItem = queue.items[originalId];
+            if (queueItem && (shouldDeferQueueItem(queueItem) || (Number(queueItem.retryCount) || 0) >= SYNC_QUEUE_MAX_RETRIES)) {
+                continue;
+            }
+            const messages = chats[originalId]?.messages || [];
+            const startIndex = Math.max(0, Number(queueItem?.unsyncedFrom) || 0);
+            if (startIndex >= messages.length) {
+                removeQueueChat(originalId);
+                continue;
+            }
+            stampUnsyncedMessages(originalId, startIndex);
+            totalUnsynced += Math.max(0, messages.length - startIndex);
+            chatStates.push({
+                originalId,
+                chatId: originalId,
+                messages,
+                index: startIndex,
+                resolved: false
+            });
+        }
+
+        let uploadBudget = remaining;
+        if (Number.isFinite(uploadBudget)) {
+            uploadBudget = Math.max(0, Math.min(uploadBudget, totalUnsynced));
+        }
+
+        const pickNextChatState = () => {
+            let chosen = null;
+            let chosenTs = null;
+            for (const state of chatStates) {
+                if (!state || !state.messages || state.index >= state.messages.length) continue;
+                const msg = state.messages[state.index];
+                const ts = getMessageTimestampMs(msg) ?? ensureMessageTimestamp(msg, Date.now());
+                if (chosen == null || ts < chosenTs) {
+                    chosen = state;
+                    chosenTs = ts;
+                }
+            }
+            return chosen;
+        };
+
+        const isBackgroundTrigger = trigger === 'background';
+        const messageRequestOptions = {
+            method: 'POST',
+            keepalive: isBackgroundTrigger,
+            isBackgroundSync: isBackgroundTrigger
+        };
+
+        const encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+        const pickNextUnit = async () => {
+            if (Number.isFinite(uploadBudget) && uploadBudget <= 0) return null;
+            let state = pickNextChatState();
+            while (state) {
+                if (state.index >= state.messages.length) {
+                    state = pickNextChatState();
+                    continue;
+                }
+                const msg = state.messages[state.index];
+                if (!msg || !msg.role) {
+                    state.index += 1;
+                    continue;
+                }
+                break;
+            }
+            if (!state || state.index >= state.messages.length) return null;
+
+            if (!state.resolved) {
+                try {
+                    const resolvedId = await ensureServerConversationForLocalChat(state.chatId);
+                    state.chatId = resolvedId;
+                    state.messages = chats[resolvedId]?.messages || state.messages;
+                    state.resolved = true;
+                    queue = loadCloudSyncQueue();
+                } catch (error) {
+                    if (error?.message === 'cloud_sync_limit_reached') {
+                        remaining = 0;
+                    } else if (queue.items?.[state.chatId]) {
+                        markQueueItemFailure(queue.items[state.chatId], {
+                            baseMs: SYNC_QUEUE_BACKOFF_BASE_MS,
+                            maxMs: SYNC_QUEUE_BACKOFF_MAX_MS
+                        });
+                        queue.items[state.chatId].updatedAt = Date.now();
+                    }
+                    return null;
+                }
+            }
+
+            const msg = state.messages[state.index];
+            const clientMessageId = ensureClientMessageId(msg);
+            const payload = {
+                conversationId: state.chatId,
+                role: msg.role,
+                content: msg.content,
+                client_message_id: clientMessageId
+            };
+            let bytes = 0;
+            try {
+                const serialized = JSON.stringify(payload);
+                bytes = encoder ? encoder.encode(serialized).length : serialized.length;
+            } catch (_) { }
+
+            if (Number.isFinite(uploadBudget)) {
+                uploadBudget -= 1;
+            }
+            return {
+                id: clientMessageId || `${state.chatId}:${state.index}`,
+                chatId: state.chatId,
+                index: state.index,
+                message: msg,
+                client_message_id: clientMessageId,
+                bytes,
+                stateRef: state
+            };
+        };
+
+        const sendBatch = async (batch) => {
+            const uploaded = [];
+            const attempted = [];
+            let lastError = null;
+            let stopReason = null;
+            for (const unit of batch) {
+                attempted.push(unit.id);
+                try {
+                    const useKeepalive = Boolean(isBackgroundTrigger
+                        && Number(unit?.bytes) > 0
+                        && Number(unit.bytes) <= KEEPALIVE_SAFE_BODY_BYTES);
+                    await makeApiRequest('chats/messages', {
+                        ...messageRequestOptions,
+                        keepalive: useKeepalive,
+                        body: JSON.stringify({
+                            conversationId: unit.chatId,
+                            role: unit.message.role,
+                            content: unit.message.content,
+                            client_message_id: unit.client_message_id || unit.message?.client_message_id || null
+                        })
+                    });
+                    uploaded.push(unit.id);
+                } catch (error) {
+                    lastError = error;
+                    if (error?.message === 'cloud_sync_limit_reached') {
+                        stopReason = 'limit_reached';
+                    } else if (error?.isAuthError) {
+                        stopReason = 'auth';
+                    } else {
+                        stopReason = 'error';
+                    }
+                    break;
+                }
+            }
+            return {
+                ok: uploaded.length > 0,
+                uploaded,
+                attempted,
+                stopReason,
+                error: lastError
+            };
+        };
+
+        await runSyncQueueWorker({
+            pickNextUnit,
+            sendBatch,
+            batchSize: SYNC_QUEUE_BATCH_SIZE,
+            batchBytes: SYNC_QUEUE_BATCH_BYTES,
+            onUnitSuccess: (unit) => {
+                const state = unit.stateRef;
+                state.index = Math.max(state.index, unit.index + 1);
+                if (queue.items?.[state.chatId]) {
+                    resetQueueItemFailure(queue.items[state.chatId]);
+                    queue.items[state.chatId].updatedAt = Date.now();
+                    queue.items[state.chatId].unsyncedFrom = state.index;
+                }
+            },
+            onUnitFailure: (unit) => {
+                const state = unit.stateRef;
+                if (queue.items?.[state.chatId]) {
+                    markQueueItemFailure(queue.items[state.chatId], {
+                        baseMs: SYNC_QUEUE_BACKOFF_BASE_MS,
+                        maxMs: SYNC_QUEUE_BACKOFF_MAX_MS,
+                        fixedDelayMs: SYNC_QUEUE_RETRY_DELAY_MS
+                    });
+                    queue.items[state.chatId].updatedAt = Date.now();
+                }
+            },
+            stopWhen: (result) => result?.stopReason === 'limit_reached' || result?.stopReason === 'error' || result?.stopReason === 'auth',
+            onStop: (result) => {
+                if (result?.stopReason === 'auth') {
+                    resetCloudSyncRuntimeState();
+                    return;
+                }
+                showSyncQueueRetryToastOnce(result);
+            }
+        });
+
+        let remainingLocal = 0;
+        for (const state of chatStates) {
+            if (!state || !state.messages) continue;
+            const remainingInChat = Math.max(0, state.messages.length - state.index);
+            if (remainingInChat <= 0) {
+                removeQueueChat(state.chatId);
+                continue;
+            }
+            queue.items[state.chatId] = {
+                ...(queue.items[state.chatId] || queue.items[state.originalId] || {}),
+                unsyncedFrom: state.index
+            };
+            if (state.originalId !== state.chatId) {
+                queue.order = queue.order.map(id => (id === state.originalId ? state.chatId : id));
+                if (queue.items[state.originalId]) {
+                    delete queue.items[state.originalId];
+                }
+            }
+            remainingLocal += remainingInChat;
+        }
+        queue.order = queue.order.filter(id => queue.items[id]);
+        persistCloudSyncQueue(queue);
+
+        if (remainingLocal > 0) {
+            showToast(getToastMessage('toast.cloudSyncPartialRemaining', { count: remainingLocal }), 'warning');
+        }
+    } catch (error) {
+        console.warn('Cloud sync queue sync failed:', error);
+    } finally {
+        cloudSyncQueueSyncing = false;
+    }
+}
+
 async function loadUserAIParameters() {
     if (!currentUser || isLoadingParameters) return;
 
@@ -18959,9 +25707,10 @@ async function loadUserAIParameters() {
         const result = await makeApiRequest('user/ai-parameters');
 
         if (result.success && result.parameters) {
+            const parsedTemperature = Number(result.parameters.temperature);
             aiParameters = {
                 systemPrompt: result.parameters.system_prompt || '',
-                temperature: result.parameters.temperature || 0.5,
+                temperature: Number.isFinite(parsedTemperature) ? parsedTemperature : 1,
                 topK: result.parameters.top_k || 40,
                 topP: result.parameters.top_p || 0.95,
                 taskPreset: result.parameters.task_preset || ''
@@ -18973,7 +25722,7 @@ async function loadUserAIParameters() {
         } else {
             aiParameters = {
                 systemPrompt: '',
-                temperature: 0.5,
+                temperature: 1,
                 topK: 40,
                 topP: 0.95,
                 taskPreset: ''
@@ -18985,7 +25734,7 @@ async function loadUserAIParameters() {
         showToast(getToastMessage('toast.aiParametersLoadFailedDefault'), 'error');
         aiParameters = {
             systemPrompt: '',
-            temperature: 0.5,
+            temperature: 1,
             topK: 40,
             topP: 0.95,
             taskPreset: ''
@@ -19062,8 +25811,10 @@ async function saveAIParametersToServer() {
                 taskPreset: aiParameters.taskPreset || ''
             })
         });
+        simpleCache.set(`ai_params_${currentUser.id}`, aiParameters, 300000);
     } catch (error) {
         showToast(getToastMessage('toast.parameterSaveFailed'), 'error');
+        throw error;
     }
 }
 
@@ -19087,26 +25838,6 @@ function hideParameterLoadingState() {
     }
 }
 
-function checkPrivacyPolicyUpdate() {
-    const seenVersion = localStorage.getItem(LOCAL_STORAGE_KEY_PRIVACY);
-    const badgeElement = document.getElementById('privacy-update-badge');
-    const settingsText = document.getElementById('settings-text');
-
-    if (!badgeElement) return;
-
-    if (!seenVersion || seenVersion < PRIVACY_POLICY_VERSION) {
-        badgeElement.style.display = 'inline-block';
-        if (settingsText) {
-            settingsText.style.color = '#ef4444';
-        }
-    } else {
-        badgeElement.style.display = 'none';
-        if (settingsText) {
-            settingsText.style.color = '';
-        }
-    }
-}
-
 function handleLaunchParams() {
     const urlParams = new URLSearchParams(window.location.search || '');
 
@@ -19125,19 +25856,6 @@ function handleLaunchParams() {
     if (urlParams.get('action') === 'open-settings') {
         const settingsBtn = document.getElementById('settings-btn');
         setTimeout(() => settingsBtn?.click(), 100);
-    }
-}
-
-function handlePrivacyPolicyClick() {
-    localStorage.setItem(LOCAL_STORAGE_KEY_PRIVACY, PRIVACY_POLICY_VERSION);
-    const badgeElement = document.getElementById('privacy-update-badge');
-    const settingsText = document.getElementById('settings-text');
-
-    if (badgeElement) {
-        badgeElement.style.display = 'none';
-    }
-    if (settingsText) {
-        settingsText.style.color = '';
     }
 }
 
@@ -19249,6 +25967,36 @@ async function initialize() {
     isInitializing = true;
 
     try {
+        showLoadingScreen(null, { minDurationMs: LOADING_SCREEN_MIN_VISIBLE_MS });
+        const shouldBridgeNativeSplash = shouldUseNativeSplashBridgeAtRuntime();
+        if (shouldBridgeNativeSplash) {
+            await waitForWebSplashVisible();
+            hideNativeSplashOnce();
+        }
+        window.__IS_APK_INITIAL_LOAD__ = false;
+
+        const redirectIfPolicyPageRequested = () => {
+            if (typeof window === 'undefined') return false;
+            const { pathname, search, hash } = window.location;
+            if (!pathname) return false;
+            if (pathname === '/policies' || pathname.startsWith('/policies/')) {
+                const target = `/policies/policy${search || ''}${hash || ''}`;
+                if (pathname !== '/policies/policy') {
+                    try {
+                        window.location.replace(target);
+                    } catch (_) {
+                        window.location.href = target;
+                    }
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        if (redirectIfPolicyPageRequested()) {
+            return;
+        }
+
         injectAuthUI();
 
         // 保留已缓存的语言文件，避免每次初始化都清空
@@ -19281,6 +26029,7 @@ async function initialize() {
         setupTouchMessageActions();
         setupNativeOAuthDeepLinkHandler();
         setupPreviewerShortcuts();
+        setupMindmapModeBridge();
 
         if (elements.voiceBtn) {
             const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
@@ -19295,8 +26044,8 @@ async function initialize() {
             ensureNotificationPermission().catch(error => {
                 console.warn('Notification permission request failed:', error);
             });
-            setupAppStateVersionCheck();
             syncNativeAppVersionDisplay();
+            setupAppStateVersionCheck();
         }
 
         if ('ontouchstart' in window) {
@@ -19341,14 +26090,14 @@ async function initialize() {
             if (savedLanguage) {
                 try { await applyLanguage(savedLanguage); } catch (_) { }
             } else if (!sessionId) {
-                const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'zh-CN';
+                const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'en';
                 const defaultLang = (browserLang && (browserLang.startsWith('zh-TW') || browserLang.startsWith('zh-HK'))) ? 'zh-TW'
                     : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
                         : (browserLang && browserLang.startsWith('ja')) ? 'ja'
                             : (browserLang && browserLang.startsWith('ko')) ? 'ko'
                                 : (browserLang && browserLang.startsWith('es')) ? 'es'
                                     : (browserLang && browserLang.startsWith('en')) ? 'en'
-                                        : 'zh-CN';
+                                        : 'en';
                 try { await applyLanguage(defaultLang); } catch (_) { }
             }
 
@@ -19391,7 +26140,7 @@ async function initialize() {
                 ]);
 
                 if (Capacitor.getPlatform() === 'android') {
-                    ensureStoragePersistence();
+                    ensureStorageAccess({ strict: false });
                 }
             }
         })();
@@ -19402,13 +26151,13 @@ async function initialize() {
 
         const resourceLoader = new ResourceLoader();
         const task4_CoreResources = resourceLoader.waitForCoreResources();
+        warmupFingerprintNonBlocking().catch(() => { });
 
         const task5_Session = checkSession();
 
         await Promise.allSettled([
             task2_NativeSetup,
-            task3_RestoreSettings,
-            task4_CoreResources
+            task3_RestoreSettings
         ]);
 
         const hasSession = !!sessionId;
@@ -19514,14 +26263,14 @@ async function initialize() {
                 }
             } else {
                 // 登录用户未设置语言：按系统/浏览器语言显示并保存到服务器
-                const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'zh-CN';
+                const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'en';
                 const defaultLang = (browserLang && (browserLang.startsWith('zh-TW') || browserLang.startsWith('zh-HK'))) ? 'zh-TW'
                     : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
                         : (browserLang && browserLang.startsWith('ja')) ? 'ja'
                             : (browserLang && browserLang.startsWith('ko')) ? 'ko'
                                 : (browserLang && browserLang.startsWith('es')) ? 'es'
                                     : (browserLang && browserLang.startsWith('en')) ? 'en'
-                                        : 'zh-CN';
+                                        : 'en';
                 localStorage.setItem('selectedLanguage', defaultLang);
                 currentUser.language = defaultLang;
                 try { localStorage.setItem(`user_cache_${sessionId}`, JSON.stringify(sanitizeUserForCache(currentUser))); } catch (_) { }
@@ -19529,23 +26278,33 @@ async function initialize() {
                 try { makeAuthRequest('update-language', { language: defaultLang }); } catch (_) { }
             }
         } else if (!savedLanguage) {
-            const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'zh-CN';
+            const browserLang = navigator.language || (Array.isArray(navigator.languages) && navigator.languages[0]) || 'en';
             const defaultLang = (browserLang && (browserLang.startsWith('zh-TW') || browserLang.startsWith('zh-HK'))) ? 'zh-TW'
                 : (browserLang && browserLang.startsWith('zh')) ? 'zh-CN'
                     : (browserLang && browserLang.startsWith('ja')) ? 'ja'
                         : (browserLang && browserLang.startsWith('ko')) ? 'ko'
                             : (browserLang && browserLang.startsWith('es')) ? 'es'
                                 : (browserLang && browserLang.startsWith('en')) ? 'en'
-                                    : 'zh-CN';
+                                    : 'en';
             await applyLanguage(defaultLang);
         } else {
             await applyLanguage(savedLanguage);
         }
 
-        await new Promise(resolve => requestAnimationFrame(() => {
-            requestAnimationFrame(resolve);
-        }));
-        await new Promise(resolve => setTimeout(resolve, 50));
+        if (sessionValid) {
+            loadRelayConfigIfNeeded({ waitForModels: true, timeoutMs: 3000 }).catch(err => {
+                console.warn('Startup relay config preload failed:', err);
+            });
+        }
+
+        if (shouldBridgeNativeSplash) {
+            await new Promise(resolve => requestAnimationFrame(() => {
+                requestAnimationFrame(resolve);
+            }));
+            await new Promise(resolve => setTimeout(resolve, 50));
+        } else {
+            await new Promise(resolve => requestAnimationFrame(resolve));
+        }
 
         hideLoadingScreen();
         appReadyResolver();
@@ -19570,6 +26329,9 @@ async function initialize() {
         const isAuthFlow = !!hasResetToken;
 
         if (sessionValid) {
+            loadRelayConfigIfNeeded({ waitForModels: true, timeoutMs: 3000 }).catch(err => {
+                console.warn('Post-init relay config preload failed:', err);
+            });
             updateUI(false);
             showEmptyState();
             if (elements.chatContainer) {
@@ -19577,6 +26339,8 @@ async function initialize() {
                 elements.chatContainer.style.overflowY = 'hidden';
             }
             updateLoginButtonVisibility();
+            syncSubscriptionFromRedirect();
+            refreshSubscriptionOnStartup();
         } else if (isAuthFlow) {
             updateUI(true);
             if (elements.chatContainer) elements.chatContainer.style.display = 'none';
@@ -19606,9 +26370,32 @@ async function initialize() {
         resetToDefaultModel();
 
         if (sessionValidationPromise) {
+            const initialUserReady = !!currentUser;
             sessionValidationPromise.then(() => {
                 updateSelectedModelDisplay();
                 resetToDefaultModel();
+                loadRelayConfigIfNeeded({ waitForModels: true, timeoutMs: 3000 }).catch(err => {
+                    console.warn('Deferred relay config preload failed:', err);
+                });
+
+                if (!initialUserReady && currentUser && sessionId) {
+                    const loader = document.getElementById('chat-history-loader');
+                    if (loader) loader.style.display = 'flex';
+                    chatHistoryLoading = true;
+                    updateUI(false);
+                    updateLoginButtonVisibility();
+                    const loadPromise = loadChats(true);
+                    routeManager.setChatsLoadPromise(loadPromise);
+                    loadPromise.catch(err => console.error('Failed to load user chat history:', err));
+                    restorePendingChats().catch(err => console.warn('Failed to restore pending chats:', err));
+                    loadPromise.finally(() => {
+                        syncChatListFromServer({ force: true }).catch(() => { });
+                        cleanupPendingTurnOnStartup().catch(err => console.warn('Failed to cleanup pending turn:', err));
+                        setTimeout(() => {
+                            syncChatFingerprintsOnStartup().catch(() => { });
+                        }, 0);
+                    });
+                }
             }).catch(() => { });
         }
 
@@ -19617,6 +26404,13 @@ async function initialize() {
             routeManager.setChatsLoadPromise(loadPromise);
             loadPromise.catch(err => console.error('Failed to load user chat history:', err));
             restorePendingChats().catch(err => console.warn('Failed to restore pending chats:', err));
+            loadPromise.finally(() => {
+                syncChatListFromServer({ force: true }).catch(() => { });
+                cleanupPendingTurnOnStartup().catch(err => console.warn('Failed to cleanup pending turn:', err));
+                setTimeout(() => {
+                    syncChatFingerprintsOnStartup().catch(() => { });
+                }, 0);
+            });
         } else {
             const loadPromise = (async () => {
                 await new Promise(resolve => setTimeout(resolve, 50));
@@ -19624,6 +26418,9 @@ async function initialize() {
             })();
             routeManager.setChatsLoadPromise(loadPromise);
             loadPromise.catch(err => console.error('Failed to load guest chat history:', err));
+            loadPromise.finally(() => {
+                cleanupPendingTurnOnStartup().catch(err => console.warn('Failed to cleanup pending turn:', err));
+            });
         }
 
         restoreBackgroundTasks().catch(err => console.error('Failed to restore background tasks:', err));
@@ -19643,7 +26440,6 @@ async function initialize() {
             }
             getGuestVisitorId().catch(err => console.error('Failed to get guest ID:', err));
             setupInputPanelObserver();
-            checkPrivacyPolicyUpdate();
             handleLaunchParams();
             updateAboutPageUI();
             requestAutoVersionCheck();

@@ -1,12 +1,39 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>下载 LittleAIBox</title>
-    <link rel="icon" href="/images/favicon.ico">
+    <title>Download LittleAIBox</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="icon" type="image/svg+xml" href="/images/favicon.svg">
+    <link rel="icon" type="image/x-icon" href="/images/favicon.ico" sizes="16x16 32x32 48x48">
     <link rel="stylesheet" href="./download.css">
+    <style>
+        .accordion-content {
+            transition: max-height 0.3s ease-in-out, opacity 0.3s ease-in-out;
+            max-height: 0;
+            opacity: 0;
+            overflow: hidden;
+        }
+
+        .accordion-item.active .accordion-content {
+            opacity: 1;
+        }
+
+        .chevron {
+            transition: transform 0.3s ease;
+        }
+
+        .accordion-item.active .chevron {
+            transform: rotate(180deg);
+        }
+
+        body {
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+    </style>
 
     <script>
         if (history.scrollRestoration) {
@@ -19,17 +46,19 @@
 
 </head>
 
-<body class="bg-zinc-50 dark:bg-zinc-900 font-sans antialiased overflow-x-hidden">
+<body class="font-sans min-h-screen relative overflow-x-hidden">
 
     <!-- 自定义语言选择器 - Google风格 -->
     <div class="lang-selector">
+        <div class="selector-row">
         <div class="lang-dropdown" id="langDropdown">
-            <button class="lang-button" id="langButton" aria-label="选择语言" aria-haspopup="true" aria-expanded="false">
+            <button class="lang-button" id="langButton" aria-label="Select language" aria-haspopup="true"
+                aria-expanded="false">
                 <svg class="lang-icon" viewBox="0 0 24 24" fill="currentColor">
                     <path
                         d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z" />
                 </svg>
-                <span id="currentLang">简体中文</span>
+                <span id="currentLang">English</span>
                 <svg class="lang-arrow" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M7 10l5 5 5-5z" />
                 </svg>
@@ -79,10 +108,21 @@
                 </div>
             </div>
         </div>
+        <button class="theme-toggle-button" id="themeToggleButton" type="button" aria-label="Toggle theme">
+            <svg class="theme-icon theme-icon-light" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 17.75a5.75 5.75 0 1 1 0-11.5 5.75 5.75 0 0 1 0 11.5zm0-14a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V4.5a.75.75 0 0 1 .75-.75zm0 14.5a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V19a.75.75 0 0 1 .75-.75zM4.5 11.25h1.5a.75.75 0 0 1 0 1.5H4.5a.75.75 0 0 1 0-1.5zm13.5 0h1.5a.75.75 0 0 1 0 1.5H18a.75.75 0 0 1 0-1.5zM6.343 5.282a.75.75 0 0 1 1.06 0l1.061 1.06a.75.75 0 0 1-1.06 1.06L6.343 6.343a.75.75 0 0 1 0-1.06zm9.193 9.193a.75.75 0 0 1 1.06 0l1.061 1.061a.75.75 0 1 1-1.06 1.06l-1.06-1.06a.75.75 0 0 1 0-1.06zM5.282 17.657a.75.75 0 0 1 0-1.06l1.06-1.061a.75.75 0 0 1 1.06 1.06l-1.06 1.061a.75.75 0 0 1-1.06 0zm9.193-9.193a.75.75 0 0 1 0-1.06l1.061-1.061a.75.75 0 1 1 1.06 1.06l-1.06 1.061a.75.75 0 0 1-1.06 0z" />
+            </svg>
+            <svg class="theme-icon theme-icon-dark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M13.5 2a.75.75 0 0 1 .73.92 8 8 0 1 0 6.85 6.86.75.75 0 0 1 1.45-.35A9.5 9.5 0 1 1 12.07 1.01.75.75 0 0 1 13.5 2z" />
+            </svg>
+        </button>
+        </div>
     </div>
 
-    <div class="relative isolate">
-        <div aria-hidden="true" class="absolute inset-0 -z-10 overflow-hidden">
+    <div class="glow-bg"></div>
+
+    <div class="max-w-3xl mx-auto px-6 py-16 flex flex-col items-center relative isolate">
+        <div aria-hidden="true" class="fixed inset-0 -z-10 pointer-events-none">
             <div
                 class="absolute top-0 left-0 w-[50rem] h-[50rem] bg-blue-200/30 dark:bg-blue-900/30 rounded-full filter blur-3xl opacity-40 animated-blob-1">
             </div>
@@ -93,135 +133,132 @@
                 class="absolute bottom-0 right-0 w-[40rem] h-[40rem] bg-sky-200/30 dark:bg-sky-900/30 rounded-full filter blur-3xl opacity-50 animated-blob-3">
             </div>
         </div>
-        <div class="container mx-auto max-w-4xl px-4 py-12 md:py-20">
-            <header class="text-center mb-12 md:mb-20 content-entry" style="animation-delay: 0.1s;">
-                <div class="flex justify-center items-center gap-4 mb-5">
-                    <img src="/images/favicon.ico" alt="LittleAIBox Logo" class="h-12 w-12 md:h-14 md:w-14">
-                    <h1 class="text-4xl md:text-5xl font-bold text-zinc-800 dark:text-white">LittleAIBox</h1>
+
+        <header class="text-center mb-16 space-y-6 content-entry" style="animation-delay: 0.1s;">
+            <div class="flex items-center justify-center gap-3">
+                <img src="/images/favicon.svg" alt="LittleAIBox Logo" class="h-10 w-10 md:h-12 md:w-12">
+                <h1 class="text-4xl md:text-5xl font-bold tracking-tight text-white">LittleAIBox</h1>
+            </div>
+            <p class="text-slate-400 text-lg md:text-xl" data-i18n="subtitle"></p>
+        </header>
+
+        <section id="pwa" class="w-full mb-16 flex flex-col items-center content-entry" style="animation-delay: 0.3s;">
+            <span
+                class="bg-blue-500/10 border border-blue-500/30 text-blue-400 px-4 py-1.5 rounded-full text-sm font-medium mb-6 shadow-[0_0_15px_rgba(59,130,246,0.15)]"
+                data-i18n="recommended"></span>
+
+            <h2 class="text-2xl md:text-3xl font-bold text-white mb-4" data-i18n="pwaTitle"></h2>
+            <p class="text-slate-400 text-center mb-10 max-w-md" data-i18n="pwaDesc"></p>
+
+            <div id="pwa-accordion" class="w-full space-y-4">
+                <div class="accordion-item bg-white/5 border border-white/10 rounded-2xl overflow-hidden backdrop-blur-sm transition-colors hover:bg-white/[0.07]">
+                    <button class="accordion-trigger accordion-header w-full flex items-center justify-between p-5 text-left focus:outline-none">
+                        <div class="flex items-center gap-3">
+                            <svg class="w-6 h-6 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z">
+                                </path>
+                            </svg>
+                            <span class="font-semibold text-slate-100 text-lg" data-i18n="desktopGuide"></span>
+                        </div>
+                        <svg class="chevron w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+                    <div class="accordion-content bg-black/20">
+                        <div class="p-6 pt-2 text-slate-300 space-y-3 leading-relaxed">
+                            <p data-i18n-html="desktopStep1"></p>
+                            <p data-i18n-html="desktopStep2"></p>
+                            <p data-i18n="desktopStep3"></p>
+                        </div>
+                    </div>
                 </div>
-                <p class="text-lg md:text-xl text-zinc-600 dark:text-zinc-400" data-i18n="subtitle"></p>
-            </header>
-            <main class="space-y-12 md:space-y-16">
-                <section id="pwa" class="content-entry" style="animation-delay: 0.3s;">
-                    <div class="text-center mb-8">
-                        <span
-                            class="inline-block bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-300 rounded-full px-4 py-1 text-sm font-semibold"
-                            data-i18n="recommended"></span>
-                        <h2 class="text-2xl font-bold text-zinc-900 dark:text-white mt-3" data-i18n="pwaTitle"></h2>
-                        <p class="mt-2 text-zinc-600 dark:text-zinc-400" data-i18n="pwaDesc"></p>
-                    </div>
-                    <div id="pwa-accordion" class="space-y-4 max-w-2xl mx-auto">
-                        <div
-                            class="accordion-item bg-white/60 dark:bg-zinc-800/60 backdrop-blur-md border border-zinc-200 dark:border-zinc-700 rounded-xl overflow-hidden transition-shadow hover:shadow-lg">
-                            <button
-                                class="accordion-trigger flex justify-between items-center w-full p-5 text-left font-semibold text-zinc-800 dark:text-white">
-                                <span class="flex items-center gap-3"><svg class="h-6 w-6 text-blue-500" fill="none"
-                                        viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z">
-                                        </path>
-                                    </svg><span data-i18n="desktopGuide"></span></span>
-                                <svg class="chevron h-5 w-5 transition-transform duration-300" viewBox="0 0 20 20"
-                                    fill="currentColor">
-                                    <path fill-rule="evenodd"
-                                        d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                                        clip-rule="evenodd"></path>
-                                </svg>
-                            </button>
-                            <div class="accordion-content">
-                                <div class="p-5 pt-0">
-                                    <ol
-                                        class="list-decimal list-inside space-y-3 text-zinc-600 dark:text-zinc-300 text-sm md:text-base">
-                                        <li data-i18n-html="desktopStep1"></li>
-                                        <li data-i18n-html="desktopStep2"></li>
-                                        <li data-i18n="desktopStep3"></li>
-                                    </ol>
-                                </div>
-                            </div>
+
+                <div class="accordion-item bg-white/5 border border-white/10 rounded-2xl overflow-hidden backdrop-blur-sm transition-colors hover:bg-white/[0.07]">
+                    <button class="accordion-trigger accordion-header w-full flex items-center justify-between p-5 text-left focus:outline-none">
+                        <div class="flex items-center gap-3">
+                            <svg class="w-6 h-6 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z">
+                                </path>
+                            </svg>
+                            <span class="font-semibold text-slate-100 text-lg" data-i18n="mobileGuide"></span>
                         </div>
-                        <div
-                            class="accordion-item bg-white/60 dark:bg-zinc-800/60 backdrop-blur-md border border-zinc-200 dark:border-zinc-700 rounded-xl overflow-hidden transition-shadow hover:shadow-lg">
-                            <button
-                                class="accordion-trigger flex justify-between items-center w-full p-5 text-left font-semibold text-zinc-800 dark:text-white">
-                                <span class="flex items-center gap-3"><svg class="h-6 w-6 text-blue-500" fill="none"
-                                        viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z">
-                                        </path>
-                                    </svg><span data-i18n="mobileGuide"></span></span>
-                                <svg class="chevron h-5 w-5 transition-transform duration-300" viewBox="0 0 20 20"
-                                    fill="currentColor">
-                                    <path fill-rule="evenodd"
-                                        d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                                        clip-rule="evenodd"></path>
-                                </svg>
-                            </button>
-                            <div class="accordion-content">
-                                <div class="p-5 pt-0">
-                                    <ul
-                                        class="list-disc list-inside space-y-3 text-zinc-600 dark:text-zinc-300 text-sm md:text-base">
-                                        <li data-i18n-html="mobileIOS"></li>
-                                        <li data-i18n-html="mobileAndroid"></li>
-                                    </ul>
-                                </div>
-                            </div>
+                        <svg class="chevron w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+                    <div class="accordion-content bg-black/20">
+                        <div class="p-6 pt-2 text-slate-300 space-y-5 leading-relaxed">
+                            <div data-i18n-html="mobileIOS"></div>
+                            <div data-i18n-html="mobileAndroid"></div>
                         </div>
                     </div>
-                </section>
-                <section id="native-apps" class="content-entry" style="animation-delay: 0.5s;">
-                    <h2 class="text-center text-2xl font-semibold text-zinc-800 dark:text-white mb-8"
-                        data-i18n="nativeTitle"></h2>
-                    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 text-center">
-                        <div
-                            class="bg-white/60 dark:bg-zinc-800/60 backdrop-blur-md p-6 rounded-xl shadow-sm hover:shadow-lg border border-zinc-200 dark:border-zinc-700 flex flex-col items-center transform transition-transform duration-300 hover:scale-105">
-                            <svg class="h-12 w-12 text-green-500 mb-4" viewBox="0 0 24 24" fill="currentColor">
-                                <path
-                                    d="M18.7,14.3c-0.4-0.4-1-0.4-1.4,0l-0.8,0.8c-0.8-0.4-1.8-1.1-2.8-2.1c-1-1-1.7-2-2.1-2.8l0.8-0.8c0.4-0.4,0.4-1,0-1.4 l-2.2-2.2c-0.4-0.4-1-0.4-1.4,0L7.3,6.5c-0.4,0.4-0.5,1-0.2,1.6c0.5,1.1,1.2,2.4,2.1,3.5c1.2,1.5,2.8,2.8,4.5,3.5 c0.5,0.2,1.2,0.1,1.6-0.2L18.7,14.3z M15,3h-1.5V1.5C13.5,0.7,12.8,0,12,0s-1.5,0.7-1.5,1.5V3H9C8.2,3,7.5,3.7,7.5,4.5v0 C7.5,5.3,8.2,6,9,6h1.5v1.5C10.5,8.3,11.2,9,12,9s1.5-0.7,1.5-1.5V6H15c0.8,0,1.5-0.7,1.5-1.5v0C16.5,3.7,15.8,3,15,3z" />
-                            </svg>
-                            <h3 class="text-lg font-semibold text-zinc-900 dark:text-white mb-2">Android</h3>
-                            <a href="/downloads/LittleAIBox_v2.9.0.apk"
-                                class="mt-auto w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors"
-                                download data-i18n="downloadApk"></a>
-                        </div>
-                        <div
-                            class="bg-white/60 dark:bg-zinc-800/60 backdrop-blur-md p-6 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-700 flex flex-col items-center opacity-60 transform transition-transform duration-300 hover:scale-105">
-                            <svg class="h-12 w-12 text-sky-500 mb-4" viewBox="0 0 24 24" fill="currentColor">
-                                <path
-                                    d="M2,12.2l8.1-1.2V2L2,4.2V12.2z M2,12.8v7l8.1,2v-8L2,12.8z M10.9,2v9l11.1-1.6V2L10.9,2z M10.9,22v-8l11.1,1.6V22L10.9,22z" />
-                            </svg>
-                            <h3 class="text-lg font-semibold text-zinc-900 dark:text-white mb-2">Windows</h3>
-                            <button
-                                class="mt-auto w-full bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400 font-semibold py-2 px-4 rounded-lg cursor-not-allowed"
-                                disabled data-i18n="comingSoon"></button>
-                        </div>
-                        <div
-                            class="bg-white/60 dark:bg-zinc-800/60 backdrop-blur-md p-6 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-700 flex flex-col items-center opacity-60 transform transition-transform duration-300 hover:scale-105">
-                            <svg class="h-12 w-12 text-zinc-500 dark:text-zinc-400 mb-4" viewBox="0 0 24 24"
-                                fill="currentColor">
-                                <path
-                                    d="M17.6,16.2c-0.8,0-1.8-0.3-2.9-0.3c-1.1,0-2.2,0.3-3.2,0.3c-1.8,0-3.3-0.8-4.4-2.3c-1.5-2-1.7-5.1-0.4-7.2 c0.9-1.4,2.4-2.3,4.1-2.3c1.1,0,2.1,0.4,2.9,0.4c0.7,0,1.9-0.4,3.2-0.4c1.6,0,3,0.8,3.9,2.2c-1.4,0.9-2.3,2.4-2.3,4.1 C18.5,12.5,19.9,13.8,22,14.4C21.8,16.5,19.9,16.2,17.6,16.2z M15.1,5.6c0.2-1.2-0.6-2.3-1.8-2.6c-0.1,0-0.2,0-0.3,0 c-1,0.2-1.6,1.1-1.6,2c0,0.2,0,0.3,0,0.5C12.3,5.3,13.9,5.7,15.1,5.6z" />
-                            </svg>
-                            <h3 class="text-lg font-semibold text-zinc-900 dark:text-white mb-2">iOS</h3>
-                            <button
-                                class="mt-auto w-full bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400 font-semibold py-2 px-4 rounded-lg cursor-not-allowed"
-                                disabled data-i18n="comingSoon"></button>
-                        </div>
-                        <div
-                            class="bg-white/60 dark:bg-zinc-800/60 backdrop-blur-md p-6 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-700 flex flex-col items-center opacity-60 transform transition-transform duration-300 hover:scale-105">
-                            <svg class="h-12 w-12 text-zinc-500 dark:text-zinc-400 mb-4" viewBox="0 0 24 24"
-                                fill="currentColor">
-                                <path
-                                    d="M17.6,16.2c-0.8,0-1.8-0.3-2.9-0.3c-1.1,0-2.2,0.3-3.2,0.3c-1.8,0-3.3-0.8-4.4-2.3c-1.5-2-1.7-5.1-0.4-7.2 c0.9-1.4,2.4-2.3,4.1-2.3c1.1,0,2.1,0.4,2.9,0.4c0.7,0,1.9-0.4,3.2-0.4c1.6,0,3,0.8,3.9,2.2c-1.4,0.9-2.3,2.4-2.3,4.1 C18.5,12.5,19.9,13.8,22,14.4C21.8,16.5,19.9,16.2,17.6,16.2z M15.1,5.6c0.2-1.2-0.6-2.3-1.8-2.6c-0.1,0-0.2,0-0.3,0 c-1,0.2-1.6,1.1-1.6,2c0,0.2,0,0.3,0,0.5C12.3,5.3,13.9,5.7,15.1,5.6z" />
-                            </svg>
-                            <h3 class="text-lg font-semibold text-zinc-900 dark:text-white mb-2">macOS</h3>
-                            <button
-                                class="mt-auto w-full bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400 font-semibold py-2 px-4 rounded-lg cursor-not-allowed"
-                                disabled data-i18n="comingSoon"></button>
-                        </div>
-                    </div>
-                </section>
-            </main>
+                </div>
+            </div>
+        </section>
+
+        <div class="w-full flex items-center justify-center gap-4 mb-10 opacity-60 content-entry" style="animation-delay: 0.4s;">
+            <div class="h-px bg-gradient-to-r from-transparent via-slate-700 to-transparent flex-1"></div>
+            <h3 class="text-lg font-medium text-slate-400 whitespace-nowrap" data-i18n="nativeTitle"></h3>
+            <div class="h-px bg-gradient-to-r from-transparent via-slate-700 to-transparent flex-1"></div>
         </div>
+
+        <section id="native-apps" class="w-full grid grid-cols-1 md:grid-cols-2 gap-4 content-entry" style="animation-delay: 0.5s;">
+            <div class="bg-white/[0.03] border border-white/10 rounded-3xl p-6 flex flex-col items-center justify-center gap-6 transition-all duration-300 hover:bg-white/[0.05] hover:border-emerald-500/30 group">
+                <div class="w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                    <svg class="w-8 h-8 text-emerald-500" viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                            d="M17.523 15.341c0 .482-.391.873-.873.873a.873.873 0 0 1-.873-.873c0-.482.391-.873.873-.873s.873.391.873.873zm-9.3 0c0 .482-.391.873-.873.873a.873.873 0 0 1-.873-.873c0-.482.391-.873.873-.873s.873.391.873.873zM16.896 9.47l1.77-3.064a.307.307 0 1 0-.535-.309l-1.804 3.124A10.226 10.226 0 0 0 12 8.268c-1.541 0-2.992.34-4.326.953L5.87 6.097a.307.307 0 1 0-.535.309L7.104 9.47c-2.937 1.616-4.982 4.605-5.327 8.182h20.446c-.345-3.577-2.39-6.566-5.327-8.182z" />
+                    </svg>
+                </div>
+                <h3 class="text-xl font-bold text-slate-100">Android</h3>
+                <a href="/downloads/LittleAIBox_v3.0.7.apk"
+                    class="w-full text-center bg-emerald-500 hover:bg-emerald-400 text-white font-semibold py-3.5 px-6 rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.2)] hover:shadow-[0_0_25px_rgba(16,185,129,0.4)] active:scale-[0.98]"
+                    download data-i18n="downloadApk"></a>
+            </div>
+
+            <div class="bg-white/[0.02] border border-white/5 rounded-3xl p-6 flex flex-col items-center justify-center gap-6 grayscale-[0.5] opacity-80">
+                <div class="w-16 h-16 rounded-2xl bg-slate-800/50 flex items-center justify-center">
+                    <svg class="w-8 h-8 text-sky-400" viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                            d="M3 4.56L10.32 3.5v7.03H3V4.56zm8.14-1.17L21 2v8.53h-9.86V3.39zM3 11.47h7.32v7.03L3 19.56v-8.09zm8.14 0H21V20l-9.86-1.39v-7.14z" />
+                    </svg>
+                </div>
+                <h3 class="text-xl font-bold text-slate-300">Windows</h3>
+                <button disabled class="w-full bg-slate-800/80 text-slate-500 font-semibold py-3.5 px-6 rounded-xl cursor-not-allowed border border-white/5"
+                    data-i18n="comingSoon"></button>
+            </div>
+
+            <div class="bg-white/[0.02] border border-white/5 rounded-3xl p-6 flex flex-col items-center justify-center gap-6 grayscale-[0.5] opacity-80">
+                <div class="w-16 h-16 rounded-[1.25rem] bg-[#7A7A7A] flex items-center justify-center shadow-inner">
+                    <svg class="w-8 h-8 text-white ios-apple-icon" viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                            d="M16.365 1.43c0 1.14-.42 2.28-1.14 3.1-.8.9-1.96 1.6-3.13 1.5-.15-1.12.33-2.3 1.1-3.1.78-.9 2.07-1.55 3.17-1.5zM20.6 17.24c-.58 1.31-.86 1.9-1.61 3.06-1.04 1.62-2.5 3.63-4.31 3.64-1.6.01-2.01-1.04-4.18-1.03-2.17.01-2.62 1.05-4.22 1.04-1.8-.01-3.18-1.83-4.22-3.45-2.91-4.5-3.22-9.79-1.42-12.56 1.28-1.97 3.3-3.12 5.2-3.12 1.94 0 3.16 1.06 4.77 1.06 1.56 0 2.52-1.06 4.75-1.06 1.7 0 3.5.93 4.78 2.52-4.2 2.3-3.52 8.34.46 9.9z" />
+                    </svg>
+                </div>
+                <h3 class="text-xl font-bold text-slate-300">iOS</h3>
+                <button disabled class="w-full bg-slate-800/80 text-slate-500 font-semibold py-3.5 px-6 rounded-xl cursor-not-allowed border border-white/5"
+                    data-i18n="comingSoon"></button>
+            </div>
+
+            <div class="bg-white/[0.02] border border-white/5 rounded-3xl p-6 flex flex-col items-center justify-center gap-6 grayscale-[0.5] opacity-80">
+                <div class="w-16 h-16 rounded-2xl bg-[#3f4655] flex items-center justify-center text-white shadow-inner overflow-hidden">
+                    <svg class="w-12 h-12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <rect x="2.5" y="2.5" width="19" height="19" rx="4.5" fill="#9ca3af" />
+                        <path d="M12 2.5v19" stroke="#1f2937" stroke-width="1.2" />
+                        <path d="M2.5 7.5h19" stroke="#1f2937" stroke-width="1.2" />
+                        <circle cx="8.4" cy="11.1" r="0.9" fill="#111827" />
+                        <circle cx="15.7" cy="11.1" r="0.9" fill="#111827" />
+                        <path d="M5.9 15.2c.85 1.05 1.9 1.55 3.2 1.55s2.35-.5 3.2-1.55" stroke="#111827" stroke-width="1.1" stroke-linecap="round" />
+                        <path d="M12.9 15.2c.8.95 1.85 1.45 3.05 1.45 1.2 0 2.2-.5 3.0-1.45" stroke="#111827" stroke-width="1.1" stroke-linecap="round" />
+                    </svg>
+                </div>
+                <h3 class="text-xl font-bold text-slate-300">macOS</h3>
+                <button disabled class="w-full bg-slate-800/80 text-slate-500 font-semibold py-3.5 px-6 rounded-xl cursor-not-allowed border border-white/5"
+                    data-i18n="comingSoon"></button>
+            </div>
+        </section>
     </div>
 
     <div id="thank-you-modal"
@@ -353,24 +390,61 @@
             }
         };
 
+        const SUPPORTED_LANGS = ['en', 'zh-CN', 'zh-TW', 'es', 'ja', 'ko'];
+
+        function getURLParamValue(key) {
+            const fromSearch = new URLSearchParams(window.location.search).get(key);
+            if (fromSearch) return fromSearch;
+
+            const hash = window.location.hash || '';
+            const hashQueryIndex = hash.indexOf('?');
+            if (hashQueryIndex >= 0) {
+                const hashQuery = hash.slice(hashQueryIndex + 1);
+                const fromHashQuery = new URLSearchParams(hashQuery).get(key);
+                if (fromHashQuery) return fromHashQuery;
+            }
+            return null;
+        }
+
+        function normalizeLanguage(rawLang) {
+            if (!rawLang || typeof rawLang !== 'string') return null;
+            const value = decodeURIComponent(rawLang).trim().replace(/_/g, '-').toLowerCase();
+
+            if (value === 'zh' || value === 'zh-cn' || value === 'zh-hans') return 'zh-CN';
+            if (value === 'zh-tw' || value === 'zh-hk' || value === 'zh-hant') return 'zh-TW';
+            if (value === 'en' || value === 'en-us' || value === 'en-gb') return 'en';
+            if (value === 'ja' || value === 'ja-jp') return 'ja';
+            if (value === 'ko' || value === 'ko-kr') return 'ko';
+            if (value === 'es' || value === 'es-es' || value === 'es-419') return 'es';
+
+            return SUPPORTED_LANGS.includes(rawLang) ? rawLang : null;
+        }
+
+        function normalizeTheme(rawTheme) {
+            if (!rawTheme || typeof rawTheme !== 'string') return null;
+            const value = decodeURIComponent(rawTheme).trim().toLowerCase();
+            if (value === 'dark') return 'dark';
+            if (value === 'light') return 'light';
+            if (value === 'auto' || value === 'system' || value === 'follow-system') {
+                return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            return null;
+        }
+
         // 从URL获取语言参数
         function getLangFromURL() {
-            const params = new URLSearchParams(window.location.search);
-            return params.get('lang');
+            return normalizeLanguage(getURLParamValue('lang'));
         }
 
         // 从URL获取主题参数
         function getThemeFromURL() {
-            const params = new URLSearchParams(window.location.search);
-            return params.get('theme');
+            return normalizeTheme(getURLParamValue('theme'));
         }
 
         // 检测浏览器语言
         function detectBrowserLanguage() {
             const browserLang = navigator.language || navigator.userLanguage;
-            const supportedLangs = ['en', 'zh-CN', 'zh-TW', 'es', 'ja', 'ko'];
-
-            if (supportedLangs.includes(browserLang)) {
+            if (SUPPORTED_LANGS.includes(browserLang)) {
                 return browserLang;
             }
 
@@ -387,7 +461,7 @@
                 return 'en';
             }
 
-            return 'zh-CN';
+            return 'en';
         }
 
         // 语言名称映射
@@ -412,7 +486,7 @@
                         lang === 'ja' ? 'LittleAIBox をダウンロード' :
                             lang === 'ko' ? 'LittleAIBox 다운로드' :
                                 lang === 'es' ? 'Descargar LittleAIBox' :
-                                    '下载 LittleAIBox';
+                                    'Download LittleAIBox';
 
             // 应用普通文本翻译
             document.querySelectorAll('[data-i18n]').forEach(el => {
@@ -450,13 +524,21 @@
         document.addEventListener('DOMContentLoaded', () => {
             // 优先从URL参数获取语言，其次是localStorage，最后是浏览器检测
             const urlLang = getLangFromURL();
-            const savedLang = localStorage.getItem('downloadPageLanguage');
+            const savedLang = normalizeLanguage(localStorage.getItem('downloadPageLanguage'));
             const currentLang = urlLang || savedLang || detectBrowserLanguage();
 
             const urlTheme = getThemeFromURL();
-            const currentTheme = urlTheme || 'light';
+            const savedTheme = normalizeTheme(localStorage.getItem('downloadPageTheme'));
+            const currentTheme = urlTheme || savedTheme || 'light';
 
-            document.documentElement.setAttribute('data-theme', currentTheme);
+            const themeToggleButton = document.getElementById('themeToggleButton');
+            function applyTheme(theme) {
+                document.documentElement.setAttribute('data-theme', theme);
+                localStorage.setItem('downloadPageTheme', theme);
+                themeToggleButton.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+            }
+
+            applyTheme(currentTheme);
             // 应用翻译
             applyTranslations(currentLang);
 
@@ -487,6 +569,11 @@
                     langDropdown.classList.remove('open');
                     langButton.setAttribute('aria-expanded', 'false');
                 }
+            });
+
+            themeToggleButton.addEventListener('click', () => {
+                const nextTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                applyTheme(nextTheme);
             });
 
             // 手风琴功能

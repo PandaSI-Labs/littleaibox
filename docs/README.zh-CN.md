@@ -89,9 +89,13 @@ LittleAIBox 非常适合：
 
 ![主页面 - 中文](../appshow/main_zh-CN.png)
 
-#### 设置页面
+#### 示例页面
 
-![设置页面 - 中文](../appshow/settings_zh-CN.png)
+![示例页面 - 中文](../appshow/example_zh-CN.png)
+
+#### 隐私页面
+
+![隐私页面 - 中文](../appshow/privacy_zh-CN.png)
 
 ---
 
@@ -124,6 +128,7 @@ LittleAIBox 非常适合：
 - **数学公式**: 使用 KaTeX 渲染精美数学表达式
 - **流程图**: 支持交互式 Mermaid 图表，支持 PNG/SVG 导出
 - **数据可视化**: Vega-Lite 图表渲染，支持交互式图表和 PNG 导出
+- **脑图渲染**: 支持基于 Markmap 的脑图渲染与预览
 - **图表导出**: 可下载生成的图表（Mermaid 图表和 Vega-Lite 可视化）为 PNG 或 SVG 文件
 - **GitHub 风格**: 完整的 GFM 语法支持
 
@@ -138,6 +143,19 @@ LittleAIBox 非常适合：
   - 温度控制（创造性 vs 一致性）
   - 高级参数（topK、topP）
   - 任务预设（编程助手、写作助手、翻译、古文研究、旅行向导、角色扮演创作）
+
+### 🧾 **生产力导出**
+- **多格式导出**: 支持将对话/内容导出为 DOCX、PDF、PPTX、XLSX
+- **内容保真**: 保留标题、列表、代码块、公式、表格、图表、图片等结构
+
+### 🔗 **Bridge 会话协作**
+- **父子上下文衔接**: 支持从源会话继承上下文，继续对话
+
+### 📲 **原生更新体验**
+- **APK 更新检测**: 支持新版本检测，并在需要时回退到下载页
+
+### 📌 **开源范围说明**
+- **前端开源包**: 本仓库仅包含开源前端实现，订阅/支付后端已省略
 
 ### 🌐 **多语言支持**
 - **6 种语言**: 中文（简体/繁体）、英语、日语、韩语、西班牙语、法语
@@ -391,34 +409,40 @@ graph TB
 
 ```
 LittleAIBox/
-├── src/                    # 源代码目录
-│   ├── main.js            # 主应用逻辑
-│   ├── api-config.js      # API 配置
-│   ├── auth-oauth.js     # OAuth 认证（Google、GitHub）
-│   ├── auth-template.js  # 认证 UI 模板
-│   ├── auth.css          # 认证样式
-│   ├── db.js              # IndexedDB 封装
-│   ├── i18n.js            # 国际化模块
-│   ├── mermaid-renderer.js # 图表渲染
-│   ├── vega-renderer.js    # Vega-Lite 图表渲染
-│   ├── floating-timeline.js # 对话时间线导航
-│   ├── floating-timeline.css # 时间线样式
-│   ├── mfa-login.js      # 多因素认证
-│   ├── oauth-flow.js     # OAuth 流程处理
-│   ├── router.js         # 客户端路由
-│   ├── style.css          # 全局样式
-│   └── sw-custom.js       # Service Worker
-├── public/                 # 静态资源
-│   ├── locales/           # 翻译文件（6种语言）
-│   ├── libs/              # 第三方库
-│   ├── images/            # 图片和图标
-│   └── manifest.webmanifest # PWA 清单
-├── appshow/                # 按语言分类的截图
-├── docs/                   # 文档（多语言）
-├── capacitor.config.json   # 移动应用配置
-├── vite.config.js          # 构建配置
-├── tailwind.config.js      # Tailwind CSS 配置
-└── package.json            # 项目依赖
+├── src/                         # 前端源码
+│   ├── main.js                  # 应用主入口
+│   ├── api-config.js            # API/运行时配置
+│   ├── apk-update-manager.js    # 原生 APK 更新流程
+│   ├── entitlements.js          # 订阅与能力门控
+│   ├── mindmap-mode.js          # 脑图模式运行时
+│   ├── stream-image-runtime.js  # 流式图片处理
+│   ├── sync-queue.js            # 离线重试/同步队列
+│   ├── router.js                # 客户端路由
+│   ├── sw-custom.js             # Service Worker 逻辑
+│   ├── auth/                    # 认证模块（OAuth/MFA/UI）
+│   ├── bridge/                  # Bridge 会话模块
+│   ├── file-parsers/            # 上传与文件解析链路
+│   ├── file-export/             # DOCX/PDF/PPTX/XLSX 导出
+│   ├── rendering/               # Mermaid/Vega 渲染适配
+│   └── floating-timeline/       # 时间线功能模块
+├── public/                      # 静态资源
+│   ├── locales/                 # 多语言词典
+│   ├── libs/                    # 浏览器端第三方库
+│   ├── images/                  # 图标/图片/PWA 资源
+│   ├── policy/                  # 政策与法律页面
+│   ├── subscribe/               # 订阅占位页面
+│   ├── promocode/               # 兑换码占位页面
+│   ├── shared/                  # 共享前端模块
+│   ├── workers/                 # Web Worker
+│   ├── download-app/            # APK 下载落地页
+│   └── downloads/               # APK 文件索引页
+├── scripts/                     # 构建/开发辅助脚本
+├── appshow/                     # 多语言截图资源
+├── docs/                        # 多语言文档
+├── capacitor.config.json        # 移动端配置
+├── vite.config.js               # Vite 构建配置
+├── tailwind.config.js           # Tailwind 配置
+└── package.json                 # 依赖与脚本
 ```
 
 ---

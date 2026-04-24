@@ -1,9 +1,45 @@
+import { readFileHeader, isZipHeader } from './media-utils.js';
+
 export function createExcelReader({ loadScript, getToastMessage }) {
+
+    const DEFAULT_MAX_FILE_BYTES = 20 * 1024 * 1024;
+    const DEFAULT_PARSE_TIMEOUT_MS = 8000;
+
+    const runWithTimeout = async (promise, timeoutMs, timeoutMessage) => {
+        if (!timeoutMs || timeoutMs <= 0) return promise;
+        let timeoutId;
+        const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+        });
+        try {
+            return await Promise.race([promise, timeoutPromise]);
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    };
+
+    const guardExcelFile = async (file) => {
+        if (!file) return;
+        if (file.size && file.size > DEFAULT_MAX_FILE_BYTES) {
+            throw new Error(getToastMessage('fileManagement.fileTooLarge') || 'File too large.');
+        }
+        const extension = file?.name?.split('.').pop()?.toLowerCase() || '';
+        if (extension === 'xlsx' || extension === 'xlsm' || extension === 'xltx' || extension === 'xltm') {
+            const header = await readFileHeader(file, 4);
+            if (!isZipHeader(header)) {
+                throw new Error(getToastMessage('fileManagement.invalidFileType') || 'Invalid file type.');
+            }
+        }
+    };
+
     const readExcelFile = async (file) => {
         await loadScript('/libs/xlsx.full.min.js', 'XLSX');
 
-        return new Promise((resolve, reject) => {
+        await guardExcelFile(file);
+
+        return await runWithTimeout(new Promise((resolve, reject) => {
             const maxColumns = 100;
+            const extension = file?.name?.split('.').pop()?.toLowerCase();
 
             const convertWorkbookToMarkdown = (workbook) => {
                 let allMarkdown = '';
@@ -39,6 +75,96 @@ export function createExcelReader({ loadScript, getToastMessage }) {
             reader.onload = function (event) {
                 const data = new Uint8Array(event.target.result);
 
+                const detectEncodingFromBom = (bytes) => {
+                    if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+                        return 'utf-8';
+                    }
+                    if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+                        return 'utf-16le';
+                    }
+                    if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+                        return 'utf-16be';
+                    }
+                    return null;
+                };
+
+                const estimateNullRatio = (bytes) => {
+                    if (!bytes.length) return 0;
+                    let nullCount = 0;
+                    for (let i = 0; i < bytes.length; i += 1) {
+                        if (bytes[i] === 0) nullCount += 1;
+                    }
+                    return nullCount / bytes.length;
+                };
+
+                const estimateReplacementRatio = (text) => {
+                    if (!text) return 1;
+                    let replacements = 0;
+                    for (let i = 0; i < text.length; i += 1) {
+                        if (text[i] === '\uFFFD') replacements += 1;
+                    }
+                    return replacements / text.length;
+                };
+
+                const decodeText = (encoding) => {
+                    try {
+                        return new TextDecoder(encoding).decode(data);
+                    } catch (_) {
+                        return null;
+                    }
+                };
+
+                const decodeWithStrategy = () => {
+                    const bomEncoding = detectEncodingFromBom(data);
+                    if (bomEncoding) {
+                        const decoded = decodeText(bomEncoding);
+                        if (decoded != null) return decoded;
+                    }
+
+                    const nullRatio = estimateNullRatio(data);
+                    if (nullRatio > 0.1) {
+                        const utf16Text = decodeText('utf-16le');
+                        if (utf16Text) return utf16Text;
+                    }
+
+                    const utf8Text = decodeText('utf-8');
+                    if (utf8Text && estimateReplacementRatio(utf8Text) < 0.02) {
+                        return utf8Text;
+                    }
+
+                    const gbText = decodeText('gb18030');
+                    if (gbText) return gbText;
+
+                    return utf8Text;
+                };
+
+                if (extension === 'csv') {
+                    try {
+                        const workbook = XLSX.read(data, { type: 'array', codepage: 65001 });
+                        resolve(convertWorkbookToMarkdown(workbook));
+                        return;
+                    } catch (_) { }
+                    try {
+                        const workbook = XLSX.read(data, { type: 'array', codepage: 936 });
+                        resolve(convertWorkbookToMarkdown(workbook));
+                        return;
+                    } catch (_) { }
+
+                    const decodedText = decodeWithStrategy();
+                    if (!decodedText) {
+                        reject(new Error(getToastMessage('console.unrecognizedEncoding')));
+                        return;
+                    }
+                    try {
+                        const workbook = XLSX.read(decodedText, { type: 'string' });
+                        resolve(convertWorkbookToMarkdown(workbook));
+                        return;
+                    } catch (csvParseError) {
+                        console.error(getToastMessage('console.failedToParseDecodedContent'), csvParseError);
+                        // Fall through to binary parsing
+                    }
+                }
+
                 try {
                     const workbook = XLSX.read(data, { type: 'array' });
                     resolve(convertWorkbookToMarkdown(workbook));
@@ -71,7 +197,7 @@ export function createExcelReader({ loadScript, getToastMessage }) {
 
             reader.onerror = reject;
             reader.readAsArrayBuffer(file);
-        });
+        }), DEFAULT_PARSE_TIMEOUT_MS, getToastMessage('fileManagement.parseTimeout') || 'File parse timeout.');
     };
 
     return { readExcelFile };

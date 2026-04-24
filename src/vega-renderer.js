@@ -10,6 +10,40 @@ const pendingRenders = new Set();
 let diagramIdCounter = 0;
 const VEGA_SCHEMA_URL = 'https://vega.github.io/schema/vega/v5.json';
 const VEGA_LITE_SCHEMA_URL = 'https://vega.github.io/schema/vega-lite/v5.json';
+const DARK_THEME_CONFIG = {
+    background: '#0f172a',
+    view: { stroke: 'transparent' },
+    axis: {
+        domainColor: '#334155',
+        gridColor: '#1f2937',
+        tickColor: '#334155',
+        labelColor: '#e2e8f0',
+        titleColor: '#e2e8f0'
+    },
+    legend: {
+        labelColor: '#e2e8f0',
+        titleColor: '#e2e8f0'
+    },
+    title: { color: '#e2e8f0' },
+    text: { fill: '#e2e8f0' }
+};
+const LIGHT_THEME_CONFIG = {
+    background: '#ffffff',
+    view: { stroke: 'transparent' },
+    axis: {
+        domainColor: '#cbd5f5',
+        gridColor: '#e2e8f0',
+        tickColor: '#cbd5f5',
+        labelColor: '#0f172a',
+        titleColor: '#0f172a'
+    },
+    legend: {
+        labelColor: '#0f172a',
+        titleColor: '#0f172a'
+    },
+    title: { color: '#0f172a' },
+    text: { fill: '#0f172a' }
+};
 
 function trackRenderPromise(promise) {
     pendingRenders.add(promise);
@@ -243,6 +277,15 @@ function normalizeVegaSpecString(raw) {
     return text;
 }
 
+function getVegaThemeConfig() {
+    try {
+        const isDark = document?.documentElement?.classList?.contains('dark');
+        return isDark ? DARK_THEME_CONFIG : LIGHT_THEME_CONFIG;
+    } catch (_) {
+        return null;
+    }
+}
+
 function applyDefaultSchema(spec) {
     if (!spec || typeof spec !== 'object') return;
     if (typeof spec.$schema === 'string' && spec.$schema.trim()) return;
@@ -252,6 +295,21 @@ function applyDefaultSchema(spec) {
     }
     if (spec.mark || spec.encoding) {
         spec.$schema = VEGA_LITE_SCHEMA_URL;
+    }
+}
+
+function applyDefaultChartSize(spec, hostElement) {
+    if (!spec || typeof spec !== 'object') return;
+    const rect = hostElement?.getBoundingClientRect?.() || {};
+    const containerWidth = Math.max(0, Math.floor(rect.width || 0));
+    const targetWidth = Math.max(320, containerWidth || 560);
+    const targetHeight = Math.max(240, Math.round(targetWidth * 0.6));
+
+    if (spec.width == null) {
+        spec.width = targetWidth;
+    }
+    if (spec.height == null) {
+        spec.height = targetHeight;
     }
 }
 
@@ -520,13 +578,21 @@ export function renderVegaLiteDiagrams(rootElement, { loadScript, isFinalRender 
                 });
                 const chartHost = document.createElement('div');
                 chartHost.className = 'vega-lite-chart-host';
+                chartHost.style.width = '100%';
+                chartHost.style.maxWidth = '900px';
+                chartHost.style.minWidth = '280px';
                 container.appendChild(chartHost);
 
                 const embedOptions = { actions: false, renderer: 'svg' };
+                const themeConfig = getVegaThemeConfig();
+                if (themeConfig) {
+                    embedOptions.config = themeConfig;
+                }
                 if (typeof window !== 'undefined' && window.vega && typeof window.vega.Warn !== 'undefined') {
                     embedOptions.logLevel = window.vega.Warn;
                 }
 
+                applyDefaultChartSize(specCopy, chartHost);
                 const embedResult = await vegaEmbed(chartHost, specCopy, embedOptions);
                 const uniqueId = `vega-diagram-${Date.now()}-${diagramIdCounter++}`;
 

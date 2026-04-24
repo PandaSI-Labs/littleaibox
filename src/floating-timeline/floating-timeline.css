@@ -1,0 +1,204 @@
+:root {
+  --float-size: 56px;
+  --float-size-m: 48px;
+  --arrow-size: 44px;
+  --arrow-size-m: 40px;
+  --gap: 12px;
+  --pill-height: 80px;
+  --pill-height-m: 72px;
+
+  --transition-speed: 0.35s;
+  --transition-curve: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --btn-bg-light: #f1f3f6;
+  --btn-shadow-light: 0 5px 15px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.08);
+  --btn-shadow-active-light: 0 2px 8px rgba(0, 0, 0, 0.12);
+  --icon-color-light: #2c3e50;
+
+  --btn-bg-dark: #2c3e50;
+  --btn-shadow-dark: 0 5px 20px rgba(0, 0, 0, 0.3);
+  --btn-shadow-active-dark: 0 2px 10px rgba(0, 0, 0, 0.4);
+  --icon-color-dark: #ecf0f1;
+}
+
+.timeline-float-root {
+  position: fixed;
+  left: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--float-size);
+  height: var(--float-size);
+  z-index: 999;
+  display: none;
+  user-select: none;
+  touch-action: none;
+  transition: height var(--transition-speed) ease-in-out, transform 0.2s ease-out;
+}
+
+.timeline-float-main,
+.timeline-arrow {
+  position: absolute;
+  left: 50%;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition-property: transform, opacity, box-shadow, background-color, height, border-radius;
+  transition-duration: var(--transition-speed);
+  transition-timing-function: var(--transition-curve);
+}
+
+.timeline-float-main {
+  width: var(--float-size);
+  height: var(--float-size);
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--btn-bg-light);
+  color: var(--icon-color-light);
+  box-shadow: var(--btn-shadow-light);
+  z-index: 2;
+}
+
+.timeline-float-main svg {
+  width: 24px;
+  height: 24px;
+  transition: transform var(--transition-speed) ease-in-out;
+  pointer-events: none;
+}
+
+.timeline-arrow {
+  width: var(--arrow-size);
+  height: var(--arrow-size);
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.5);
+  background: var(--btn-bg-light);
+  color: var(--icon-color-light);
+  box-shadow: var(--btn-shadow-light);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 深色主题调整 */
+html[data-theme='dark'] .timeline-float-main,
+html[data-theme='dark'] .timeline-arrow {
+  background: var(--btn-bg-dark);
+  color: var(--icon-color-dark);
+  box-shadow: var(--btn-shadow-dark);
+}
+
+/* 交互状态 */
+.timeline-float-root.is-dragging {
+  transform: translateY(-50%) scale(1.08);
+  transition-duration: 0.1s;
+}
+
+.timeline-float-root.is-dragging .timeline-float-main {
+  cursor: grabbing;
+}
+
+.timeline-float-main:active {
+  box-shadow: var(--btn-shadow-active-light);
+  transform: translate(-50%, -50%) scale(0.95);
+  transition-duration: 0.1s;
+}
+
+html[data-theme='dark'] .timeline-float-main:active {
+  box-shadow: var(--btn-shadow-active-dark);
+}
+
+/* 为箭头增加更明显的按压反馈 */
+.timeline-arrow:active:not(:disabled) {
+  box-shadow: var(--btn-shadow-active-light);
+  filter: brightness(0.95);
+  transition-duration: 0.05s;
+}
+
+html[data-theme='dark'] .timeline-arrow:active:not(:disabled) {
+  box-shadow: var(--btn-shadow-active-dark);
+}
+
+/* 按下状态的特定形变 */
+.timeline-float-root.is-expanded .timeline-arrow.up:active:not(:disabled) {
+  transform: translate(-50%, 2px) scale(0.98);
+}
+
+.timeline-float-root.is-expanded .timeline-arrow.down:active:not(:disabled) {
+  transform: translate(-50%, -2px) scale(0.98);
+}
+
+
+.timeline-arrow:disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed;
+  background: rgba(128, 128, 128, 0.1);
+}
+
+/* 展开状态 */
+.timeline-float-root.is-expanded {
+  height: calc(var(--pill-height) + var(--arrow-size) * 2 + var(--gap) * 2);
+}
+
+.timeline-float-root.is-expanded .timeline-float-main {
+  height: var(--pill-height);
+  border-radius: calc(var(--float-size) / 2);
+}
+
+.timeline-float-root.is-expanded .timeline-float-main svg {
+  transform: rotate(135deg);
+}
+
+.timeline-float-root.is-expanded .timeline-arrow {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.timeline-float-root.is-expanded .timeline-arrow.up {
+  top: 0;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.timeline-float-root.is-expanded .timeline-arrow.down {
+  top: auto;
+  bottom: 0;
+  transform: translate(-50%, 0) scale(1);
+}
+
+/* 移动端适配 */
+@media (max-width: 640px) {
+
+  .timeline-float-root,
+  .timeline-float-main {
+    width: var(--float-size-m);
+  }
+
+  .timeline-float-main {
+    height: var(--float-size-m);
+  }
+
+  .timeline-arrow {
+    width: var(--arrow-size-m);
+    height: var(--arrow-size-m);
+  }
+
+  .timeline-float-root.is-expanded {
+    height: calc(var(--pill-height-m) + var(--arrow-size-m) * 2 + var(--gap) * 2);
+  }
+
+  .timeline-float-root.is-expanded .timeline-float-main {
+    height: var(--pill-height-m);
+    border-radius: calc(var(--float-size-m) / 2);
+  }
+
+  .timeline-float-main svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .timeline-arrow svg {
+    width: 20px;
+    height: 20px;
+  }
+}

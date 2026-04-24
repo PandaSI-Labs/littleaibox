@@ -87,11 +87,15 @@ LittleAIBox es perfecto para:
 
 #### Página Principal
 
-![Página Principal - Inglés](../appshow/main_en.png)
+![Página Principal - Español](../appshow/main_es.png)
 
-#### Página de Configuración
+#### Página de Ejemplo
 
-![Página de Configuración - Inglés](../appshow/settings_en.png)
+![Página de Ejemplo - Español](../appshow/example_es.png)
+
+#### Página de Privacidad
+
+![Página de Privacidad - Español](../appshow/privacy_es.png)
 
 ---
 
@@ -124,6 +128,7 @@ LittleAIBox es perfecto para:
 - **Expresiones Matemáticas**: Renderizado hermoso de matemáticas con KaTeX
 - **Diagramas**: Soporte para diagramas Mermaid interactivos con exportación PNG/SVG
 - **Visualización de Datos**: Renderizado de gráficos Vega-Lite con gráficos interactivos y exportación PNG
+- **Renderizado Mindmap**: Soporte de renderizado y vista previa de mapas mentales basados en Markmap
 - **Exportación de Gráficos**: Descarga gráficos generados (diagramas Mermaid y visualizaciones Vega-Lite) como archivos PNG o SVG
 - **GitHub Flavored Markdown**: Soporte completo de GFM con resaltado de sintaxis
 
@@ -138,6 +143,19 @@ LittleAIBox es perfecto para:
   - Control de temperatura (creatividad vs. consistencia)
   - Parámetros avanzados (topK, topP)
   - Preajustes de tareas (asistente de codificación, asistente de escritura, traducción, investigación de chino clásico, guía de viajes, creación de rol)
+
+### 🧾 **Exportación de Productividad**
+- **Exportación Multi-formato**: Exporta chats/contenido a DOCX / PDF / PPTX / XLSX
+- **Preservación de Estructura**: Conserva títulos, listas, código, fórmulas, tablas, diagramas e imágenes
+
+### 🔗 **Colaboración de Sesiones Bridge**
+- **Continuidad de Contexto**: Hereda contexto de conversaciones de origen para continuar el flujo
+
+### 📲 **Experiencia de Actualización Nativa**
+- **Detección de APK**: Detecta versiones nuevas y aplica ruta de respaldo a la página de descarga
+
+### 📌 **Alcance Open-Source**
+- **Solo Frontend**: Este repositorio publica únicamente el frontend; backend de suscripción/pagos omitido
 
 ### 🌐 **Soporte Multiidioma**
 - **6 Idiomas**: Chino (Simplificado/Tradicional), Inglés, Japonés, Coreano, Español, Francés

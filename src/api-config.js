@@ -8,6 +8,21 @@ const FALLBACK_API_ORIGINS = [
     'https://littleaibox.pages.dev'
 ];
 const DEV_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
+
+const isApiPath = (pathname, method = 'GET') => {
+    if (
+        pathname.startsWith('/api/') ||
+        pathname.startsWith('/auth/') ||
+        pathname.startsWith('/image-proxy') ||
+        pathname.startsWith('/image-get')
+    ) {
+        return true;
+    }
+
+    const normalizedMethod = (method || 'GET').toUpperCase();
+    return pathname === '/' && normalizedMethod !== 'GET' && normalizedMethod !== 'HEAD';
+};
+
 const shouldRewriteRequests = isNativeApp || DEV_HOSTNAMES.has(window.location.hostname);
 const originalFetch = window.fetch.bind(window);
 const PREFERRED_ORIGIN_STORAGE_KEY = 'preferred_api_origin';
@@ -31,27 +46,37 @@ if (shouldRewriteRequests) {
     const currentOrigin = window.location.origin;
     const apiOrigins = Array.from(new Set([activeApiOrigin, ...FALLBACK_API_ORIGINS]));
 
-    const needsRewrite = (url) => {
+    const needsRewrite = (url, method) => {
         if (!url) return false;
-        if (url.startsWith('/')) return true;
+
+        if (url.startsWith('/')) {
+            try {
+                const path = new URL(url, currentOrigin).pathname;
+                return isApiPath(path, method);
+            } catch {
+                return false;
+            }
+        }
+
         try {
             const parsed = new URL(url);
-            if (parsed.protocol === 'capacitor:' || parsed.protocol === 'ionic:') {
+            if ((parsed.protocol === 'capacitor:' || parsed.protocol === 'ionic:') && isApiPath(parsed.pathname, method)) {
                 return true;
             }
-            if (DEV_HOSTNAMES.has(parsed.hostname)) {
+            if (DEV_HOSTNAMES.has(parsed.hostname) && isApiPath(parsed.pathname, method)) {
                 return true;
             }
         } catch {
             try {
                 const parsedWithBase = new URL(url, currentOrigin);
-                if (DEV_HOSTNAMES.has(parsedWithBase.hostname)) {
+                if (DEV_HOSTNAMES.has(parsedWithBase.hostname) && isApiPath(parsedWithBase.pathname, method)) {
                     return true;
                 }
             } catch {
                 return false;
             }
         }
+
         return false;
     };
 
@@ -80,32 +105,44 @@ if (shouldRewriteRequests) {
         }
     };
 
-    const isApiPath = (urlObj) => urlObj.pathname.startsWith('/api/') || urlObj.pathname.startsWith('/auth/');
-
     const persistPreferredOrigin = (origin) => {
         try {
             localStorage.setItem(PREFERRED_ORIGIN_STORAGE_KEY, origin);
         } catch (_) { }
     };
 
-    const fetchWithApiFallback = async (targetUrl, init) => {
-        let parsed;
-        try {
-            parsed = new URL(targetUrl);
-        } catch {
-            parsed = new URL(targetUrl, currentOrigin);
+    const fetchWithApiFallback = async (input, init) => {
+        const requestUrl = typeof input === 'string'
+            ? input
+            : (input instanceof Request ? input.url : '');
+        const requestMethod = (init && init.method)
+            ? init.method
+            : (input instanceof Request ? input.method : 'GET');
+
+        if (!requestUrl) {
+            return originalFetch(input, init);
         }
 
-        if (!isApiPath(parsed)) {
-            return originalFetch(targetUrl, init);
+        let parsed;
+        try {
+            parsed = new URL(requestUrl);
+        } catch {
+            parsed = new URL(requestUrl, currentOrigin);
+        }
+
+        if (!isApiPath(parsed.pathname, requestMethod)) {
+            return originalFetch(input, init);
         }
 
         let lastError = null;
 
         for (const origin of apiOrigins) {
             const rebuiltUrl = `${origin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+            const requestToSend = input instanceof Request
+                ? new Request(rebuiltUrl, input)
+                : rebuiltUrl;
             try {
-                const response = await originalFetch(rebuiltUrl, init);
+                const response = await originalFetch(requestToSend, input instanceof Request ? undefined : init);
                 if (response.ok) {
                     if (origin !== activeApiOrigin) {
                         activeApiOrigin = origin;
@@ -128,7 +165,7 @@ if (shouldRewriteRequests) {
         }
 
         if (lastError) throw lastError;
-        return originalFetch(targetUrl, init);
+        return originalFetch(input, init);
     };
 
     /**
@@ -136,13 +173,8 @@ if (shouldRewriteRequests) {
      * 并在需要时自动尝试备用域名，避免 APK 端被墙或被阻断。
      */
     window.fetch = function (input, init) {
-        if (typeof input === 'string') {
-            const target = needsRewrite(input) ? rewriteUrl(input) : input;
-            return fetchWithApiFallback(target, init);
-        }
-
-        if (input instanceof Request) {
-            return fetchWithApiFallback(rewriteRequest(input), init);
+        if (typeof input === 'string' || input instanceof Request) {
+            return fetchWithApiFallback(input, init);
         }
 
         return originalFetch(input, init);

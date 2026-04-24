@@ -1,8 +1,14 @@
 /assets/*          /assets/:splat          200
+/src/*             /src/:splat             200
 /libs/*            /libs/:splat            200
 /locales/*         /locales/:splat         200
 /images/*          /images/:splat          200
 /downloads/*       /downloads/:splat       200
+/policies/policy   /policy/policies.html   200
+/policies/policy/* /policy/policies.html   200
+/policy/legal/*    /policy/legal/:splat    200
+/policy/policies/* /policy/policies/:splat 200
+/settings/*        /index.html            200
 /registerSW.js     /registerSW.js          200
 /sw-custom.js      /sw-custom.js           200
 /*                 /index.html             200

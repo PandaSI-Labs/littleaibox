@@ -1,6 +1,19 @@
 // docx.js
 import { renderOmml } from './mathUtils.js';
-import { createMediaContext, extractImageMarkdown } from './media-utils.js';
+import {
+    createMediaContext,
+    extractImageMarkdown,
+    readFileHeader,
+    isZipHeader,
+    getZipSafetyStats
+} from './media-utils.js';
+
+const DEFAULT_MAX_FILE_BYTES = 25 * 1024 * 1024;
+const DEFAULT_MAX_UNCOMPRESSED_BYTES = 80 * 1024 * 1024;
+const DEFAULT_MAX_ZIP_ENTRIES = 4000;
+const DEFAULT_MAX_XML_CHARS = 8 * 1024 * 1024;
+const DEFAULT_PARSE_TIMEOUT_MS = 8000;
+const DEFAULT_MAX_COMPRESSION_RATIO = 200;
 
 const inferHeader = (rPr, pStyleVal) => {
     const match = pStyleVal && pStyleVal.match(/Heading(\d)/);
@@ -19,7 +32,58 @@ const inferHeader = (rPr, pStyleVal) => {
     return 0;
 };
 
-export function createDocxReader({ loadScript }) {
+export function createDocxReader({ loadScript, getToastMessage }) {
+    const getMessage = (key, params) => {
+        if (typeof getToastMessage !== 'function') return '';
+        return getToastMessage(key, params);
+    };
+
+    const runWithTimeout = async (promise, timeoutMs, timeoutMessage) => {
+        if (!timeoutMs || timeoutMs <= 0) return promise;
+        let timeoutId;
+        const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+        });
+        try {
+            return await Promise.race([promise, timeoutPromise]);
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    };
+
+    const guardDocxFile = async (file, options) => {
+        const maxFileBytes = Number.isFinite(options.maxFileBytes) ? options.maxFileBytes : DEFAULT_MAX_FILE_BYTES;
+        if (file?.size && file.size > maxFileBytes) {
+            throw new Error(getMessage('fileManagement.fileTooLarge') || 'File too large.');
+        }
+        const header = await readFileHeader(file, 4);
+        if (!isZipHeader(header)) {
+            throw new Error(getMessage('fileManagement.invalidFileType') || 'Invalid file type.');
+        }
+    };
+
+    const guardZip = (zip, options) => {
+        const maxEntries = Number.isFinite(options.maxZipEntries) ? options.maxZipEntries : DEFAULT_MAX_ZIP_ENTRIES;
+        const maxUncompressedBytes = Number.isFinite(options.maxUncompressedBytes)
+            ? options.maxUncompressedBytes
+            : DEFAULT_MAX_UNCOMPRESSED_BYTES;
+        const maxCompressionRatio = Number.isFinite(options.maxCompressionRatio)
+            ? options.maxCompressionRatio
+            : DEFAULT_MAX_COMPRESSION_RATIO;
+        const stats = getZipSafetyStats(zip);
+        if (stats.entries > maxEntries) {
+            throw new Error(getMessage('fileManagement.tooManyEntries') || 'Too many entries in archive.');
+        }
+        if (stats.uncompressedBytes && stats.uncompressedBytes > maxUncompressedBytes) {
+            throw new Error(getMessage('fileManagement.fileCompressedTooLarge') || 'Compressed file too large.');
+        }
+        if (stats.compressedBytes > 0 && stats.uncompressedBytes > 0) {
+            const ratio = stats.uncompressedBytes / stats.compressedBytes;
+            if (ratio > maxCompressionRatio) {
+                throw new Error(getMessage('fileManagement.fileCompressedTooLarge') || 'Compressed file too large.');
+            }
+        }
+    };
     const parseSymbolNode = (node) => {
         if (!node || node.nodeType !== 1) return '';
         const hex = node.getAttribute('w:char') || node.getAttribute('char');
@@ -33,7 +97,7 @@ export function createDocxReader({ loadScript }) {
         }
     };
 
-    const collectInlineContent = async (node, parts, ctx) => {
+    const collectInlineContent = async (node, parts, ctx, includeImages) => {
         if (!node) return;
         if (node.nodeType !== 1) return;
 
@@ -60,6 +124,9 @@ export function createDocxReader({ loadScript }) {
             return;
         }
         if (name === 'drawing' || name === 'pict' || name === 'object' || name === 'OLEObject' || name === 'imagedata') {
+            if (!includeImages) {
+                return;
+            }
             const imageMarkdown = await extractImageMarkdown(node, ctx);
             parts.push(imageMarkdown || '[Image]');
             return;
@@ -70,17 +137,17 @@ export function createDocxReader({ loadScript }) {
         }
 
         for (const child of Array.from(node.childNodes)) {
-            await collectInlineContent(child, parts, ctx);
+            await collectInlineContent(child, parts, ctx, includeImages);
         }
     };
 
-    const extractCellText = async (cell, ctx) => {
+    const extractCellText = async (cell, ctx, includeImages) => {
         let cellText = '';
         const paragraphs = Array.from(cell.getElementsByTagName('w:p'));
         for (let index = 0; index < paragraphs.length; index += 1) {
             const paragraph = paragraphs[index];
             const parts = [];
-            await collectInlineContent(paragraph, parts, ctx);
+            await collectInlineContent(paragraph, parts, ctx, includeImages);
             const line = parts.join('').trim();
             if (line) {
                 cellText += (index > 0 ? '<br>' : '') + line;
@@ -89,10 +156,16 @@ export function createDocxReader({ loadScript }) {
         return cellText;
     };
 
-    const extractDocxTextWithOmml = async (arrayBuffer) => {
+    const extractDocxTextWithOmml = async (arrayBuffer, options = {}) => {
+        const includeImages = options.includeImages !== false;
         await loadScript('/libs/jszip.min.js', 'JSZip');
         const zip = await JSZip.loadAsync(arrayBuffer);
+        guardZip(zip, options);
         const docXml = await zip.file('word/document.xml').async('text');
+        const maxXmlChars = Number.isFinite(options.maxXmlChars) ? options.maxXmlChars : DEFAULT_MAX_XML_CHARS;
+        if (docXml.length > maxXmlChars) {
+            throw new Error(getMessage('fileManagement.fileCompressedTooLarge') || 'Compressed file too large.');
+        }
         const relsXml = await zip.file('word/_rels/document.xml.rels')?.async('text');
         const parser = new DOMParser();
         const doc = parser.parseFromString(docXml, 'application/xml');
@@ -114,7 +187,7 @@ export function createDocxReader({ loadScript }) {
                 const listPrefix = numPr ? '- ' : '';
 
                 const parts = [];
-                await collectInlineContent(node, parts, ctx);
+                await collectInlineContent(node, parts, ctx, includeImages);
                 const line = parts.join('').trim();
                 if (line) {
                     const prefix = level > 0 ? '#'.repeat(level) + ' ' : listPrefix;
@@ -129,7 +202,7 @@ export function createDocxReader({ loadScript }) {
                     const cells = Array.from(row.getElementsByTagName('w:tc'));
                     const rowValues = [];
                     for (const cell of cells) {
-                        rowValues.push(await extractCellText(cell, ctx));
+                        rowValues.push(await extractCellText(cell, ctx, includeImages));
                     }
                     matrix.push(rowValues);
                 }
@@ -148,18 +221,16 @@ export function createDocxReader({ loadScript }) {
         return { text: fullText };
     };
 
-    const readDocxFile = async (file) => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            try {
-                const result = await extractDocxTextWithOmml(e.target.result);
-                resolve(result);
-            } catch (err) {
-                reject(err);
-            }
-        };
-        reader.readAsArrayBuffer(file);
-    });
+    const readDocxFile = async (file, options = {}) => {
+        const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_PARSE_TIMEOUT_MS;
+        await guardDocxFile(file, options);
+        const buffer = await file.arrayBuffer();
+        return await runWithTimeout(
+            extractDocxTextWithOmml(buffer, options),
+            timeoutMs,
+            getMessage('fileManagement.parseTimeout') || 'File parse timeout.'
+        );
+    };
 
     return { readDocxFile };
 }
