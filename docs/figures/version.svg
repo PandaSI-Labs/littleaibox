@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 280" role="img" aria-labelledby="title desc">
+  <title id="title">Android package version compare</title>
+  <desc id="desc">Version strings split on dots. The first numeric part that differs decides the order. A missing part counts as zero. The check repeats every 15 minutes.</desc>
+  <rect width="860" height="280" rx="24" fill="#07141c"/>
+  <text x="36" y="48" fill="#f4fbff" font-family="Georgia, serif" font-size="26">Which package is newer</text>
+  <g font-family="Segoe UI, Helvetica, sans-serif" fill="#f4fbff" font-size="15">
+    <rect x="36" y="84" width="240" height="110" rx="16" fill="#12343a" stroke="#7ee7f5"/>
+    <text x="156" y="124" text-anchor="middle">Little Box file name</text>
+    <text x="156" y="152" text-anchor="middle" font-size="13" fill="#b7d4e2">version taken from the name</text>
+    <rect x="310" y="84" width="240" height="110" rx="16" fill="#12343a" stroke="#28ddf5"/>
+    <text x="430" y="124" text-anchor="middle">Split on dots</text>
+    <text x="430" y="152" text-anchor="middle" font-size="13" fill="#b7d4e2">missing part = 0</text>
+    <rect x="584" y="84" width="240" height="110" rx="16" fill="#12343a" stroke="#29f5b7"/>
+    <text x="704" y="124" text-anchor="middle">First difference wins</text>
+    <text x="704" y="152" text-anchor="middle" font-size="13" fill="#b7d4e2">1, -1, or 0</text>
+  </g>
+  <path d="M276 139 H310" stroke="#7ee7f5" stroke-width="1.6" fill="none"/>
+  <path d="M302 133 L310 139 L302 145" fill="#7ee7f5"/>
+  <path d="M550 139 H584" stroke="#7ee7f5" stroke-width="1.6" fill="none"/>
+  <path d="M576 133 L584 139 L576 145" fill="#7ee7f5"/>
+  <text x="36" y="240" fill="#b7d4e2" font-family="Segoe UI, Helvetica, sans-serif" font-size="14">The native client repeats this check every 15 minutes.</text>
+</svg>
