@@ -282,3 +282,26 @@ $$
 
 A file name is reduced to its last path segment before that match, so a slash or backslash cannot smuggle a directory into the saved name.
 
+## Routes
+
+`src/router.js` maps the address bar to a route name. Identifiers are encoded on the way out and decoded on the way in. An empty path is home. The history state uses `__labRoot` so the shell can tell its own entries from the browser's.
+
+| Path | Route |
+| --- | --- |
+| `/` | `home` |
+| `/chat/:id` | `chat` |
+| `/chat/:parent/:id` | `chat`, marked as a bridge route |
+| `/temp_chat/:id` | `tempChat` |
+| `/settings/:section` | `settings`, section defaults to `profile` |
+| `/chat/:id/settings/:section` | `settings` inside a chat |
+| `/temp_chat/:id/settings/:section` | `settings` inside a temporary chat |
+| `/subscription/:section` | `subscription`, section defaults to `manage` |
+| `/chat/:id/subscription/:section` | `subscription` inside a chat |
+| `/auth/login` and `/auth/register` | `auth` |
+| `/auth/reset-password` | Request a reset |
+| `/auth/reset-password/:token` | Complete a reset |
+| `/auth/verify-email` | Email verification |
+| `/auth/:provider/callback` | OAuth callback |
+
+Temporary chats and saved chats share the settings and subscription shapes. Only the first segment changes, from `chat` to `temp_chat`.
+
