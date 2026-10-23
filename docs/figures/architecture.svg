@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 420" role="img" aria-labelledby="title desc">
+  <title id="title">Little Box client architecture</title>
+  <desc id="desc">The browser or Android shell talks to the Vite client. Documents are parsed locally. Chats sit in IndexedDB. Model calls leave through the API origin.</desc>
+  <rect width="980" height="420" rx="24" fill="#07141c"/>
+  <text x="40" y="48" fill="#f4fbff" font-family="Georgia, serif" font-size="26">Client, device, and origin</text>
+  <text x="40" y="74" fill="#b7d4e2" font-family="Segoe UI, Helvetica, sans-serif" font-size="14">littleaibox 3.0.7 · web, installed PWA, and Capacitor Android</text>
+  <g font-family="Segoe UI, Helvetica, sans-serif">
+    <rect x="36" y="108" width="270" height="230" rx="16" fill="#102833" stroke="#7ee7f5"/>
+    <text x="56" y="142" fill="#7ee7f5" font-size="13" letter-spacing="1.2">SURFACES</text>
+    <text x="56" y="178" fill="#f4fbff" font-size="16">Browser</text>
+    <text x="56" y="206" fill="#f4fbff" font-size="16">Installed PWA</text>
+    <text x="56" y="234" fill="#f4fbff" font-size="16">Android shell</text>
+    <text x="56" y="274" fill="#b7d4e2" font-size="13">Same Vite client. Native builds rewrite API calls.</text>
+    <rect x="354" y="108" width="270" height="230" rx="16" fill="#102833" stroke="#7ee7f5"/>
+    <text x="374" y="142" fill="#7ee7f5" font-size="13" letter-spacing="1.2">ON THE DEVICE</text>
+    <text x="374" y="178" fill="#f4fbff" font-size="16">PDF, DOCX, PPTX, XLSX</text>
+    <text x="374" y="206" fill="#f4fbff" font-size="16">IndexedDB chats</text>
+    <text x="374" y="234" fill="#f4fbff" font-size="16">Mermaid, math, Vega-Lite</text>
+    <text x="374" y="274" fill="#b7d4e2" font-size="13">Parsing and history do not require a round trip.</text>
+    <rect x="672" y="108" width="272" height="230" rx="16" fill="#102833" stroke="#7ee7f5"/>
+    <text x="692" y="142" fill="#7ee7f5" font-size="13" letter-spacing="1.2">ORIGIN</text>
+    <text x="692" y="178" fill="#f4fbff" font-size="16">littleaibox.com</text>
+    <text x="692" y="206" fill="#f4fbff" font-size="16">pages.dev fallback</text>
+    <text x="692" y="234" fill="#f4fbff" font-size="16">User-supplied keys</text>
+    <text x="692" y="274" fill="#b7d4e2" font-size="13">502, 503, and 504 try the next origin.</text>
+  </g>
+  <path d="M306 220 H354" stroke="#7ee7f5" stroke-width="1.6" fill="none"/>
+  <path d="M346 214 L354 220 L346 226" fill="#7ee7f5"/>
+  <path d="M624 220 H672" stroke="#7ee7f5" stroke-width="1.6" fill="none"/>
+  <path d="M664 214 L672 220 L664 226" fill="#7ee7f5"/>
+</svg>
