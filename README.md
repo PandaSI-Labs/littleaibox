@@ -55,3 +55,26 @@ Voice input, task presets, mind maps, and an optional research mode live in the 
 | Monthly, quarterly, and yearly are different engines | Those plan codes all normalize to `pro` |
 | The illustration's stack list is the build | The build file is `package.json`, not the poster |
 
+## How the product is put together
+
+<img src="docs/figures/architecture.svg" alt="Diagram of surfaces, on-device work, and API origins">
+
+| Layer | Where it lives | What it owns |
+| --- | --- | --- |
+| Shell | `index.html` | Theme boot, language, and the page frame |
+| Conversation | `src/main.js` | Presets, keys, timeline, and message actions |
+| Router | `src/router.js` | Address bar, history, and route names |
+| Origin adapter | `src/api-config.js` | Rewrite and fallback for native and localhost |
+| Store | `src/db.js` | Chats and settings in IndexedDB |
+| Files | `src/file-parsers/` and `src/file-export/` | Read PDF and Office files, write them back out |
+| Worker | `src/sw-custom.js` and `vite.config.js` | Precache and runtime caches |
+| Native update | `src/apk-update-manager.js` | Compare package versions on Android |
+
+```mermaid
+flowchart LR
+  surface[Browser, PWA, or Android] --> client[Vite client]
+  client --> local[Parsers and IndexedDB]
+  client --> origin[littleaibox.com]
+  origin --> spare[pages.dev fallback]
+```
+
