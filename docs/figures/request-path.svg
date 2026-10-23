@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360" role="img" aria-labelledby="title desc">
+  <title id="title">API origin fallback</title>
+  <desc id="desc">Native and local development requests try the preferred origin, then littleaibox.com, then the pages.dev host. Gateway failures move to the next origin.</desc>
+  <rect width="900" height="360" rx="24" fill="#07141c"/>
+  <text x="36" y="48" fill="#f4fbff" font-family="Georgia, serif" font-size="26">Which host answers</text>
+  <text x="36" y="76" fill="#b7d4e2" font-family="Segoe UI, Helvetica, sans-serif" font-size="14">Used when the app is native, or when the page is on localhost.</text>
+  <g font-family="Segoe UI, Helvetica, sans-serif" font-size="15" fill="#f4fbff">
+    <rect x="40" y="110" width="200" height="64" rx="14" fill="#12343a" stroke="#29f5b7"/>
+    <text x="140" y="147" text-anchor="middle">API path</text>
+    <rect x="300" y="110" width="250" height="64" rx="14" fill="#12343a" stroke="#28ddf5"/>
+    <text x="425" y="147" text-anchor="middle">Preferred origin</text>
+    <rect x="610" y="110" width="250" height="64" rx="14" fill="#12343a" stroke="#28b6f5"/>
+    <text x="735" y="147" text-anchor="middle">littleaibox.com</text>
+    <rect x="300" y="230" width="250" height="64" rx="14" fill="#12343a" stroke="#a1edf7"/>
+    <text x="425" y="267" text-anchor="middle">pages.dev</text>
+    <rect x="610" y="230" width="250" height="64" rx="14" fill="#12343a" stroke="#7ee7f5"/>
+    <text x="735" y="256" text-anchor="middle">Remember the origin</text>
+    <text x="735" y="276" text-anchor="middle" font-size="12" fill="#b7d4e2">after a successful response</text>
+  </g>
+  <g stroke="#7ee7f5" stroke-width="1.5" fill="none">
+    <path d="M240 142 H300"/>
+    <path d="M550 142 H610"/>
+    <path d="M735 174 V230"/>
+    <path d="M425 174 V230"/>
+  </g>
+  <g fill="#7ee7f5">
+    <path d="M292 136 h12 l-6 8 z"/>
+    <path d="M602 136 h12 l-6 8 z"/>
+    <path d="M729 222 h12 l-6 8 z"/>
+    <path d="M419 222 h12 l-6 8 z"/>
+  </g>
+</svg>
