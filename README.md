@@ -201,3 +201,33 @@ $$
 
 A saved queue is `{ items, order }`. `upsertQueueItem` writes the item and appends the id only when it is not already in `order`. `removeQueueItem` deletes the item and drops that id from the order. An empty queue removes the `localStorage` key. If a newer per-user key is missing and a legacy key still holds data, the loader copies the legacy value and deletes the old key.
 
+## Cache windows
+
+<img src="docs/figures/cache.svg" alt="The five runtime caches and their entry caps">
+
+The service worker is `src/sw-custom.js`, injected by Vite PWA. A precached file may be at most 4 MiB.
+
+$$
+4 \times 1024^{2} = 4\,194\,304 \text{ bytes}
+$$
+
+One day is \(86\,400\) seconds. The runtime rules in `vite.config.js` are:
+
+| Cache | Handler | Cap | Age |
+| --- | --- | --- | ---: |
+| `images-cache` | Cache first | 60 | \(30 \times 86400\) seconds |
+| `libs-cache` | Cache first for `/libs/` | 50 | \(30 \times 86400\) seconds |
+| `api-data-cache` | Network first, 3 second timeout, HTTP 200 only | 100 | \(30 \times 86400\) seconds |
+| `cdn-fonts-cache` | Cache first for `cdn.jsdelivr.net` | 10 | \(180 \times 86400\) seconds |
+| `share-page-cache` | Stale while revalidate for `/share/` | 20 | \(7 \times 86400\) seconds |
+
+GET `/api/chats/` and GET `/auth/me` may use the network-first cache. Mutations do not. Favicon and apple-touch icons are left out of the precache glob.
+
+The production build minifies with Terser, runs two compress passes, drops `console` and `debugger`, and stamps `__APP_BUILD_ID__`.
+
+$$
+\mathrm{buildId} = \mathrm{APP\_BUILD\_ID} \lor \mathrm{VERCEL\_GIT\_COMMIT\_SHA} \lor \mathrm{CF\_PAGES\_COMMIT\_SHA} \lor \mathrm{GITHUB\_SHA} \lor \mathrm{ISO\ time}
+$$
+
+The first of those values that is set wins. Vendor modules are split into a `vendor` chunk. The chunk-size warning starts at 700 kB.
+
