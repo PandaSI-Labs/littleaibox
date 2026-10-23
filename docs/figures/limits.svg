@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 380" role="img" aria-labelledby="title desc">
+  <title id="title">Plan limits</title>
+  <desc id="desc">Free, custom-key, and subscription ceilings for characters, rich documents, chats, images, and cloud sync records.</desc>
+  <rect width="920" height="380" rx="24" fill="#07141c"/>
+  <text x="36" y="46" fill="#f4fbff" font-family="Georgia, serif" font-size="26">Ceilings in entitlements.js</text>
+  <g font-family="Segoe UI, Helvetica, sans-serif" font-size="14" fill="#f4fbff">
+    <text x="220" y="92" fill="#b7d4e2">Free</text>
+    <text x="420" y="92" fill="#b7d4e2">With a key</text>
+    <text x="640" y="92" fill="#b7d4e2">Subscription</text>
+    <text x="36" y="132">Characters</text>
+    <rect x="200" y="114" width="120" height="28" rx="8" fill="#12343a"/><text x="260" y="133" text-anchor="middle">50,000</text>
+    <rect x="400" y="114" width="140" height="28" rx="8" fill="#145c4a"/><text x="470" y="133" text-anchor="middle">300,000</text>
+    <rect x="620" y="114" width="140" height="28" rx="8" fill="#145c4a"/><text x="690" y="133" text-anchor="middle">300,000</text>
+    <text x="36" y="180">Rich documents</text>
+    <rect x="200" y="162" width="120" height="28" rx="8" fill="#12343a"/><text x="260" y="181" text-anchor="middle">5</text>
+    <rect x="400" y="162" width="140" height="28" rx="8" fill="#145c4a"/><text x="470" y="181" text-anchor="middle">No cap</text>
+    <rect x="620" y="162" width="140" height="28" rx="8" fill="#145c4a"/><text x="690" y="181" text-anchor="middle">40</text>
+    <text x="36" y="228">Chats</text>
+    <rect x="200" y="210" width="120" height="28" rx="8" fill="#12343a"/><text x="260" y="229" text-anchor="middle">15</text>
+    <rect x="400" y="210" width="140" height="28" rx="8" fill="#145c4a"/><text x="470" y="229" text-anchor="middle">25, or none if paid</text>
+    <rect x="620" y="210" width="140" height="28" rx="8" fill="#145c4a"/><text x="690" y="229" text-anchor="middle">60</text>
+    <text x="36" y="276">Images</text>
+    <rect x="200" y="258" width="120" height="28" rx="8" fill="#12343a"/><text x="260" y="277" text-anchor="middle">5</text>
+    <rect x="400" y="258" width="140" height="28" rx="8" fill="#12343a"/><text x="470" y="277" text-anchor="middle">5</text>
+    <rect x="620" y="258" width="140" height="28" rx="8" fill="#145c4a"/><text x="690" y="277" text-anchor="middle">10</text>
+    <text x="36" y="324">Cloud sync rows</text>
+    <rect x="200" y="306" width="120" height="28" rx="8" fill="#12343a"/><text x="260" y="325" text-anchor="middle">500</text>
+    <rect x="400" y="306" width="140" height="28" rx="8" fill="#145c4a"/><text x="470" y="325" text-anchor="middle">No cap if paid</text>
+    <rect x="620" y="306" width="140" height="28" rx="8" fill="#145c4a"/><text x="690" y="325" text-anchor="middle">No cap</text>
+  </g>
+</svg>
