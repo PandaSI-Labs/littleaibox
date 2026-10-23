@@ -259,3 +259,26 @@ $$
 
 \(L_{\mathrm{base}}\) is 60 when a subscription is active and 15 otherwise. Image count ignores the key and follows only the subscription: 10 or 5.
 
+## Android package versions
+
+<img src="docs/figures/version.svg" alt="Version strings split on dots, then compared from the left">
+
+`src/apk-update-manager.js` reads download HTML for links whose file name matches `LittleAIBox_v` plus a dotted number plus `.apk`. Each candidate is compared with the best one seen so far. The compare splits on dots, parses each part as an integer, and treats a missing or non-numeric part as 0.
+
+$$
+c(a,b) =
+\begin{cases}
+1 & \text{if the first differing part of } a \text{ is greater} \\
+-1 & \text{if the first differing part of } a \text{ is smaller} \\
+0 & \text{if every part matches}
+\end{cases}
+$$
+
+The longer string wins the length of the walk. `1.2` and `1.2.0` therefore compare equal. The native client repeats the check on this interval:
+
+$$
+15 \times 60 \times 1000 = 900\,000\,\mathrm{ms}
+$$
+
+A file name is reduced to its last path segment before that match, so a slash or backslash cannot smuggle a directory into the saved name.
+
