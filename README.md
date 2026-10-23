@@ -305,3 +305,59 @@ A file name is reduced to its last path segment before that match, so a slash or
 
 Temporary chats and saved chats share the settings and subscription shapes. Only the first segment changes, from `chat` to `temp_chat`.
 
+## Languages
+
+Interface strings ship in `public/locales/` for English, Spanish, French, Japanese, Korean, Simplified Chinese, and Traditional Chinese. Longer notes in those languages also sit under `docs/`. `scripts/copy-i18n.mjs` runs before both `dev` and `build`, so a locale edit is copied before Vite sees it. The English brief in this file is the source to read first.
+
+A saved language in `localStorage` (`selectedLanguage`) or `sessionStorage` (`guest_selectedLanguage`) is applied before the page paints. When neither is set, the document language is English.
+
+## Commands
+
+| Command | What it runs |
+| --- | --- |
+| `npm install` | Installs the client, Capacitor, and Vite toolchain |
+| `npm run dev` | Copies locales, then starts Vite |
+| `npm run build` | Copies locales, then writes `dist/` |
+| `npm run predev` | Locale copy only |
+| `npm run prebuild` | Locale copy only |
+
+There is no separate test script in `package.json`. Behavior that must stay stable is pinned by the modules cited above: origin order, store keys, entitlement numbers, cache ages, and the version compare.
+
+## Repository map
+
+| Path | Role |
+| --- | --- |
+| `index.html` | Application shell |
+| `src/main.js` | Conversation UI, keys, and presets |
+| `src/api-config.js` | Origin rewrite and fallback |
+| `src/router.js` | Path parser and history adapter |
+| `src/db.js` | IndexedDB chats and settings |
+| `src/entitlements.js` | Character, document, chat, image, and sync ceilings |
+| `src/sync-queue.js` | Reload-safe queue in `localStorage` |
+| `src/apk-update-manager.js` | Android package version compare |
+| `src/relay-models.js` | Display labels for relay model ids |
+| `src/stream-image-runtime.js` | Image detection while a reply streams |
+| `src/file-parsers/` | PDF and Office readers, including OMML |
+| `src/file-export/` | PDF, Word, Excel, and PowerPoint export |
+| `src/mindmap-mode.js` | Markmap board |
+| `src/sw-custom.js` | Service worker source |
+| `vite.config.js` | Build, PWA manifest, and cache rules |
+| `public/locales/` | Interface strings |
+| `public/ai_icons/` | Model marks |
+| `public/images/favicon.svg` | Mark used beside the title |
+| `docs/figures/` | Illustration and diagrams in this brief |
+
+## Figures
+
+| Figure | What it shows |
+| --- | --- |
+| `docs/figures/hero.png` | Product illustration from this folder |
+| `public/images/favicon.svg` | Little Box mark |
+| `docs/figures/architecture.svg` | Surfaces, on-device work, and origins |
+| `docs/figures/request-path.svg` | Origin order for native and local API calls |
+| `docs/figures/documents.svg` | Local path from a file to conversation text |
+| `docs/figures/cache.svg` | Runtime cache names, caps, and ages |
+| `docs/figures/limits.svg` | Free, key, and subscription ceilings |
+| `docs/figures/version.svg` | Dotted version compare used by the Android updater |
+
+The mark and the model icons are assets already shipped with the client. The illustration is the picture placed in this folder. The diagrams were drawn for this brief from `api-config.js`, `db.js`, `entitlements.js`, `apk-update-manager.js`, `vite.config.js`, and the file parsers.
