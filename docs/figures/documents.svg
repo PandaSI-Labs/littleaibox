@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" role="img" aria-labelledby="title desc">
+  <title id="title">Local document path</title>
+  <desc id="desc">Office and PDF files are read in the browser, Office math becomes LaTeX, and the extracted text joins the conversation.</desc>
+  <rect width="900" height="300" rx="24" fill="#07141c"/>
+  <text x="36" y="48" fill="#f4fbff" font-family="Georgia, serif" font-size="26">Files stay in the parser</text>
+  <g font-family="Segoe UI, Helvetica, sans-serif" fill="#f4fbff" font-size="15">
+    <rect x="36" y="90" width="180" height="120" rx="16" fill="#12343a" stroke="#7ee7f5"/>
+    <text x="126" y="140" text-anchor="middle">PDF</text>
+    <text x="126" y="164" text-anchor="middle">DOCX</text>
+    <text x="126" y="188" text-anchor="middle">PPTX · XLSX</text>
+    <rect x="280" y="90" width="220" height="120" rx="16" fill="#12343a" stroke="#28ddf5"/>
+    <text x="390" y="146" text-anchor="middle">Local readers</text>
+    <text x="390" y="170" text-anchor="middle" font-size="13" fill="#b7d4e2">OMML math to LaTeX</text>
+    <rect x="564" y="90" width="300" height="120" rx="16" fill="#12343a" stroke="#29f5b7"/>
+    <text x="714" y="146" text-anchor="middle">Conversation text</text>
+    <text x="714" y="170" text-anchor="middle" font-size="13" fill="#b7d4e2">Charts drawn in the page</text>
+  </g>
+  <path d="M216 150 H280" stroke="#7ee7f5" stroke-width="1.6" fill="none"/>
+  <path d="M272 144 L280 150 L272 156" fill="#7ee7f5"/>
+  <path d="M500 150 H564" stroke="#7ee7f5" stroke-width="1.6" fill="none"/>
+  <path d="M556 144 L564 150 L556 156" fill="#7ee7f5"/>
+  <text x="36" y="258" fill="#b7d4e2" font-family="Segoe UI, Helvetica, sans-serif" font-size="14">A fraction in an Office file is emitted as \frac{numerator}{denominator}.</text>
+</svg>
