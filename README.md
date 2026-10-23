@@ -78,3 +78,27 @@ flowchart LR
   origin --> spare[pages.dev fallback]
 ```
 
+## Which host answers
+
+On the public website, relative API calls stay on that site. On Android, and on `localhost`, `127.0.0.1`, or `::1`, `src/api-config.js` rewrites API traffic.
+
+A path counts as API traffic when it starts with `/api/`, `/auth/`, `/image-proxy`, or `/image-get`, or when the method is not GET or HEAD and the path is `/`.
+
+$$
+O = \langle o_{\mathrm{preferred}},\ \texttt{https://littleaibox.com},\ \texttt{https://littleaibox.pages.dev} \rangle
+$$
+
+The preferred value is kept only when it is already one of those two hosts. The client tries the list in order. Status `502`, `503`, or `504`, or a thrown network error, advances to the next origin. Any other status returns immediately. The first successful response is written to `localStorage` under `preferred_api_origin`.
+
+<img src="docs/figures/request-path.svg" alt="Fallback from the preferred origin to the public site and pages.dev">
+
+```mermaid
+flowchart TD
+  call[API call from native or localhost] --> list[Walk the origin list]
+  list --> ok{Response ok?}
+  ok -->|yes| remember[Store preferred_api_origin]
+  ok -->|502, 503, 504 or network error| next[Try the next origin]
+  next --> list
+  ok -->|other status| stop[Return that response]
+```
+
