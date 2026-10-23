@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 340" role="img" aria-labelledby="title desc">
+  <title id="title">Service worker caches</title>
+  <desc id="desc">Images and libraries stay for 30 days, font files for 180 days, share pages for 7 days, and chat reads use network-first with a 3 second timeout.</desc>
+  <rect width="900" height="340" rx="24" fill="#07141c"/>
+  <text x="36" y="48" fill="#f4fbff" font-family="Georgia, serif" font-size="26">What the worker keeps</text>
+  <g font-family="Segoe UI, Helvetica, sans-serif" font-size="15" fill="#f4fbff">
+    <rect x="36" y="84" width="250" height="70" rx="14" fill="#12343a" stroke="#7ee7f5"/>
+    <text x="161" y="114" text-anchor="middle">images-cache</text>
+    <text x="161" y="136" text-anchor="middle" font-size="13" fill="#b7d4e2">60 entries · 30 days</text>
+    <rect x="324" y="84" width="250" height="70" rx="14" fill="#12343a" stroke="#28ddf5"/>
+    <text x="449" y="114" text-anchor="middle">libs-cache</text>
+    <text x="449" y="136" text-anchor="middle" font-size="13" fill="#b7d4e2">50 entries · 30 days</text>
+    <rect x="612" y="84" width="250" height="70" rx="14" fill="#12343a" stroke="#29f5b7"/>
+    <text x="737" y="114" text-anchor="middle">api-data-cache</text>
+    <text x="737" y="136" text-anchor="middle" font-size="13" fill="#b7d4e2">100 entries · 3s timeout</text>
+    <rect x="180" y="200" width="250" height="70" rx="14" fill="#12343a" stroke="#a1edf7"/>
+    <text x="305" y="230" text-anchor="middle">cdn-fonts-cache</text>
+    <text x="305" y="252" text-anchor="middle" font-size="13" fill="#b7d4e2">10 entries · 180 days</text>
+    <rect x="470" y="200" width="250" height="70" rx="14" fill="#12343a" stroke="#28b6f5"/>
+    <text x="595" y="230" text-anchor="middle">share-page-cache</text>
+    <text x="595" y="252" text-anchor="middle" font-size="13" fill="#b7d4e2">20 entries · 7 days</text>
+  </g>
+  <text x="36" y="310" fill="#b7d4e2" font-family="Segoe UI, Helvetica, sans-serif" font-size="14">POST, PUT, and DELETE to /api/ and /auth/ are network-only.</text>
+</svg>
