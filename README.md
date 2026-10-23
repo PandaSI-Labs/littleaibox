@@ -31,3 +31,27 @@ npm run build
 
 `predev` and `prebuild` run `scripts/copy-i18n.mjs` before Vite. Put model keys in the application UI. Do not commit them.
 
+## Who it is for
+
+| Audience | What they do here |
+| --- | --- |
+| Developers | Ask coding questions with a file attached, without uploading a whole workspace |
+| Readers of papers and decks | Open PDF, DOCX, PPTX, and XLSX in the browser |
+| People on a blocked network | Let the native or local client walk the fallback origin list |
+| Anyone keeping their own keys | Store two keys and keep chats in IndexedDB |
+| Subscribers and key holders | Receive the higher ceilings in `src/entitlements.js` |
+
+Voice input, task presets, mind maps, and an optional research mode live in the same client. Share pages, policy pages, and subscription screens are routes, not a second product.
+
+## What this client refuses to pretend
+
+| Claim | What the code actually does |
+| --- | --- |
+| Keys live in the repository | Keys are entered in the UI and stripped from sanitized user objects |
+| Every request is local | Parsing and chat storage are local. Model calls still leave the device |
+| One host is the only host | Native and localhost API calls walk a short origin list |
+| A cached POST is a source of truth | POST, PUT, and DELETE to `/api/` and `/auth/` are network-only |
+| Office math is dropped | OMML fractions, roots, scripts, and matrices become LaTeX |
+| Monthly, quarterly, and yearly are different engines | Those plan codes all normalize to `pro` |
+| The illustration's stack list is the build | The build file is `package.json`, not the poster |
+
