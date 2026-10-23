@@ -102,3 +102,30 @@ flowchart TD
   ok -->|other status| stop[Return that response]
 ```
 
+## Keys and model labels
+
+Two user-supplied keys are supported. Older records may keep both inside `custom_api_key` as a comma-separated pair. Newer records keep the second key in `custom_api_key_t`. Sanitized copies of the user object delete both fields before they are stored for display. A hint flag records only that a key exists, not the key itself.
+
+`src/relay-models.js` turns a relay id into a label. A leading `models/` is removed. The first token selects the brand.
+
+| Prefix | Brand | Join |
+| --- | --- | --- |
+| `deepseek` | DeepSeek | hyphen |
+| `gemini` | Gemini | space |
+| `gpt` | GPT | hyphen |
+| `claude` | Claude | space |
+| `grok` | Grok | space |
+| anything else | Capitalized token | space |
+
+Adjacent numeric tokens become one dotted number, so `3` and `5` read as `3.5`. A token shaped like `v2` becomes `V2`.
+
+<p>
+  <img src="public/ai_icons/gemini.svg" alt="Gemini" width="36">
+  <img src="public/ai_icons/chatgpt.svg" alt="ChatGPT" width="36">
+  <img src="public/ai_icons/claude.svg" alt="Claude" width="36">
+  <img src="public/ai_icons/grok.svg" alt="Grok" width="36">
+  <img src="public/ai_icons/deepseek.svg" alt="DeepSeek" width="36">
+</p>
+
+The marks above are the icons already stored under `public/ai_icons/`. They are labels for the relay, not proof that a particular host is configured.
+
