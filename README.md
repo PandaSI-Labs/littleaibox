@@ -1,64 +1,33 @@
-# LittleAIBox
+# Little Box
 
-Privacy-focused AI conversation platform for chat, coding, writing, translation, and research. The client runs as a web app, PWA, and Android build, with document parsing and conversation state kept on the device whenever possible.
+<p align="center">
+  <img src="docs/figures/hero.png" alt="Little Box" width="720">
+</p>
 
-## Overview
+<p align="center">
+  <img src="public/images/favicon.svg" alt="Little Box mark" width="88">
+</p>
 
-LittleAIBox is an applied-AI product: a Gemini-compatible conversation surface plus an API pooling and relay layer for stable access. Users bring their own keys, choose task presets, and keep files and history under local control.
+Little Box is a privacy-first conversation workspace for chat, writing, translation, coding help, and document reading. One Vite client runs in the browser, as an installed progressive web app, and inside a Capacitor Android shell. People bring their own model keys. Conversation state and parsed files stay on the device unless a feature explicitly calls the network.
 
-Live product: [littleaibox.com](https://littleaibox.com)
+The picture above is the product illustration shipped with this folder. The running client is not a React or Python service. It is the Vite application in this repository, package `littleaibox`, version `3.0.7`. The live site is [littleaibox.com](https://littleaibox.com).
 
-## Capabilities
-
-- Conversational AI for general, coding, and research tasks
-- Client-side parsing for PDF, DOCX, PPTX, and XLSX
-- Mermaid, LaTeX, and Vega-Lite rendering
-- Conversation timeline and task presets
-- Dual API-key management with health checks and failover
-- Voice input, customizable model parameters
-- PWA offline support and Capacitor Android packaging
-- Optional web search and Semantic Scholar research mode
-
-## Who it is for
-
-| Audience | Use |
+| | |
 | --- | --- |
-| Developers | File-aware coding help without uploading a workspace |
-| Researchers | Paper and slide analysis in the browser |
-| Operators in restricted networks | Relay / pool for model access |
-| Privacy-conscious teams | Local processing and user-owned keys |
+| Package | `littleaibox` `3.0.7` |
+| Client | Vite 7 and Tailwind 4 |
+| Native shell | Capacitor 7 for Android |
+| Local database | IndexedDB `LittleAIBoxDB`, version 2 |
+| Default origin | `https://littleaibox.com` |
+| Fallback origin | `https://littleaibox.pages.dev` |
+| Support | [support@littleaibox.com](mailto:support@littleaibox.com) |
+| License | MIT, as stated in [LICENSE](LICENSE) |
 
-## Tech stack
-
-- Vite frontend
-- Capacitor for native Android
-- Cloudflare / edge workers for relay and availability
-- IndexedDB for local conversation state
-- Google Gemini-compatible model APIs
-
-## Getting started
-
-```bash
+```text
 npm install
 npm run dev
-```
-
-Production build:
-
-```bash
 npm run build
 ```
 
-Configure model keys and relay settings in the application UI. Do not commit secrets.
+`predev` and `prebuild` run `scripts/copy-i18n.mjs` before Vite. Put model keys in the application UI. Do not commit them.
 
-## Internationalization
-
-Documentation and UI copy are available in multiple locales under `docs/` and the i18n pipeline used by `scripts/copy-i18n.mjs`.
-
-## License
-
-MIT. See [LICENSE](LICENSE) where present.
-
-## Maintainer
-
-[Anton Karas](https://github.com/antonkarasbiz) — full-stack, blockchain, and AI engineering.
