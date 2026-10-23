@@ -170,3 +170,34 @@ $$
 
 The scanner in `src/stream-image-runtime.js` accepts Markdown images and bare URLs whose path ends in `png`, `jpg`, `jpeg`, `webp`, `gif`, `bmp`, `svg`, or `avif`.
 
+## Local records
+
+IndexedDB database `LittleAIBoxDB` is version 2. It has two object stores.
+
+| Store | Key | Record |
+| --- | --- | --- |
+| `chats` | `userId` | `{ userId, chatsData }` |
+| `settings` | `key` | Setting records addressed by key |
+
+$$
+\mathrm{chats}(\mathrm{userId}) =
+\begin{cases}
+\mathrm{chatsData} & \text{when the record exists} \\
+\mathrm{null} & \text{when the read fails or the record is missing}
+\end{cases}
+$$
+
+`getChatsFromDB` returns `null` on failure instead of throwing. `saveChatsToDB` writes the whole chat blob for that user. `clearChatsStore` removes every user, not one conversation.
+
+Pending work that must survive a reload uses `src/sync-queue.js`. The storage key adds the user id when one is present.
+
+$$
+k(\mathrm{base},\mathrm{user}) =
+\begin{cases}
+\mathrm{base} & \text{if no user id is set} \\
+\mathrm{base}\,\Vert\,\texttt{"_"}\,\Vert\,\mathrm{user} & \text{otherwise}
+\end{cases}
+$$
+
+A saved queue is `{ items, order }`. `upsertQueueItem` writes the item and appends the id only when it is not already in `order`. `removeQueueItem` deletes the item and drops that id from the order. An empty queue removes the `localStorage` key. If a newer per-user key is missing and a legacy key still holds data, the loader copies the legacy value and deletes the old key.
+
