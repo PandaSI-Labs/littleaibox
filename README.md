@@ -129,3 +129,44 @@ Adjacent numeric tokens become one dotted number, so `3` and `5` read as `3.5`. 
 
 The marks above are the icons already stored under `public/ai_icons/`. They are labels for the relay, not proof that a particular host is configured.
 
+## Documents and rendered replies
+
+<img src="docs/figures/documents.svg" alt="PDF and Office files passing through local readers">
+
+| Reader | Module | Output |
+| --- | --- | --- |
+| PDF | `src/file-parsers/pdf.js` | Extracted text |
+| Word | `src/file-parsers/docx.js` | Text, with Office math converted |
+| PowerPoint | `src/file-parsers/pptx.js` | Slide text, with the same math conversion |
+| Excel | `src/file-parsers/excel.js` | Sheet text |
+| Word export | `src/file-export/word.js` | A document written from the conversation |
+| PDF export | `src/file-export/pdf.js` | A PDF written from the conversation |
+| Excel export | `src/file-export/excel.js` | A workbook written from the conversation |
+| PowerPoint export | `src/file-export/ppt.js` | A deck written from the conversation |
+
+An Office fraction node `f` becomes LaTeX. The numerator and denominator are the OMML children `num` and `den`.
+
+$$
+\texttt{f}(\mathrm{num},\mathrm{den}) \mapsto \frac{\mathrm{num}}{\mathrm{den}}
+$$
+
+The same converter in `src/file-parsers/mathUtils.js` emits the rest of the common Office math forms.
+
+| OMML tag | LaTeX shape |
+| --- | --- |
+| `sSup` | `{base}^{sup}` |
+| `sSub` | `{base}_{sub}` |
+| `rad` with a degree | `\sqrt[deg]{base}` |
+| `rad` without a degree | `\sqrt{base}` |
+| `m` | `\begin{matrix} ... \end{matrix}` |
+
+Property tags that end in `Pr`, and the ignored presentation tags listed in that file, contribute no text. Replies can then be drawn with Mermaid (`src/mermaid-renderer.js`), Vega-Lite (`src/vega-renderer.js`), or a markmap mind map (`src/mindmap-mode.js`). Mind map scripts load from `/libs/d3.min.js`, `/libs/markmap-lib.js`, `/libs/markmap-view.js`, and `/libs/markmap-toolbar.js`.
+
+While a reply streams, image URLs are scanned on a 30 millisecond timer.
+
+$$
+\Delta t_{\mathrm{stream}} = 30\,\mathrm{ms}
+$$
+
+The scanner in `src/stream-image-runtime.js` accepts Markdown images and bare URLs whose path ends in `png`, `jpg`, `jpeg`, `webp`, `gif`, `bmp`, `svg`, or `avif`.
+
