@@ -231,3 +231,31 @@ $$
 
 The first of those values that is set wins. Vendor modules are split into a `vendor` chunk. The chunk-size warning starts at 700 kB.
 
+## Plan ceilings
+
+<img src="docs/figures/limits.svg" alt="Free, key, and subscription ceilings">
+
+`src/entitlements.js` is the only place these numbers are defined. `monthly`, `quarterly`, and `yearly` all normalize to the plan code `pro`. A missing or unknown code stays unset.
+
+| Resource | Free | Custom key | Active subscription |
+| --- | ---: | ---: | ---: |
+| Characters | 50,000 | 300,000 when the key is a paid key | 300,000 |
+| Rich documents | 5 | No cap when the key is a paid key | 40 |
+| Chats | 15 | 25, or no cap when the tier is paid | 60 |
+| Images | 5 | 5 unless a subscription is also active | 10 |
+| Cloud sync rows | 500, warn at 450 | No cap when the tier is paid | No cap |
+| Search attachments | No | Yes when the key is a paid key | Yes |
+
+Character and rich-document decisions look at `hasPaidKey` first, then an active subscription, then the free row. Chat and cloud-sync decisions look at a paid tier together with a custom key before they look at the subscription. A custom key that is not on the paid tier still lifts the chat ceiling to at least 25:
+
+$$
+L_{\mathrm{chat}} =
+\begin{cases}
+\infty & \text{if the tier is paid and a custom key is present} \\
+\max(L_{\mathrm{base}}, 25) & \text{if a custom key is present} \\
+L_{\mathrm{base}} & \text{otherwise}
+\end{cases}
+$$
+
+\(L_{\mathrm{base}}\) is 60 when a subscription is active and 15 otherwise. Image count ignores the key and follows only the subscription: 10 or 5.
+
